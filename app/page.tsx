@@ -274,8 +274,11 @@ function AuthScreen() {
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <div className="brand-mark">AAC</div>
-        <h1>Allegiant Auto Care</h1>
+        <img
+  className="login-logo"
+  src="/allegiant-auto-care-logo.png"
+  alt="Allegiant Auto Care"
+/>
         <p className="muted">Repair orders, estimates, and invoices.</p>
         <form onSubmit={submit} className="stack">
           <label>
