@@ -429,11 +429,11 @@ function RepairOrderApp({ user }: { user: User }) {
     <div className="app-shell">
       <header className="topbar no-print">
         <button className="brand-button" type="button" onClick={() => setView("dashboard")}>
-          <span className="brand-mark small">AAC</span>
-          <span>
-            <strong>{settings.business_name || "Allegiant Auto Care"}</strong>
-            <small>Repair Order System</small>
-          </span>
+          <img
+  className="topbar-logo"
+  src="/allegiant-auto-care-logo.png"
+  alt="Allegiant Auto Care"
+/>
         </button>
         <nav>
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
