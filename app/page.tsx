@@ -1910,7 +1910,7 @@ function SettingsPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
-  async function save(previewMode?: DocumentMode) {
+  async function save() {
     setBusy(true);
     setMessage("");
     const payload = { ...form, owner_id: user.id };
