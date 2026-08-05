@@ -1400,10 +1400,18 @@ function DocumentView({
       <article className="document-page">
         <header className="document-header">
           <div>
-            <h1>{settings.business_name}</h1>
-            {settings.business_address && <p>{settings.business_address}</p>}
-            <p>{[settings.business_phone, settings.business_email].filter(Boolean).join(" · ")}</p>
-          </div>
+  <img
+    className="document-logo"
+    src="/allegiant-auto-care-logo.png"
+    alt="Allegiant Auto Care"
+  />
+  {settings.business_address && <p>{settings.business_address}</p>}
+  <p>
+    {[settings.business_phone, settings.business_email]
+      .filter(Boolean)
+      .join(" · ")}
+  </p>
+</div>
           <div className="document-title">
             <h2>{labelDocument(ro.document_type)}</h2>
             <strong>RO #{padRo(ro.ro_number)}</strong>
