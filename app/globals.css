@@ -419,3 +419,231 @@ tbody tr:hover { background: #f8fafc; }
 @media print {
   .void-watermark { color: rgba(166, 27, 39, 0.13); }
 }
+
+/* Distinct estimate, repair order, and invoice print layouts */
+.document-page {
+  --document-accent: var(--navy);
+  --document-accent-soft: #eef3fa;
+  --document-accent-ink: var(--navy);
+}
+
+.document-page.document-estimate {
+  --document-accent: #2459a9;
+  --document-accent-soft: #edf4ff;
+  --document-accent-ink: #173f7b;
+}
+
+.document-page.document-repair-order {
+  --document-accent: #343c49;
+  --document-accent-soft: #f0f2f5;
+  --document-accent-ink: #242b35;
+}
+
+.document-page.document-invoice {
+  --document-accent: var(--red);
+  --document-accent-soft: #fff0f1;
+  --document-accent-ink: #8f1c26;
+}
+
+.document-page .document-header {
+  border-bottom-color: var(--document-accent);
+}
+
+.document-page .document-title h2 {
+  color: var(--document-accent);
+  margin-bottom: 3px;
+}
+
+.document-subtitle {
+  max-width: 260px;
+  margin: 0 0 10px auto;
+  color: #5c6878 !important;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.document-stage-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 22px 0 2px;
+  border-left: 7px solid var(--document-accent);
+  border-radius: 8px;
+  background: var(--document-accent-soft);
+  padding: 16px 18px;
+  color: var(--document-accent-ink);
+}
+
+.document-stage-banner > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.document-stage-banner strong {
+  font-size: 18px;
+}
+
+.document-stage-banner small {
+  color: #5d6878;
+  line-height: 1.35;
+}
+
+.document-stage-banner > b {
+  min-width: max-content;
+  color: var(--document-accent-ink);
+  font-size: 27px;
+  letter-spacing: -0.03em;
+}
+
+.stage-eyebrow {
+  color: var(--document-accent);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.document-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 20px 0 7px;
+}
+
+.document-section-heading h3 {
+  margin: 0;
+  color: var(--document-accent-ink);
+  font-size: 14px;
+}
+
+.document-section-heading span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.document-page .document-table th {
+  background: var(--document-accent);
+}
+
+.document-page .concern-box {
+  border-left-color: var(--document-accent);
+  background: var(--document-accent-soft);
+}
+
+.document-page .grand-total {
+  border-top-color: var(--document-accent);
+}
+
+.amount-due-row {
+  margin-top: 6px;
+  border-radius: 7px;
+  padding: 11px 12px !important;
+  font-size: 17px;
+}
+
+.amount-due-row.unpaid {
+  background: #fff0d9;
+  color: #7d4b00;
+}
+
+.amount-due-row.paid {
+  background: #e1f5e9;
+  color: var(--green);
+}
+
+.document-terms {
+  margin-top: 36px;
+  border: 1px solid #cfd6e1;
+  border-top: 5px solid var(--document-accent);
+  border-radius: 8px;
+  padding: 15px 17px;
+  background: #fbfcfe;
+  color: #4f5b6c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.document-terms > strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--document-accent-ink);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.document-terms p {
+  margin-bottom: 18px;
+}
+
+.signature-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 30px;
+  color: #394455;
+  font-weight: 700;
+}
+
+.document-invoice .document-footer {
+  border-top: 4px solid var(--red);
+  background: #fffafa;
+  padding: 14px 16px;
+}
+
+.document-invoice .document-footer strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--red);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+}
+
+.document-invoice .document-footer p {
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  .document-subtitle {
+    margin-left: 0;
+  }
+
+  .document-stage-banner,
+  .signature-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .document-stage-banner > b {
+    font-size: 23px;
+  }
+}
+
+@media print {
+  .document-stage-banner {
+    margin-top: 14px;
+    padding: 11px 13px;
+  }
+
+  .document-stage-banner > b {
+    font-size: 22px;
+  }
+
+  .document-info-grid {
+    padding: 15px 0;
+  }
+
+  .document-terms {
+    margin-top: 24px;
+    padding: 11px 13px;
+  }
+
+  .document-invoice .document-footer {
+    margin-top: 24px;
+  }
+}

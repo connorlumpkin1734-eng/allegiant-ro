@@ -1608,6 +1608,34 @@ function DocumentView({
   const total = subtotal + tax;
   const customer = ro.customers;
   const vehicle = ro.vehicles;
+  const isEstimate = ro.document_type === "estimate";
+  const isRepairOrder = ro.document_type === "repair_order";
+  const isInvoice = ro.document_type === "invoice";
+  const statusLabel = ro.status.charAt(0).toUpperCase() + ro.status.slice(1);
+
+  const documentSubtitle = isEstimate
+    ? "Proposed work and estimated pricing"
+    : isRepairOrder
+      ? "Authorized work order and shop copy"
+      : "Final charges and payment record";
+
+  const sectionHeading = isEstimate
+    ? "Proposed services"
+    : isRepairOrder
+      ? "Authorized work"
+      : "Final charges";
+
+  const concernHeading = isEstimate
+    ? "Customer request / proposed work"
+    : isRepairOrder
+      ? "Customer concern / work requested"
+      : "Services requested / performed";
+
+  const finalTotalLabel = isEstimate
+    ? "Estimated total"
+    : isRepairOrder
+      ? "Authorized total"
+      : "Invoice total";
 
   return (
     <section className="document-shell">
@@ -1626,8 +1654,9 @@ function DocumentView({
         </div>
       </div>
 
-      <article className={`document-page ${ro.status === "voided" ? "voided-document" : ""}`}>
+      <article className={`document-page document-${ro.document_type.replace("_", "-")} ${ro.status === "voided" ? "voided-document" : ""}`}>
         {ro.status === "voided" && <div className="void-watermark">VOID</div>}
+
         <header className="document-header">
           <div>
             <img
@@ -1644,14 +1673,54 @@ function DocumentView({
           </div>
           <div className="document-title">
             <h2>{labelDocument(ro.document_type)}</h2>
+            <p className="document-subtitle">{documentSubtitle}</p>
             <strong>RO #{padRo(ro.ro_number)}</strong>
             <span>{new Date(ro.created_at).toLocaleDateString()}</span>
             <div className="document-status-row">
-              {ro.status === "voided" && <span className="badge voided">Voided</span>}
+              {isRepairOrder && <span className={`badge ${ro.status}`}>{statusLabel}</span>}
+              {isInvoice && <span className={`badge ${ro.paid ? "paid" : "unpaid"}`}>{ro.paid ? "Paid" : "Unpaid"}</span>}
+              {ro.status === "voided" && !isRepairOrder && <span className="badge voided">Voided</span>}
               {ro.archived_at && <span className="badge archived">Archived</span>}
             </div>
           </div>
         </header>
+
+        <section className="document-stage-banner">
+          {isEstimate && (
+            <>
+              <div>
+                <span className="stage-eyebrow">Proposal</span>
+                <strong>Estimated total</strong>
+                <small>Based on the work and parts currently listed below.</small>
+              </div>
+              <b>{money(total)}</b>
+            </>
+          )}
+          {isRepairOrder && (
+            <>
+              <div>
+                <span className="stage-eyebrow">Work order status</span>
+                <strong>{statusLabel}</strong>
+                <small>Shop copy showing authorized work, parts, and vehicle information.</small>
+              </div>
+              <b>RO #{padRo(ro.ro_number)}</b>
+            </>
+          )}
+          {isInvoice && (
+            <>
+              <div>
+                <span className="stage-eyebrow">{ro.paid ? "Payment received" : "Amount due"}</span>
+                <strong>{ro.paid ? "Paid in full" : "Payment due"}</strong>
+                <small>
+                  {ro.paid && ro.paid_at
+                    ? `Paid ${new Date(ro.paid_at).toLocaleDateString()}`
+                    : "Final invoice for completed services and parts."}
+                </small>
+              </div>
+              <b>{money(total)}</b>
+            </>
+          )}
+        </section>
 
         <div className="document-info-grid">
           <section>
@@ -1670,20 +1739,32 @@ function DocumentView({
             <span>Engine: {vehicle?.engine || "—"}</span>
           </section>
           <section>
-            <h3>Mileage</h3>
-            <span>In: {ro.mileage_in?.toLocaleString() || "—"}</span>
-            <span>Out: {ro.mileage_out?.toLocaleString() || "—"}</span>
-            <span className={`document-payment ${ro.paid ? "paid" : "unpaid"}`}>{ro.paid ? "PAID" : "UNPAID"}</span>
-            {ro.paid_at && <span>Paid {new Date(ro.paid_at).toLocaleDateString()}</span>}
+            <h3>{isEstimate ? "Estimate details" : isRepairOrder ? "Work order details" : "Invoice details"}</h3>
+            <span>Mileage in: {ro.mileage_in?.toLocaleString() || "—"}</span>
+            {!isEstimate && <span>Mileage out: {ro.mileage_out?.toLocaleString() || "—"}</span>}
+            {isRepairOrder && <span>Status: {statusLabel}</span>}
+            {isInvoice && (
+              <>
+                <span className={`document-payment ${ro.paid ? "paid" : "unpaid"}`}>{ro.paid ? "PAID" : "UNPAID"}</span>
+                {ro.paid_at && <span>Paid {new Date(ro.paid_at).toLocaleDateString()}</span>}
+              </>
+            )}
           </section>
         </div>
 
         {ro.customer_concern && (
           <section className="concern-box">
-            <h3>Customer concern / requested work</h3>
+            <h3>{concernHeading}</h3>
             <p>{ro.customer_concern}</p>
           </section>
         )}
+
+        <div className="document-section-heading">
+          <h3>{sectionHeading}</h3>
+          {isEstimate && <span>Estimated pricing</span>}
+          {isRepairOrder && <span>Shop work detail</span>}
+          {isInvoice && <span>Final billed amount</span>}
+        </div>
 
         <table className="document-table">
           <thead>
@@ -1691,8 +1772,8 @@ function DocumentView({
               <th>Description</th>
               <th>Type</th>
               <th>Qty/Hrs</th>
-              <th>Rate/Price</th>
-              <th>Total</th>
+              <th>{isEstimate ? "Est. Rate/Price" : isInvoice ? "Final Rate/Price" : "Rate/Price"}</th>
+              <th>Amount</th>
             </tr>
           </thead>
           <tbody>
@@ -1712,7 +1793,7 @@ function DocumentView({
           <div className="document-notes">
             {ro.notes && (
               <>
-                <h3>Notes</h3>
+                <h3>{isInvoice ? "Service notes" : "Notes"}</h3>
                 <p>{ro.notes}</p>
               </>
             )}
@@ -1720,13 +1801,45 @@ function DocumentView({
           <div className="document-totals">
             <div><span>Subtotal</span><strong>{money(subtotal)}</strong></div>
             <div><span>Tax ({Number(ro.tax_rate).toFixed(3)}%)</span><strong>{money(tax)}</strong></div>
-            <div className="grand-total"><span>Total</span><strong>{money(total)}</strong></div>
+            <div className="grand-total"><span>{finalTotalLabel}</span><strong>{money(total)}</strong></div>
+            {isInvoice && (
+              <div className={`amount-due-row ${ro.paid ? "paid" : "unpaid"}`}>
+                <span>{ro.paid ? "Balance" : "Amount due"}</span>
+                <strong>{money(ro.paid ? 0 : total)}</strong>
+              </div>
+            )}
           </div>
         </div>
 
-        <footer className="document-footer">{settings.invoice_footer}</footer>
+        {isEstimate && (
+          <section className="document-terms estimate-terms">
+            <strong>Estimate terms</strong>
+            <p>This estimate is based on currently known conditions and listed work. Additional repairs require customer approval and may change the final invoice total.</p>
+            <div className="signature-row">
+              <span>Approved by: ______________________________</span>
+              <span>Date: __________________</span>
+            </div>
+          </section>
+        )}
+
+        {isRepairOrder && (
+          <section className="document-terms repair-order-terms">
+            <strong>Work authorization</strong>
+            <p>Customer authorizes Allegiant Auto Care to perform the work listed above and acknowledges that additional work requires further approval.</p>
+            <div className="signature-row">
+              <span>Authorized by: ____________________________</span>
+              <span>Date: __________________</span>
+            </div>
+          </section>
+        )}
+
+        {isInvoice && (
+          <footer className="document-footer">
+            <strong>{ro.paid ? "PAID IN FULL" : "PAYMENT DUE UPON COMPLETION"}</strong>
+            <p>{settings.invoice_footer}</p>
+          </footer>
+        )}
       </article>
     </section>
   );
 }
-
