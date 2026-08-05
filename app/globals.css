@@ -311,3 +311,49 @@ tbody tr:hover { background: #f8fafc; }
   .document-table th, .document-table td { padding: 7px 6px; }
   .document-footer { margin-top: 28px; }
 }
+
+.login-logo {
+  display: block;
+  width: 100%;
+  max-width: 350px;
+  height: auto;
+  margin: 0 auto 24px;
+}
+
+.topbar-logo {
+  display: block;
+  width: 245px;
+  max-height: 54px;
+  object-fit: contain;
+}
+
+.brand-button {
+  background: white;
+  border-radius: 8px;
+  padding: 5px 9px;
+}
+
+.document-logo {
+  display: block;
+  width: 360px;
+  max-width: 100%;
+  height: auto;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 700px) {
+  .topbar-logo {
+    width: 205px;
+  }
+
+  .document-logo {
+    width: 280px;
+  }
+}
+
+@media print {
+  .document-logo {
+    width: 300px;
+    margin-bottom: 8px;
+  }
+}
