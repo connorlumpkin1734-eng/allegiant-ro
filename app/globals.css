@@ -357,3 +357,11 @@ tbody tr:hover { background: #f8fafc; }
     margin-bottom: 8px;
   }
 }
+
+.login-logo {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+  margin: 0 auto 20px;
+}
