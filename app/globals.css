@@ -365,3 +365,57 @@ tbody tr:hover { background: #f8fafc; }
   height: auto;
   margin: 0 auto 20px;
 }
+
+
+/* Archive, void, and deletion controls */
+.button.danger { color: white; background: #a61b27; }
+.button.danger:hover { background: #86141e; }
+.button.warning { color: #6b3d00; background: #ffe4b5; }
+.button.warning:hover { background: #ffd48a; }
+.button.success { color: #0f633c; background: #dff4e9; }
+.button.success:hover { background: #c8ead9; }
+
+.toolbar-between { align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.archive-toggle { min-width: max-content; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
+.badge-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.badge.open { background: #e9f1ff; color: #204f91; }
+.badge.completed { background: #e7f7ef; color: var(--green); }
+.badge.voided { background: #fae7e9; color: #981c28; }
+.badge.archived { background: #e9e7f5; color: #54458c; }
+
+.actions-cell { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; min-width: 330px; }
+.actions-cell .button + .button { margin-left: 0; }
+.archived-row { background: #f3f1f8; opacity: 0.82; }
+.archived-row:hover { background: #ece8f4; }
+.archived-card { border-color: #c9c2df; background: #faf9fd; }
+.customer-card-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.history-lock { color: var(--muted); font-size: 12px; font-weight: 700; }
+
+.document-page { position: relative; overflow: hidden; }
+.document-page > *:not(.void-watermark) { position: relative; z-index: 1; }
+.void-watermark {
+  position: absolute;
+  z-index: 0;
+  top: 43%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-28deg);
+  color: rgba(166, 27, 39, 0.11);
+  font-size: clamp(110px, 19vw, 230px);
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  user-select: none;
+}
+.document-status-row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+
+@media (max-width: 700px) {
+  .toolbar-between { align-items: stretch; }
+  .archive-toggle { width: 100%; }
+  .actions-cell { min-width: 250px; justify-content: flex-start; }
+  .customer-card-actions { align-items: stretch; flex-direction: column; }
+  .document-status-row { justify-content: flex-start; }
+}
+
+@media print {
+  .void-watermark { color: rgba(166, 27, 39, 0.13); }
+}

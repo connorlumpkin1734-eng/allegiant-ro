@@ -23,6 +23,7 @@ type Settings = {
 
 type Customer = {
   id: string;
+  archived_at: string | null;
   name: string;
   address_line_1: string | null;
   address_line_2: string | null;
@@ -78,6 +79,7 @@ type RepairOrder = {
   tax_rate: number;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
   customers?: Customer | null;
   vehicles?: Vehicle | null;
   line_items?: LineItem[];
@@ -425,15 +427,124 @@ function RepairOrderApp({ user }: { user: User }) {
     setView("editor");
   }
 
+  async function refreshCurrentDocument(id: string) {
+    await loadData();
+    if (view === "document" && selectedRo?.id === id) {
+      await openDocument(id);
+    }
+  }
+
+  async function toggleVoid(ro: RepairOrder) {
+    const reopening = ro.status === "voided";
+    const verb = reopening ? "reopen" : "void";
+    if (!reopening && !window.confirm(`Void RO #${padRo(ro.ro_number)}? The record will stay in your history and can be reopened later.`)) {
+      return;
+    }
+
+    setError("");
+    const { error: updateError } = await supabase
+      .from("repair_orders")
+      .update({ status: reopening ? "open" : "voided" })
+      .eq("id", ro.id);
+
+    if (updateError) {
+      setError(`Could not ${verb} RO #${padRo(ro.ro_number)}: ${updateError.message}`);
+      return;
+    }
+
+    await refreshCurrentDocument(ro.id);
+  }
+
+  async function toggleArchiveRo(ro: RepairOrder) {
+    const restoring = Boolean(ro.archived_at);
+    if (!restoring && !window.confirm(`Archive RO #${padRo(ro.ro_number)}? It will be hidden from the normal dashboard but can be restored.`)) {
+      return;
+    }
+
+    setError("");
+    const { error: updateError } = await supabase
+      .from("repair_orders")
+      .update({ archived_at: restoring ? null : new Date().toISOString() })
+      .eq("id", ro.id);
+
+    if (updateError) {
+      setError(`Could not ${restoring ? "restore" : "archive"} RO #${padRo(ro.ro_number)}: ${updateError.message}`);
+      return;
+    }
+
+    await refreshCurrentDocument(ro.id);
+  }
+
+  async function deleteRo(ro: RepairOrder) {
+    const confirmed = window.confirm(
+      `Permanently delete RO #${padRo(ro.ro_number)}?\n\nThis also deletes its line items and cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setError("");
+    const { error: deleteError } = await supabase.from("repair_orders").delete().eq("id", ro.id);
+    if (deleteError) {
+      setError(`Could not delete RO #${padRo(ro.ro_number)}: ${deleteError.message}`);
+      return;
+    }
+
+    if (selectedRo?.id === ro.id) setSelectedRo(null);
+    if (editingRo?.id === ro.id) setEditingRo(null);
+    setView("dashboard");
+    await loadData();
+  }
+
+  async function toggleArchiveCustomer(customer: Customer) {
+    const restoring = Boolean(customer.archived_at);
+    if (!restoring && !window.confirm(`Archive ${customer.name}? They will be hidden from the normal customer list and new-RO selector, but their history will remain.`)) {
+      return;
+    }
+
+    setError("");
+    const { error: updateError } = await supabase
+      .from("customers")
+      .update({ archived_at: restoring ? null : new Date().toISOString() })
+      .eq("id", customer.id);
+
+    if (updateError) {
+      setError(`Could not ${restoring ? "restore" : "archive"} ${customer.name}: ${updateError.message}`);
+      return;
+    }
+
+    await loadData();
+  }
+
+  async function deleteCustomer(customer: Customer) {
+    const roCount = repairOrders.filter((ro) => ro.customer_id === customer.id).length;
+    if (roCount > 0) {
+      setError(`${customer.name} has ${roCount} repair order${roCount === 1 ? "" : "s"}. Archive the customer instead, or delete those ROs first.`);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Permanently delete ${customer.name}?\n\nTheir saved vehicles will also be deleted. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setError("");
+    const { error: deleteError } = await supabase.from("customers").delete().eq("id", customer.id);
+    if (deleteError) {
+      setError(`Could not delete ${customer.name}: ${deleteError.message}`);
+      return;
+    }
+
+    await loadData();
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar no-print">
         <button className="brand-button" type="button" onClick={() => setView("dashboard")}>
           <img
-  className="topbar-logo"
-  src="/allegiant-auto-care-logo.png"
-  alt="Allegiant Auto Care"
-/>
+            className="topbar-logo"
+            src="/allegiant-auto-care-logo.png"
+            alt="Allegiant Auto Care"
+          />
         </button>
         <nav>
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
@@ -457,7 +568,15 @@ function RepairOrderApp({ user }: { user: User }) {
         {loading ? (
           <div className="panel">Loading shop data…</div>
         ) : view === "dashboard" ? (
-          <Dashboard repairOrders={repairOrders} onNew={startNew} onOpen={openDocument} onEdit={editDocument} />
+          <Dashboard
+            repairOrders={repairOrders}
+            onNew={startNew}
+            onOpen={openDocument}
+            onEdit={editDocument}
+            onVoid={toggleVoid}
+            onArchive={toggleArchiveRo}
+            onDelete={deleteRo}
+          />
         ) : view === "editor" ? (
           <RepairOrderEditor
             user={user}
@@ -472,7 +591,13 @@ function RepairOrderApp({ user }: { user: User }) {
             }}
           />
         ) : view === "customers" ? (
-          <CustomerDirectory customers={customers} vehicles={vehicles} repairOrders={repairOrders} />
+          <CustomerDirectory
+            customers={customers}
+            vehicles={vehicles}
+            repairOrders={repairOrders}
+            onArchive={toggleArchiveCustomer}
+            onDelete={deleteCustomer}
+          />
         ) : view === "settings" ? (
           <SettingsPanel
             user={user}
@@ -488,6 +613,9 @@ function RepairOrderApp({ user }: { user: User }) {
             settings={settings}
             onBack={() => setView("dashboard")}
             onEdit={() => editDocument(selectedRo.id)}
+            onVoid={() => toggleVoid(selectedRo)}
+            onArchive={() => toggleArchiveRo(selectedRo)}
+            onDelete={() => deleteRo(selectedRo)}
           />
         ) : null}
       </main>
@@ -500,16 +628,24 @@ function Dashboard({
   onNew,
   onOpen,
   onEdit,
+  onVoid,
+  onArchive,
+  onDelete,
 }: {
   repairOrders: RepairOrder[];
   onNew: () => void;
   onOpen: (id: string) => void;
   onEdit: (id: string) => void;
+  onVoid: (ro: RepairOrder) => void;
+  onArchive: (ro: RepairOrder) => void;
+  onDelete: (ro: RepairOrder) => void;
 }) {
   const [search, setSearch] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const normalized = search.toLowerCase().trim();
 
-  const filtered = repairOrders.filter((ro) => {
+  const visibleRecords = repairOrders.filter((ro) => showArchived || !ro.archived_at);
+  const filtered = visibleRecords.filter((ro) => {
     if (!normalized) return true;
     const customer = ro.customers;
     const vehicle = ro.vehicles;
@@ -524,6 +660,8 @@ function Dashboard({
       vehicle?.vin,
       vehicle?.license_plate,
       ro.customer_concern,
+      ro.status,
+      ro.archived_at ? "archived" : "",
     ]
       .filter(Boolean)
       .join(" ")
@@ -531,8 +669,12 @@ function Dashboard({
     return haystack.includes(normalized);
   });
 
-  const openCount = repairOrders.filter((ro) => ro.status === "open").length;
-  const unpaidCount = repairOrders.filter((ro) => !ro.paid && ro.document_type === "invoice").length;
+  const activeRecords = repairOrders.filter((ro) => !ro.archived_at);
+  const archivedCount = repairOrders.length - activeRecords.length;
+  const openCount = activeRecords.filter((ro) => ro.status === "open").length;
+  const unpaidCount = activeRecords.filter(
+    (ro) => !ro.paid && ro.document_type === "invoice" && ro.status !== "voided"
+  ).length;
 
   return (
     <section>
@@ -548,8 +690,8 @@ function Dashboard({
 
       <div className="summary-grid">
         <div className="summary-card">
-          <span>Total records</span>
-          <strong>{repairOrders.length}</strong>
+          <span>Active records</span>
+          <strong>{activeRecords.length}</strong>
         </div>
         <div className="summary-card">
           <span>Open</span>
@@ -562,13 +704,21 @@ function Dashboard({
       </div>
 
       <div className="panel">
-        <div className="toolbar">
+        <div className="toolbar toolbar-between">
           <input
             className="search-input"
             placeholder="Search customer, phone, VIN, plate, RO, vehicle…"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
+          <label className="checkbox-row archive-toggle">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(event) => setShowArchived(event.target.checked)}
+            />
+            Show archived ({archivedCount})
+          </label>
         </div>
         <div className="table-wrap">
           <table>
@@ -579,13 +729,14 @@ function Dashboard({
                 <th>Customer</th>
                 <th>Vehicle</th>
                 <th>Document</th>
+                <th>Status</th>
                 <th>Payment</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((ro) => (
-                <tr key={ro.id}>
+                <tr key={ro.id} className={ro.archived_at ? "archived-row" : ""}>
                   <td className="ro-number">#{padRo(ro.ro_number)}</td>
                   <td>{new Date(ro.created_at).toLocaleDateString()}</td>
                   <td>{ro.customers?.name || "—"}</td>
@@ -593,6 +744,14 @@ function Dashboard({
                     {[ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "—"}
                   </td>
                   <td>{labelDocument(ro.document_type)}</td>
+                  <td>
+                    <div className="badge-row">
+                      <span className={`badge ${ro.status === "voided" ? "voided" : ro.status === "completed" ? "completed" : "open"}`}>
+                        {ro.status === "voided" ? "Voided" : ro.status === "completed" ? "Completed" : "Open"}
+                      </span>
+                      {ro.archived_at && <span className="badge archived">Archived</span>}
+                    </div>
+                  </td>
                   <td>
                     <span className={`badge ${ro.paid ? "paid" : "unpaid"}`}>
                       {ro.paid ? "Paid" : "Unpaid"}
@@ -602,16 +761,27 @@ function Dashboard({
                     <button className="button small secondary" onClick={() => onOpen(ro.id)}>
                       Open
                     </button>
-                    <button className="button small ghost" onClick={() => onEdit(ro.id)}>
-                      Edit
+                    {!ro.archived_at && (
+                      <button className="button small ghost" onClick={() => onEdit(ro.id)}>
+                        Edit
+                      </button>
+                    )}
+                    <button className={`button small ${ro.status === "voided" ? "success" : "warning"}`} onClick={() => onVoid(ro)}>
+                      {ro.status === "voided" ? "Reopen" : "Void"}
+                    </button>
+                    <button className="button small ghost" onClick={() => onArchive(ro)}>
+                      {ro.archived_at ? "Restore" : "Archive"}
+                    </button>
+                    <button className="button small danger" onClick={() => onDelete(ro)}>
+                      Delete
                     </button>
                   </td>
                 </tr>
               ))}
               {!filtered.length && (
                 <tr>
-                  <td colSpan={7} className="empty-state">
-                    No matching repair orders.
+                  <td colSpan={8} className="empty-state">
+                    {showArchived ? "No matching repair orders." : "No matching active repair orders."}
                   </td>
                 </tr>
               )}
@@ -692,6 +862,11 @@ function RepairOrderEditor({
   const [busy, setBusy] = useState(false);
   const [vinBusy, setVinBusy] = useState(false);
   const [message, setMessage] = useState("");
+
+  const selectableCustomers = useMemo(
+    () => customers.filter((customer) => !customer.archived_at || customer.id === initialRo?.customer_id),
+    [customers, initialRo?.customer_id]
+  );
 
   const customerVehicles = useMemo(
     () => vehicles.filter((vehicle) => vehicle.customer_id === selectedCustomerId),
@@ -981,7 +1156,7 @@ function RepairOrderEditor({
               <h2>Customer</h2>
               <select value={selectedCustomerId} onChange={(event) => chooseCustomer(event.target.value)}>
                 <option value="">+ New customer</option>
-                {customers.map((customer) => (
+                {selectableCustomers.map((customer) => (
                   <option key={customer.id} value={customer.id}>
                     {customer.name}{customer.phone ? ` — ${customer.phone}` : ""}
                   </option>
@@ -1227,19 +1402,27 @@ function CustomerDirectory({
   customers,
   vehicles,
   repairOrders,
+  onArchive,
+  onDelete,
 }: {
   customers: Customer[];
   vehicles: Vehicle[];
   repairOrders: RepairOrder[];
+  onArchive: (customer: Customer) => void;
+  onDelete: (customer: Customer) => void;
 }) {
   const [search, setSearch] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const query = search.toLowerCase().trim();
+  const archivedCount = customers.filter((customer) => customer.archived_at).length;
   const filtered = customers.filter((customer) => {
+    if (!showArchived && customer.archived_at) return false;
     const customerVehicles = vehicles.filter((vehicle) => vehicle.customer_id === customer.id);
     const text = [
       customer.name,
       customer.phone,
       customer.email,
+      customer.archived_at ? "archived" : "",
       ...customerVehicles.flatMap((vehicle) => [vehicle.year, vehicle.make, vehicle.model, vehicle.vin, vehicle.license_plate]),
     ]
       .filter(Boolean)
@@ -1256,21 +1439,37 @@ function CustomerDirectory({
           <p>Search the stored customer and vehicle history.</p>
         </div>
       </div>
-      <div className="panel">
-        <input className="search-input" placeholder="Search name, phone, VIN, plate, vehicle…" value={search} onChange={(event) => setSearch(event.target.value)} />
+      <div className="panel toolbar toolbar-between">
+        <input
+          className="search-input"
+          placeholder="Search name, phone, VIN, plate, vehicle…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        <label className="checkbox-row archive-toggle">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.target.checked)}
+          />
+          Show archived ({archivedCount})
+        </label>
       </div>
       <div className="customer-grid">
         {filtered.map((customer) => {
           const ownedVehicles = vehicles.filter((vehicle) => vehicle.customer_id === customer.id);
           const roCount = repairOrders.filter((ro) => ro.customer_id === customer.id).length;
           return (
-            <article className="panel customer-card" key={customer.id}>
+            <article className={`panel customer-card ${customer.archived_at ? "archived-card" : ""}`} key={customer.id}>
               <div className="section-heading">
                 <div>
                   <h2>{customer.name}</h2>
                   <p className="muted">{customer.phone || "No phone"}{customer.email ? ` · ${customer.email}` : ""}</p>
                 </div>
-                <span className="badge neutral">{roCount} RO{roCount === 1 ? "" : "s"}</span>
+                <div className="badge-row">
+                  <span className="badge neutral">{roCount} RO{roCount === 1 ? "" : "s"}</span>
+                  {customer.archived_at && <span className="badge archived">Archived</span>}
+                </div>
               </div>
               {(customer.address_line_1 || customer.city) && (
                 <p>{[customer.address_line_1, customer.city, customer.state, customer.zip_code].filter(Boolean).join(", ")}</p>
@@ -1284,9 +1483,26 @@ function CustomerDirectory({
                 ))}
                 {!ownedVehicles.length && <span className="muted">No vehicles saved.</span>}
               </div>
+              <div className="customer-card-actions">
+                <button className="button small ghost" onClick={() => onArchive(customer)}>
+                  {customer.archived_at ? "Restore customer" : "Archive customer"}
+                </button>
+                {roCount === 0 ? (
+                  <button className="button small danger" onClick={() => onDelete(customer)}>
+                    Permanently delete
+                  </button>
+                ) : (
+                  <span className="history-lock">Has service history — archive only</span>
+                )}
+              </div>
             </article>
           );
         })}
+        {!filtered.length && (
+          <div className="panel empty-state">
+            {showArchived ? "No matching customers." : "No matching active customers."}
+          </div>
+        )}
       </div>
     </section>
   );
@@ -1373,11 +1589,17 @@ function DocumentView({
   settings,
   onBack,
   onEdit,
+  onVoid,
+  onArchive,
+  onDelete,
 }: {
   ro: RepairOrder;
   settings: Settings;
   onBack: () => void;
   onEdit: () => void;
+  onVoid: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
 }) {
   const items = ro.line_items ?? [];
   const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
@@ -1392,30 +1614,42 @@ function DocumentView({
       <div className="document-actions no-print">
         <button className="button secondary" onClick={onBack}>← Back</button>
         <div className="button-row">
-          <button className="button secondary" onClick={onEdit}>Edit</button>
+          {!ro.archived_at && <button className="button secondary" onClick={onEdit}>Edit</button>}
+          <button className={`button ${ro.status === "voided" ? "success" : "warning"}`} onClick={onVoid}>
+            {ro.status === "voided" ? "Reopen" : "Void"}
+          </button>
+          <button className="button ghost" onClick={onArchive}>
+            {ro.archived_at ? "Restore" : "Archive"}
+          </button>
+          <button className="button danger" onClick={onDelete}>Delete permanently</button>
           <button className="button primary" onClick={() => window.print()}>Print / Save PDF</button>
         </div>
       </div>
 
-      <article className="document-page">
+      <article className={`document-page ${ro.status === "voided" ? "voided-document" : ""}`}>
+        {ro.status === "voided" && <div className="void-watermark">VOID</div>}
         <header className="document-header">
           <div>
-  <img
-    className="document-logo"
-    src="/allegiant-auto-care-logo.png"
-    alt="Allegiant Auto Care"
-  />
-  {settings.business_address && <p>{settings.business_address}</p>}
-  <p>
-    {[settings.business_phone, settings.business_email]
-      .filter(Boolean)
-      .join(" · ")}
-  </p>
-</div>
+            <img
+              className="document-logo"
+              src="/allegiant-auto-care-logo.png"
+              alt="Allegiant Auto Care"
+            />
+            {settings.business_address && <p>{settings.business_address}</p>}
+            <p>
+              {[settings.business_phone, settings.business_email]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </div>
           <div className="document-title">
             <h2>{labelDocument(ro.document_type)}</h2>
             <strong>RO #{padRo(ro.ro_number)}</strong>
             <span>{new Date(ro.created_at).toLocaleDateString()}</span>
+            <div className="document-status-row">
+              {ro.status === "voided" && <span className="badge voided">Voided</span>}
+              {ro.archived_at && <span className="badge archived">Archived</span>}
+            </div>
           </div>
         </header>
 
@@ -1495,3 +1729,4 @@ function DocumentView({
     </section>
   );
 }
+
