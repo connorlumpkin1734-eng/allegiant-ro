@@ -4,7 +4,9 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
-type View = "dashboard" | "editor" | "customers" | "settings" | "document";
+type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document";
+type DocumentMode = "estimate" | "work_order" | "invoice";
+type WorkspaceTab = "work_order" | "invoice";
 type DocumentType = "estimate" | "repair_order" | "invoice";
 type ItemType = "labor" | "part" | "fee" | "discount";
 
@@ -160,9 +162,18 @@ function padRo(value: number | string | null | undefined): string {
   return String(value ?? "").padStart(4, "0");
 }
 
-function labelDocument(type: DocumentType): string {
-  if (type === "repair_order") return "Repair Order";
-  return type.charAt(0).toUpperCase() + type.slice(1);
+function statusLabel(status: RepairOrder["status"]): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function repairOrderTotal(ro: RepairOrder): number {
+  const items = ro.line_items ?? [];
+  const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+  const taxableSubtotal = items.reduce(
+    (sum, item) => sum + (item.taxable ? item.quantity * item.unit_price : 0),
+    0
+  );
+  return subtotal + Math.max(0, taxableSubtotal) * (Number(ro.tax_rate) / 100);
 }
 
 function valueOrNull(value: string): string | null {
@@ -281,7 +292,7 @@ function AuthScreen() {
   src="/allegiant-auto-care-logo.png"
   alt="Allegiant Auto Care"
 />
-        <p className="muted">Repair orders, estimates, and invoices.</p>
+        <p className="muted">Work orders, estimates, and invoices.</p>
         <form onSubmit={submit} className="stack">
           <label>
             Email
@@ -331,7 +342,13 @@ function RepairOrderApp({ user }: { user: User }) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [repairOrders, setRepairOrders] = useState<RepairOrder[]>([]);
   const [selectedRo, setSelectedRo] = useState<RepairOrder | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [editingRo, setEditingRo] = useState<RepairOrder | null>(null);
+  const [newContext, setNewContext] = useState<{ customerId: string; vehicleId: string }>({ customerId: "", vehicleId: "" });
+  const [documentMode, setDocumentMode] = useState<DocumentMode>("work_order");
+  const [documentReturnView, setDocumentReturnView] = useState<"dashboard" | "customer_profile" | "editor">("dashboard");
+  const [editorTab, setEditorTab] = useState<WorkspaceTab>("work_order");
+  const [editorReturnView, setEditorReturnView] = useState<"dashboard" | "customer_profile">("dashboard");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -345,7 +362,7 @@ function RepairOrderApp({ user }: { user: User }) {
       supabase.from("vehicles").select("*").order("year", { ascending: false }),
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*)")
+        .select("*, customers(*), vehicles(*), line_items(*)")
         .order("created_at", { ascending: false }),
     ]);
 
@@ -372,10 +389,21 @@ function RepairOrderApp({ user }: { user: User }) {
       }
     }
 
+    const loadedRos = ((roResult.data ?? []) as RepairOrder[]).map((ro) => ({
+      ...ro,
+      line_items: [...(ro.line_items ?? [])].sort((a, b) => a.sort_order - b.sort_order),
+    }));
+
     setSettings(loadedSettings ?? defaultSettings);
     setCustomers((customersResult.data ?? []) as Customer[]);
     setVehicles((vehiclesResult.data ?? []) as Vehicle[]);
-    setRepairOrders((roResult.data ?? []) as RepairOrder[]);
+    setRepairOrders(loadedRos);
+
+    if (selectedCustomer) {
+      const refreshed = ((customersResult.data ?? []) as Customer[]).find((customer) => customer.id === selectedCustomer.id);
+      setSelectedCustomer(refreshed ?? null);
+    }
+
     setLoading(false);
   }
 
@@ -384,7 +412,11 @@ function RepairOrderApp({ user }: { user: User }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function openDocument(id: string) {
+  async function openDocument(
+    id: string,
+    mode: DocumentMode = "work_order",
+    returnView: "dashboard" | "customer_profile" | "editor" = "dashboard"
+  ) {
     setError("");
     const { data, error: fetchError } = await supabase
       .from("repair_orders")
@@ -400,10 +432,16 @@ function RepairOrderApp({ user }: { user: User }) {
     const loaded = data as RepairOrder;
     loaded.line_items = [...(loaded.line_items ?? [])].sort((a, b) => a.sort_order - b.sort_order);
     setSelectedRo(loaded);
+    setDocumentMode(mode);
+    setDocumentReturnView(returnView);
     setView("document");
   }
 
-  async function editDocument(id: string) {
+  async function editDocument(
+    id: string,
+    returnView: "dashboard" | "customer_profile" = "dashboard",
+    tab: WorkspaceTab = "work_order"
+  ) {
     setError("");
     const { data, error: fetchError } = await supabase
       .from("repair_orders")
@@ -419,18 +457,29 @@ function RepairOrderApp({ user }: { user: User }) {
     const loaded = data as RepairOrder;
     loaded.line_items = [...(loaded.line_items ?? [])].sort((a, b) => a.sort_order - b.sort_order);
     setEditingRo(loaded);
+    setNewContext({ customerId: loaded.customer_id, vehicleId: loaded.vehicle_id });
+    setEditorReturnView(returnView);
+    setEditorTab(tab);
     setView("editor");
   }
 
-  function startNew() {
+  function startNew(customerId = "", vehicleId = "", returnView: "dashboard" | "customer_profile" = "dashboard") {
     setEditingRo(null);
+    setNewContext({ customerId, vehicleId });
+    setEditorReturnView(returnView);
+    setEditorTab("work_order");
     setView("editor");
+  }
+
+  function openCustomer(customer: Customer) {
+    setSelectedCustomer(customer);
+    setView("customer_profile");
   }
 
   async function refreshCurrentDocument(id: string) {
     await loadData();
     if (view === "document" && selectedRo?.id === id) {
-      await openDocument(id);
+      await openDocument(id, documentMode, documentReturnView);
     }
   }
 
@@ -490,13 +539,16 @@ function RepairOrderApp({ user }: { user: User }) {
 
     if (selectedRo?.id === ro.id) setSelectedRo(null);
     if (editingRo?.id === ro.id) setEditingRo(null);
-    setView("dashboard");
+    const shouldReturnToCustomer =
+      selectedCustomer &&
+      (view === "customer_profile" || (view === "document" && documentReturnView === "customer_profile"));
     await loadData();
+    setView(shouldReturnToCustomer ? "customer_profile" : "dashboard");
   }
 
   async function toggleArchiveCustomer(customer: Customer) {
     const restoring = Boolean(customer.archived_at);
-    if (!restoring && !window.confirm(`Archive ${customer.name}? They will be hidden from the normal customer list and new-RO selector, but their history will remain.`)) {
+    if (!restoring && !window.confirm(`Archive ${customer.name}? They will be hidden from the normal customer list and new-work-order selector, but their history will remain.`)) {
       return;
     }
 
@@ -517,7 +569,7 @@ function RepairOrderApp({ user }: { user: User }) {
   async function deleteCustomer(customer: Customer) {
     const roCount = repairOrders.filter((ro) => ro.customer_id === customer.id).length;
     if (roCount > 0) {
-      setError(`${customer.name} has ${roCount} repair order${roCount === 1 ? "" : "s"}. Archive the customer instead, or delete those ROs first.`);
+      setError(`${customer.name} has ${roCount} work order${roCount === 1 ? "" : "s"}. Archive the customer instead, or delete those work orders first.`);
       return;
     }
 
@@ -533,8 +585,28 @@ function RepairOrderApp({ user }: { user: User }) {
       return;
     }
 
+    setSelectedCustomer(null);
     await loadData();
+    setView("customers");
   }
+
+  const returnFromDocument = () => {
+    if (documentReturnView === "editor" && selectedRo) {
+      void editDocument(selectedRo.id, editorReturnView, editorTab);
+    } else if (documentReturnView === "customer_profile" && selectedCustomer) {
+      setView("customer_profile");
+    } else {
+      setView("dashboard");
+    }
+  };
+
+  const returnFromEditor = () => {
+    if (editorReturnView === "customer_profile" && selectedCustomer) {
+      setView("customer_profile");
+    } else {
+      setView("dashboard");
+    }
+  };
 
   return (
     <div className="app-shell">
@@ -548,10 +620,10 @@ function RepairOrderApp({ user }: { user: User }) {
         </button>
         <nav>
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
-            Dashboard
+            Work Orders
           </button>
-          <button onClick={startNew}>New RO</button>
-          <button className={view === "customers" ? "active" : ""} onClick={() => setView("customers")}>
+          <button onClick={() => startNew()}>New Work Order</button>
+          <button className={view === "customers" || view === "customer_profile" ? "active" : ""} onClick={() => setView("customers")}>
             Customers
           </button>
           <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
@@ -570,9 +642,17 @@ function RepairOrderApp({ user }: { user: User }) {
         ) : view === "dashboard" ? (
           <Dashboard
             repairOrders={repairOrders}
-            onNew={startNew}
-            onOpen={openDocument}
-            onEdit={editDocument}
+            onNew={() => startNew()}
+            onOpen={(id, mode) => {
+              const ro = repairOrders.find((entry) => entry.id === id);
+              if (ro?.archived_at) {
+                void openDocument(id, mode, "dashboard");
+              } else {
+                void editDocument(id, "dashboard", mode === "invoice" ? "invoice" : "work_order");
+              }
+            }}
+            onEdit={(id) => editDocument(id, "dashboard", "work_order")}
+            onOpenCustomer={openCustomer}
             onVoid={toggleVoid}
             onArchive={toggleArchiveRo}
             onDelete={deleteRo}
@@ -584,10 +664,18 @@ function RepairOrderApp({ user }: { user: User }) {
             customers={customers}
             vehicles={vehicles}
             initialRo={editingRo}
-            onCancel={() => setView("dashboard")}
-            onSaved={async (id) => {
+            initialCustomerId={newContext.customerId}
+            initialVehicleId={newContext.vehicleId}
+            initialTab={editorTab}
+            onCancel={returnFromEditor}
+            onSaved={async (id, tab, previewMode) => {
+              setEditorTab(tab);
               await loadData();
-              await openDocument(id);
+              if (previewMode) {
+                await openDocument(id, previewMode, "editor");
+              } else {
+                await editDocument(id, editorReturnView, tab);
+              }
             }}
           />
         ) : view === "customers" ? (
@@ -595,6 +683,25 @@ function RepairOrderApp({ user }: { user: User }) {
             customers={customers}
             vehicles={vehicles}
             repairOrders={repairOrders}
+            onOpenCustomer={openCustomer}
+            onArchive={toggleArchiveCustomer}
+            onDelete={deleteCustomer}
+          />
+        ) : view === "customer_profile" && selectedCustomer ? (
+          <CustomerProfile
+            customer={selectedCustomer}
+            vehicles={vehicles}
+            repairOrders={repairOrders}
+            onBack={() => setView("customers")}
+            onOpenRo={(id, mode) => {
+              const ro = repairOrders.find((entry) => entry.id === id);
+              if (ro?.archived_at) {
+                void openDocument(id, mode, "customer_profile");
+              } else {
+                void editDocument(id, "customer_profile", mode === "invoice" ? "invoice" : "work_order");
+              }
+            }}
+            onNew={(customerId, vehicleId) => startNew(customerId, vehicleId, "customer_profile")}
             onArchive={toggleArchiveCustomer}
             onDelete={deleteCustomer}
           />
@@ -611,8 +718,14 @@ function RepairOrderApp({ user }: { user: User }) {
           <DocumentView
             ro={selectedRo}
             settings={settings}
-            onBack={() => setView("dashboard")}
-            onEdit={() => editDocument(selectedRo.id)}
+            mode={documentMode}
+            onModeChange={setDocumentMode}
+            onBack={returnFromDocument}
+            onEdit={() => editDocument(
+              selectedRo.id,
+              documentReturnView === "customer_profile" ? "customer_profile" : editorReturnView,
+              documentMode === "invoice" ? "invoice" : "work_order"
+            )}
             onVoid={() => toggleVoid(selectedRo)}
             onArchive={() => toggleArchiveRo(selectedRo)}
             onDelete={() => deleteRo(selectedRo)}
@@ -628,14 +741,16 @@ function Dashboard({
   onNew,
   onOpen,
   onEdit,
+  onOpenCustomer,
   onVoid,
   onArchive,
   onDelete,
 }: {
   repairOrders: RepairOrder[];
   onNew: () => void;
-  onOpen: (id: string) => void;
+  onOpen: (id: string, mode: DocumentMode) => void;
   onEdit: (id: string) => void;
+  onOpenCustomer: (customer: Customer) => void;
   onVoid: (ro: RepairOrder) => void;
   onArchive: (ro: RepairOrder) => void;
   onDelete: (ro: RepairOrder) => void;
@@ -661,6 +776,7 @@ function Dashboard({
       vehicle?.license_plate,
       ro.customer_concern,
       ro.status,
+      ro.paid ? "paid" : "unpaid",
       ro.archived_at ? "archived" : "",
     ]
       .filter(Boolean)
@@ -673,32 +789,32 @@ function Dashboard({
   const archivedCount = repairOrders.length - activeRecords.length;
   const openCount = activeRecords.filter((ro) => ro.status === "open").length;
   const unpaidCount = activeRecords.filter(
-    (ro) => !ro.paid && ro.document_type === "invoice" && ro.status !== "voided"
+    (ro) => ro.status === "completed" && !ro.paid
   ).length;
 
   return (
     <section>
       <div className="page-heading">
         <div>
-          <h1>Repair Orders</h1>
-          <p>One RO number from estimate through invoice.</p>
+          <h1>Work Orders</h1>
+          <p>One job record. Print it as an estimate, use it as the shop work order, and issue the final invoice.</p>
         </div>
         <button className="button primary" onClick={onNew}>
-          + New RO
+          + New Work Order
         </button>
       </div>
 
       <div className="summary-grid">
         <div className="summary-card">
-          <span>Active records</span>
+          <span>Active work orders</span>
           <strong>{activeRecords.length}</strong>
         </div>
         <div className="summary-card">
-          <span>Open</span>
+          <span>Open jobs</span>
           <strong>{openCount}</strong>
         </div>
         <div className="summary-card">
-          <span>Unpaid invoices</span>
+          <span>Completed & unpaid</span>
           <strong>{unpaidCount}</strong>
         </div>
       </div>
@@ -728,9 +844,9 @@ function Dashboard({
                 <th>Date</th>
                 <th>Customer</th>
                 <th>Vehicle</th>
-                <th>Document</th>
-                <th>Status</th>
-                <th>Payment</th>
+                <th>Job status</th>
+                <th>Invoice</th>
+                <th>Total</th>
                 <th></th>
               </tr>
             </thead>
@@ -739,27 +855,34 @@ function Dashboard({
                 <tr key={ro.id} className={ro.archived_at ? "archived-row" : ""}>
                   <td className="ro-number">#{padRo(ro.ro_number)}</td>
                   <td>{new Date(ro.created_at).toLocaleDateString()}</td>
-                  <td>{ro.customers?.name || "—"}</td>
+                  <td>
+                    {ro.customers ? (
+                      <button className="table-link" onClick={() => onOpenCustomer(ro.customers as Customer)}>
+                        {ro.customers.name}
+                      </button>
+                    ) : "—"}
+                  </td>
                   <td>
                     {[ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "—"}
                   </td>
-                  <td>{labelDocument(ro.document_type)}</td>
                   <td>
                     <div className="badge-row">
-                      <span className={`badge ${ro.status === "voided" ? "voided" : ro.status === "completed" ? "completed" : "open"}`}>
-                        {ro.status === "voided" ? "Voided" : ro.status === "completed" ? "Completed" : "Open"}
-                      </span>
+                      <span className={`badge ${ro.status}`}>{statusLabel(ro.status)}</span>
                       {ro.archived_at && <span className="badge archived">Archived</span>}
                     </div>
                   </td>
                   <td>
-                    <span className={`badge ${ro.paid ? "paid" : "unpaid"}`}>
-                      {ro.paid ? "Paid" : "Unpaid"}
+                    <span className={`badge ${ro.paid ? "paid" : ro.status === "completed" ? "unpaid" : "neutral"}`}>
+                      {ro.paid ? "Paid" : ro.status === "completed" ? "Unpaid" : "Not final"}
                     </span>
                   </td>
+                  <td>{money(repairOrderTotal(ro))}</td>
                   <td className="actions-cell">
-                    <button className="button small secondary" onClick={() => onOpen(ro.id)}>
-                      Open
+                    <button className="button small secondary" onClick={() => onOpen(ro.id, "work_order")}>
+                      Work order
+                    </button>
+                    <button className="button small ghost" onClick={() => onOpen(ro.id, "invoice")}>
+                      Invoice
                     </button>
                     {!ro.archived_at && (
                       <button className="button small ghost" onClick={() => onEdit(ro.id)}>
@@ -781,7 +904,7 @@ function Dashboard({
               {!filtered.length && (
                 <tr>
                   <td colSpan={8} className="empty-state">
-                    {showArchived ? "No matching repair orders." : "No matching active repair orders."}
+                    {showArchived ? "No matching work orders." : "No matching active work orders."}
                   </td>
                 </tr>
               )}
@@ -799,6 +922,9 @@ function RepairOrderEditor({
   customers,
   vehicles,
   initialRo,
+  initialCustomerId,
+  initialVehicleId,
+  initialTab,
   onCancel,
   onSaved,
 }: {
@@ -807,13 +933,19 @@ function RepairOrderEditor({
   customers: Customer[];
   vehicles: Vehicle[];
   initialRo: RepairOrder | null;
+  initialCustomerId: string;
+  initialVehicleId: string;
+  initialTab: WorkspaceTab;
   onCancel: () => void;
-  onSaved: (id: string) => void;
+  onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode) => void;
 }) {
-  const [selectedCustomerId, setSelectedCustomerId] = useState(initialRo?.customer_id ?? "");
-  const [selectedVehicleId, setSelectedVehicleId] = useState(initialRo?.vehicle_id ?? "");
+  const preselectedVehicle = vehicles.find((vehicle) => vehicle.id === initialVehicleId);
+  const preselectedCustomerId = initialRo?.customer_id ?? initialCustomerId ?? preselectedVehicle?.customer_id ?? "";
+  const preselectedVehicleId = initialRo?.vehicle_id ?? initialVehicleId ?? "";
+  const [selectedCustomerId, setSelectedCustomerId] = useState(preselectedCustomerId);
+  const [selectedVehicleId, setSelectedVehicleId] = useState(preselectedVehicleId);
   const [customerForm, setCustomerForm] = useState<CustomerForm>(() => {
-    const customer = initialRo?.customers;
+    const customer = initialRo?.customers ?? customers.find((entry) => entry.id === preselectedCustomerId);
     return customer
       ? {
           name: customer.name ?? "",
@@ -829,7 +961,7 @@ function RepairOrderEditor({
       : blankCustomer;
   });
   const [vehicleForm, setVehicleForm] = useState<VehicleForm>(() => {
-    const vehicle = initialRo?.vehicles;
+    const vehicle = initialRo?.vehicles ?? vehicles.find((entry) => entry.id === preselectedVehicleId);
     return vehicle
       ? {
           year: vehicle.year?.toString() ?? "",
@@ -846,7 +978,6 @@ function RepairOrderEditor({
         }
       : blankVehicle;
   });
-  const [documentType, setDocumentType] = useState<DocumentType>(initialRo?.document_type ?? "estimate");
   const [status, setStatus] = useState<"open" | "completed" | "voided">(initialRo?.status ?? "open");
   const [mileageIn, setMileageIn] = useState(initialRo?.mileage_in?.toString() ?? "");
   const [mileageOut, setMileageOut] = useState(initialRo?.mileage_out?.toString() ?? "");
@@ -862,6 +993,7 @@ function RepairOrderEditor({
   const [busy, setBusy] = useState(false);
   const [vinBusy, setVinBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(initialTab);
 
   const selectableCustomers = useMemo(
     () => customers.filter((customer) => !customer.archived_at || customer.id === initialRo?.customer_id),
@@ -1013,7 +1145,7 @@ function RepairOrderEditor({
     }
   }
 
-  async function save() {
+  async function save(previewMode?: DocumentMode) {
     if (!customerForm.name.trim()) {
       setMessage("Customer name is required.");
       return;
@@ -1084,7 +1216,7 @@ function RepairOrderEditor({
         owner_id: user.id,
         customer_id: customerId,
         vehicle_id: vehicleId,
-        document_type: documentType,
+        document_type: "repair_order" as DocumentType,
         status,
         mileage_in: numberOrNull(mileageIn),
         mileage_out: numberOrNull(mileageOut),
@@ -1123,34 +1255,70 @@ function RepairOrderEditor({
       const { error: lineError } = await supabase.from("line_items").insert(linePayload);
       if (lineError) throw lineError;
 
-      onSaved(roId);
+      setBusy(false);
+      onSaved(roId, workspaceTab, previewMode);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "The repair order could not be saved.");
+      setMessage(caught instanceof Error ? caught.message : "The work order could not be saved.");
       setBusy(false);
     }
   }
 
   return (
     <section>
-      <div className="page-heading">
+      <div className="workspace-heading">
         <div>
-          <h1>{initialRo ? `Edit RO #${padRo(initialRo.ro_number)}` : "New repair order"}</h1>
-          <p>Use the same record as an estimate, repair order, and invoice.</p>
+          <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : "New Work Order"}</h1>
+          <p>One editable job. The estimate, shop work order, and invoice all use this same set of charges.</p>
         </div>
         <div className="button-row">
-          <button className="button secondary" onClick={onCancel}>
-            Cancel
-          </button>
-          <button className="button primary" onClick={save} disabled={busy}>
-            {busy ? "Saving…" : "Save"}
+          <button className="button secondary" onClick={onCancel}>Close</button>
+          {initialRo && workspaceTab === "work_order" && (
+            <>
+              <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Preview Estimate</button>
+              <button className="button ghost" onClick={() => save("work_order")} disabled={busy}>Preview Work Order</button>
+            </>
+          )}
+          {initialRo && workspaceTab === "invoice" && (
+            <button className="button ghost" onClick={() => save("invoice")} disabled={busy}>Preview Invoice</button>
+          )}
+          <button className="button primary" onClick={() => save()} disabled={busy}>
+            {busy ? "Saving…" : "Save Changes"}
           </button>
         </div>
       </div>
 
+      <div className="workspace-tabs" role="tablist" aria-label="RO workspace">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspaceTab === "work_order"}
+          className={workspaceTab === "work_order" ? "active" : ""}
+          onClick={() => setWorkspaceTab("work_order")}
+        >
+          <span>Work Order</span>
+          <small>Edit the job and print the customer estimate or shop copy</small>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspaceTab === "invoice"}
+          className={workspaceTab === "invoice" ? "active" : ""}
+          onClick={() => setWorkspaceTab("invoice")}
+        >
+          <span>Invoice</span>
+          <small>Same editable charges, plus payment status and final billing</small>
+        </button>
+      </div>
+
+      {!initialRo && (
+        <div className="notice workspace-notice">Save this new work order once before previewing or printing documents.</div>
+      )}
       {message && <div className="notice">{message}</div>}
 
       <div className="editor-grid">
         <div className="stack">
+          {workspaceTab === "work_order" ? (
+          <>
           <section className="panel">
             <div className="section-heading">
               <h2>Customer</h2>
@@ -1265,14 +1433,6 @@ function RepairOrderEditor({
             <h2>Job details</h2>
             <div className="form-grid four">
               <label>
-                Document
-                <select value={documentType} onChange={(event) => setDocumentType(event.target.value as DocumentType)}>
-                  <option value="estimate">Estimate</option>
-                  <option value="repair_order">Repair Order</option>
-                  <option value="invoice">Invoice</option>
-                </select>
-              </label>
-              <label>
                 Status
                 <select value={status} onChange={(event) => setStatus(event.target.value as "open" | "completed" | "voided")}>
                   <option value="open">Open</option>
@@ -1298,18 +1458,57 @@ function RepairOrderEditor({
               </label>
             </div>
           </section>
+          </>
+          ) : (
+            <>
+              <section className="panel invoice-workspace-summary">
+                <div className="section-heading">
+                  <div>
+                    <h2>Invoice for {customerForm.name || "New customer"}</h2>
+                    <p className="muted">Changes made to the charges below also change the work order and estimate.</p>
+                  </div>
+                  {initialRo && <span className={`badge ${paid ? "paid" : "unpaid"}`}>{paid ? "Paid" : "Unpaid"}</span>}
+                </div>
+                <div className="invoice-summary-grid">
+                  <div>
+                    <span>Vehicle</span>
+                    <strong>{[vehicleForm.year, vehicleForm.make, vehicleForm.model, vehicleForm.trim].filter(Boolean).join(" ") || "Vehicle not entered"}</strong>
+                    <small>{vehicleForm.vin ? `VIN ${vehicleForm.vin}` : "No VIN"}</small>
+                  </div>
+                  <div>
+                    <span>Mileage</span>
+                    <strong>{mileageIn || "—"} in / {mileageOut || "—"} out</strong>
+                    <small>{vehicleForm.license_plate ? `Plate ${vehicleForm.license_plate}` : "No plate"}</small>
+                  </div>
+                  <div>
+                    <span>Job status</span>
+                    <strong>{statusLabel(status)}</strong>
+                    <small>Switch back to Work Order to edit customer, vehicle, or job details.</small>
+                  </div>
+                </div>
+                {concern && <div className="invoice-concern"><span>Services requested / performed</span><p>{concern}</p></div>}
+              </section>
+            </>
+          )}
         </div>
 
-        <aside className="panel totals-sidebar">
-          <h2>Document settings</h2>
+        <aside className={`panel totals-sidebar ${workspaceTab === "invoice" ? "invoice-sidebar" : ""}`}>
+          <h2>{workspaceTab === "invoice" ? "Invoice & payment" : "Current totals"}</h2>
           <label>
             Sales-tax rate %
             <input type="number" step="0.001" value={taxRate} onChange={(event) => setTaxRate(Number(event.target.value) || 0)} />
           </label>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={paid} onChange={(event) => setPaid(event.target.checked)} />
-            Mark paid
-          </label>
+          {workspaceTab === "invoice" ? (
+            <>
+              <label className="checkbox-row invoice-paid-toggle">
+                <input type="checkbox" checked={paid} onChange={(event) => setPaid(event.target.checked)} />
+                Mark invoice paid
+              </label>
+              <p className="sidebar-help">The paid date is recorded automatically when this is saved.</p>
+            </>
+          ) : (
+            <p className="sidebar-help">Use Preview Estimate to send proposed pricing to the customer. Payment status lives on the Invoice tab.</p>
+          )}
           <div className="totals-box">
             <div><span>Subtotal</span><strong>{money(totals.subtotal)}</strong></div>
             <div><span>Tax</span><strong>{money(totals.tax)}</strong></div>
@@ -1321,8 +1520,12 @@ function RepairOrderEditor({
       <section className="panel line-items-panel">
         <div className="section-heading wrap">
           <div>
-            <h2>Line items</h2>
-            <p className="muted">Labor defaults to {money(settings.default_labor_rate)}/hr. Parts default to {settings.default_parts_markup}% markup.</p>
+            <h2>{workspaceTab === "invoice" ? "Invoice charges" : "Work-order line items"}</h2>
+            <p className="muted">
+              {workspaceTab === "invoice"
+                ? "These are the same editable charges used by the work order and estimate."
+                : `Labor defaults to ${money(settings.default_labor_rate)}/hr. Parts default to ${settings.default_parts_markup}% markup.`}
+            </p>
           </div>
           <div className="button-row">
             <button className="button small secondary" onClick={() => addItem("labor")}>+ Labor</button>
@@ -1390,9 +1593,15 @@ function RepairOrderEditor({
         </div>
       </section>
 
-      <div className="bottom-actions">
-        <button className="button secondary" onClick={onCancel}>Cancel</button>
-        <button className="button primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save repair order"}</button>
+      <div className="bottom-actions workspace-bottom-actions">
+        <button className="button secondary" onClick={onCancel}>Close</button>
+        {initialRo && workspaceTab === "work_order" && (
+          <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Save & Preview Estimate</button>
+        )}
+        {initialRo && workspaceTab === "invoice" && (
+          <button className="button ghost" onClick={() => save("invoice")} disabled={busy}>Save & Preview Invoice</button>
+        )}
+        <button className="button primary" onClick={() => save()} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
       </div>
     </section>
   );
@@ -1402,12 +1611,14 @@ function CustomerDirectory({
   customers,
   vehicles,
   repairOrders,
+  onOpenCustomer,
   onArchive,
   onDelete,
 }: {
   customers: Customer[];
   vehicles: Vehicle[];
   repairOrders: RepairOrder[];
+  onOpenCustomer: (customer: Customer) => void;
   onArchive: (customer: Customer) => void;
   onDelete: (customer: Customer) => void;
 }) {
@@ -1435,8 +1646,8 @@ function CustomerDirectory({
     <section>
       <div className="page-heading">
         <div>
-          <h1>Customers & vehicles</h1>
-          <p>Search the stored customer and vehicle history.</p>
+          <h1>Customers & Vehicles</h1>
+          <p>Click a customer to see every saved vehicle and their complete service history.</p>
         </div>
       </div>
       <div className="panel toolbar toolbar-between">
@@ -1460,14 +1671,24 @@ function CustomerDirectory({
           const ownedVehicles = vehicles.filter((vehicle) => vehicle.customer_id === customer.id);
           const roCount = repairOrders.filter((ro) => ro.customer_id === customer.id).length;
           return (
-            <article className={`panel customer-card ${customer.archived_at ? "archived-card" : ""}`} key={customer.id}>
+            <article
+              className={`panel customer-card clickable-card ${customer.archived_at ? "archived-card" : ""}`}
+              key={customer.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpenCustomer(customer)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") onOpenCustomer(customer);
+              }}
+            >
               <div className="section-heading">
                 <div>
                   <h2>{customer.name}</h2>
                   <p className="muted">{customer.phone || "No phone"}{customer.email ? ` · ${customer.email}` : ""}</p>
                 </div>
                 <div className="badge-row">
-                  <span className="badge neutral">{roCount} RO{roCount === 1 ? "" : "s"}</span>
+                  <span className="badge neutral">{roCount} WO{roCount === 1 ? "" : "s"}</span>
+                  <span className="badge neutral">{ownedVehicles.length} vehicle{ownedVehicles.length === 1 ? "" : "s"}</span>
                   {customer.archived_at && <span className="badge archived">Archived</span>}
                 </div>
               </div>
@@ -1475,15 +1696,19 @@ function CustomerDirectory({
                 <p>{[customer.address_line_1, customer.city, customer.state, customer.zip_code].filter(Boolean).join(", ")}</p>
               )}
               <div className="vehicle-list">
-                {ownedVehicles.map((vehicle) => (
+                {ownedVehicles.slice(0, 3).map((vehicle) => (
                   <div key={vehicle.id}>
                     <strong>{[vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(" ") || "Vehicle"}</strong>
                     <span>{[vehicle.license_plate, vehicle.vin].filter(Boolean).join(" · ")}</span>
                   </div>
                 ))}
+                {ownedVehicles.length > 3 && <span className="muted">+ {ownedVehicles.length - 3} more vehicle{ownedVehicles.length - 3 === 1 ? "" : "s"}</span>}
                 {!ownedVehicles.length && <span className="muted">No vehicles saved.</span>}
               </div>
-              <div className="customer-card-actions">
+              <div className="customer-card-actions" onClick={(event) => event.stopPropagation()}>
+                <button className="button small secondary" onClick={() => onOpenCustomer(customer)}>
+                  View customer history
+                </button>
                 <button className="button small ghost" onClick={() => onArchive(customer)}>
                   {customer.archived_at ? "Restore customer" : "Archive customer"}
                 </button>
@@ -1508,6 +1733,170 @@ function CustomerDirectory({
   );
 }
 
+function CustomerProfile({
+  customer,
+  vehicles,
+  repairOrders,
+  onBack,
+  onOpenRo,
+  onNew,
+  onArchive,
+  onDelete,
+}: {
+  customer: Customer;
+  vehicles: Vehicle[];
+  repairOrders: RepairOrder[];
+  onBack: () => void;
+  onOpenRo: (id: string, mode: DocumentMode) => void;
+  onNew: (customerId: string, vehicleId: string) => void;
+  onArchive: (customer: Customer) => void;
+  onDelete: (customer: Customer) => void;
+}) {
+  const [vehicleFilter, setVehicleFilter] = useState("");
+  const [showArchived, setShowArchived] = useState(true);
+  const ownedVehicles = vehicles.filter((vehicle) => vehicle.customer_id === customer.id);
+  const allHistory = repairOrders.filter((ro) => ro.customer_id === customer.id);
+  const history = allHistory.filter((ro) => {
+    if (!showArchived && ro.archived_at) return false;
+    return !vehicleFilter || ro.vehicle_id === vehicleFilter;
+  });
+
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <button className="back-link" onClick={onBack}>← All customers</button>
+          <h1>{customer.name}</h1>
+          <p>Customer profile, vehicles, and full work-order history.</p>
+        </div>
+        <div className="button-row">
+          <button className="button primary" onClick={() => onNew(customer.id, "")} disabled={Boolean(customer.archived_at)}>
+            + New Work Order
+          </button>
+          <button className="button ghost" onClick={() => onArchive(customer)}>
+            {customer.archived_at ? "Restore customer" : "Archive customer"}
+          </button>
+          {allHistory.length === 0 && (
+            <button className="button danger" onClick={() => onDelete(customer)}>
+              Delete customer
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="customer-profile-grid">
+        <aside className="panel customer-summary-panel">
+          <h2>Customer details</h2>
+          <dl className="details-list">
+            <div><dt>Phone</dt><dd>{customer.phone || "—"}</dd></div>
+            <div><dt>Email</dt><dd>{customer.email || "—"}</dd></div>
+            <div><dt>Address</dt><dd>{[customer.address_line_1, customer.address_line_2, customer.city, customer.state, customer.zip_code].filter(Boolean).join(", ") || "—"}</dd></div>
+            <div><dt>Status</dt><dd>{customer.archived_at ? "Archived" : "Active"}</dd></div>
+          </dl>
+          {customer.notes && <div className="profile-notes"><h3>Notes</h3><p>{customer.notes}</p></div>}
+        </aside>
+
+        <div className="stack">
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <h2>Vehicles</h2>
+                <p className="muted">Start a new work order directly on the correct vehicle.</p>
+              </div>
+            </div>
+            <div className="profile-vehicle-grid">
+              {ownedVehicles.map((vehicle) => {
+                const vehicleHistory = allHistory.filter((ro) => ro.vehicle_id === vehicle.id);
+                const latestMileage = vehicleHistory
+                  .map((ro) => ro.mileage_out ?? ro.mileage_in ?? 0)
+                  .filter(Boolean)
+                  .sort((a, b) => b - a)[0];
+                return (
+                  <article className="profile-vehicle-card" key={vehicle.id}>
+                    <div>
+                      <h3>{[vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(" ") || "Vehicle"}</h3>
+                      <p>{vehicle.engine || "Engine not listed"}</p>
+                    </div>
+                    <dl>
+                      <div><dt>VIN</dt><dd>{vehicle.vin || "—"}</dd></div>
+                      <div><dt>Plate</dt><dd>{[vehicle.license_plate, vehicle.plate_state].filter(Boolean).join(" ") || "—"}</dd></div>
+                      <div><dt>Latest mileage</dt><dd>{latestMileage ? latestMileage.toLocaleString() : "—"}</dd></div>
+                      <div><dt>History</dt><dd>{vehicleHistory.length} work order{vehicleHistory.length === 1 ? "" : "s"}</dd></div>
+                    </dl>
+                    <button className="button small secondary" onClick={() => onNew(customer.id, vehicle.id)} disabled={Boolean(customer.archived_at)}>
+                      + New Work Order for This Vehicle
+                    </button>
+                  </article>
+                );
+              })}
+              {!ownedVehicles.length && <div className="empty-state compact-empty">No vehicles saved for this customer.</div>}
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="section-heading wrap">
+              <div>
+                <h2>Service history</h2>
+                <p className="muted">Every past work order for this customer, newest first.</p>
+              </div>
+              <div className="history-filters">
+                <select value={vehicleFilter} onChange={(event) => setVehicleFilter(event.target.value)}>
+                  <option value="">All vehicles</option>
+                  {ownedVehicles.map((vehicle) => (
+                    <option key={vehicle.id} value={vehicle.id}>
+                      {[vehicle.year, vehicle.make, vehicle.model, vehicle.license_plate].filter(Boolean).join(" ")}
+                    </option>
+                  ))}
+                </select>
+                <label className="checkbox-row archive-toggle">
+                  <input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />
+                  Include archived
+                </label>
+              </div>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>RO</th>
+                    <th>Date</th>
+                    <th>Vehicle</th>
+                    <th>Requested work</th>
+                    <th>Status</th>
+                    <th>Invoice</th>
+                    <th>Total</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((ro) => (
+                    <tr key={ro.id} className={ro.archived_at ? "archived-row" : ""}>
+                      <td className="ro-number">#{padRo(ro.ro_number)}</td>
+                      <td>{new Date(ro.created_at).toLocaleDateString()}</td>
+                      <td>{[ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "—"}</td>
+                      <td className="history-description">{ro.customer_concern || "—"}</td>
+                      <td><span className={`badge ${ro.status}`}>{statusLabel(ro.status)}</span></td>
+                      <td><span className={`badge ${ro.paid ? "paid" : ro.status === "completed" ? "unpaid" : "neutral"}`}>{ro.paid ? "Paid" : ro.status === "completed" ? "Unpaid" : "Not final"}</span></td>
+                      <td>{money(repairOrderTotal(ro))}</td>
+                      <td className="actions-cell profile-actions-cell">
+                        <button className="button small secondary" onClick={() => onOpenRo(ro.id, "work_order")}>Work order</button>
+                        <button className="button small ghost" onClick={() => onOpenRo(ro.id, "invoice")}>Invoice</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!history.length && (
+                    <tr><td colSpan={8} className="empty-state">No work orders match this filter.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SettingsPanel({
   user,
   initialSettings,
@@ -1521,7 +1910,7 @@ function SettingsPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
-  async function save() {
+  async function save(previewMode?: DocumentMode) {
     setBusy(true);
     setMessage("");
     const payload = { ...form, owner_id: user.id };
@@ -1587,6 +1976,8 @@ function SettingsPanel({
 function DocumentView({
   ro,
   settings,
+  mode,
+  onModeChange,
   onBack,
   onEdit,
   onVoid,
@@ -1595,6 +1986,8 @@ function DocumentView({
 }: {
   ro: RepairOrder;
   settings: Settings;
+  mode: DocumentMode;
+  onModeChange: (mode: DocumentMode) => void;
   onBack: () => void;
   onEdit: () => void;
   onVoid: () => void;
@@ -1608,41 +2001,37 @@ function DocumentView({
   const total = subtotal + tax;
   const customer = ro.customers;
   const vehicle = ro.vehicles;
-  const isEstimate = ro.document_type === "estimate";
-  const isRepairOrder = ro.document_type === "repair_order";
-  const isInvoice = ro.document_type === "invoice";
-  const statusLabel = ro.status.charAt(0).toUpperCase() + ro.status.slice(1);
+  const isEstimate = mode === "estimate";
+  const isWorkOrder = mode === "work_order";
+  const isInvoice = mode === "invoice";
+  const currentStatusLabel = statusLabel(ro.status);
 
+  const title = isEstimate ? "Estimate" : isWorkOrder ? "Work Order" : "Invoice";
   const documentSubtitle = isEstimate
     ? "Proposed work and estimated pricing"
-    : isRepairOrder
-      ? "Authorized work order and shop copy"
+    : isWorkOrder
+      ? "Active job record and shop copy"
       : "Final charges and payment record";
-
-  const sectionHeading = isEstimate
-    ? "Proposed services"
-    : isRepairOrder
-      ? "Authorized work"
-      : "Final charges";
-
+  const sectionHeading = isEstimate ? "Proposed services" : isWorkOrder ? "Work to perform" : "Final charges";
   const concernHeading = isEstimate
     ? "Customer request / proposed work"
-    : isRepairOrder
+    : isWorkOrder
       ? "Customer concern / work requested"
       : "Services requested / performed";
-
-  const finalTotalLabel = isEstimate
-    ? "Estimated total"
-    : isRepairOrder
-      ? "Authorized total"
-      : "Invoice total";
+  const finalTotalLabel = isEstimate ? "Estimated total" : isWorkOrder ? "Work order total" : "Invoice total";
+  const className = isEstimate ? "document-estimate" : isWorkOrder ? "document-repair-order" : "document-invoice";
 
   return (
     <section className="document-shell">
       <div className="document-actions no-print">
         <button className="button secondary" onClick={onBack}>← Back</button>
+        <div className="document-mode-switch" aria-label="Document view">
+          <button className={mode === "estimate" ? "active" : ""} onClick={() => onModeChange("estimate")}>Estimate</button>
+          <button className={mode === "work_order" ? "active" : ""} onClick={() => onModeChange("work_order")}>Work Order</button>
+          <button className={mode === "invoice" ? "active" : ""} onClick={() => onModeChange("invoice")}>Invoice</button>
+        </div>
         <div className="button-row">
-          {!ro.archived_at && <button className="button secondary" onClick={onEdit}>Edit</button>}
+          {!ro.archived_at && <button className="button secondary" onClick={onEdit}>Edit Work Order</button>}
           <button className={`button ${ro.status === "voided" ? "success" : "warning"}`} onClick={onVoid}>
             {ro.status === "voided" ? "Reopen" : "Void"}
           </button>
@@ -1654,32 +2043,24 @@ function DocumentView({
         </div>
       </div>
 
-      <article className={`document-page document-${ro.document_type.replace("_", "-")} ${ro.status === "voided" ? "voided-document" : ""}`}>
+      <article className={`document-page ${className} ${ro.status === "voided" ? "voided-document" : ""}`}>
         {ro.status === "voided" && <div className="void-watermark">VOID</div>}
 
         <header className="document-header">
           <div>
-            <img
-              className="document-logo"
-              src="/allegiant-auto-care-logo.png"
-              alt="Allegiant Auto Care"
-            />
+            <img className="document-logo" src="/allegiant-auto-care-logo.png" alt="Allegiant Auto Care" />
             {settings.business_address && <p>{settings.business_address}</p>}
-            <p>
-              {[settings.business_phone, settings.business_email]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
+            <p>{[settings.business_phone, settings.business_email].filter(Boolean).join(" · ")}</p>
           </div>
           <div className="document-title">
-            <h2>{labelDocument(ro.document_type)}</h2>
+            <h2>{title}</h2>
             <p className="document-subtitle">{documentSubtitle}</p>
             <strong>RO #{padRo(ro.ro_number)}</strong>
             <span>{new Date(ro.created_at).toLocaleDateString()}</span>
             <div className="document-status-row">
-              {isRepairOrder && <span className={`badge ${ro.status}`}>{statusLabel}</span>}
+              {isWorkOrder && <span className={`badge ${ro.status}`}>{currentStatusLabel}</span>}
               {isInvoice && <span className={`badge ${ro.paid ? "paid" : "unpaid"}`}>{ro.paid ? "Paid" : "Unpaid"}</span>}
-              {ro.status === "voided" && !isRepairOrder && <span className="badge voided">Voided</span>}
+              {ro.status === "voided" && !isWorkOrder && <span className="badge voided">Voided</span>}
               {ro.archived_at && <span className="badge archived">Archived</span>}
             </div>
           </div>
@@ -1696,12 +2077,12 @@ function DocumentView({
               <b>{money(total)}</b>
             </>
           )}
-          {isRepairOrder && (
+          {isWorkOrder && (
             <>
               <div>
-                <span className="stage-eyebrow">Work order status</span>
-                <strong>{statusLabel}</strong>
-                <small>Shop copy showing authorized work, parts, and vehicle information.</small>
+                <span className="stage-eyebrow">Job status</span>
+                <strong>{currentStatusLabel}</strong>
+                <small>Shop copy showing the customer request, vehicle, work, parts, and current totals.</small>
               </div>
               <b>RO #{padRo(ro.ro_number)}</b>
             </>
@@ -1711,11 +2092,7 @@ function DocumentView({
               <div>
                 <span className="stage-eyebrow">{ro.paid ? "Payment received" : "Amount due"}</span>
                 <strong>{ro.paid ? "Paid in full" : "Payment due"}</strong>
-                <small>
-                  {ro.paid && ro.paid_at
-                    ? `Paid ${new Date(ro.paid_at).toLocaleDateString()}`
-                    : "Final invoice for completed services and parts."}
-                </small>
+                <small>{ro.paid && ro.paid_at ? `Paid ${new Date(ro.paid_at).toLocaleDateString()}` : "Final invoice for services and parts."}</small>
               </div>
               <b>{money(total)}</b>
             </>
@@ -1739,10 +2116,10 @@ function DocumentView({
             <span>Engine: {vehicle?.engine || "—"}</span>
           </section>
           <section>
-            <h3>{isEstimate ? "Estimate details" : isRepairOrder ? "Work order details" : "Invoice details"}</h3>
+            <h3>{isEstimate ? "Estimate details" : isWorkOrder ? "Work order details" : "Invoice details"}</h3>
             <span>Mileage in: {ro.mileage_in?.toLocaleString() || "—"}</span>
             {!isEstimate && <span>Mileage out: {ro.mileage_out?.toLocaleString() || "—"}</span>}
-            {isRepairOrder && <span>Status: {statusLabel}</span>}
+            {isWorkOrder && <span>Status: {currentStatusLabel}</span>}
             {isInvoice && (
               <>
                 <span className={`document-payment ${ro.paid ? "paid" : "unpaid"}`}>{ro.paid ? "PAID" : "UNPAID"}</span>
@@ -1762,7 +2139,7 @@ function DocumentView({
         <div className="document-section-heading">
           <h3>{sectionHeading}</h3>
           {isEstimate && <span>Estimated pricing</span>}
-          {isRepairOrder && <span>Shop work detail</span>}
+          {isWorkOrder && <span>Shop work detail</span>}
           {isInvoice && <span>Final billed amount</span>}
         </div>
 
@@ -1822,7 +2199,7 @@ function DocumentView({
           </section>
         )}
 
-        {isRepairOrder && (
+        {isWorkOrder && (
           <section className="document-terms repair-order-terms">
             <strong>Work authorization</strong>
             <p>Customer authorizes Allegiant Auto Care to perform the work listed above and acknowledges that additional work requires further approval.</p>
