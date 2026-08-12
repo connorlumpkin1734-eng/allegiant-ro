@@ -1,23 +1,6 @@
--- Allegiant RO: archive support for customers and repair orders
--- Safe to run once on the existing database.
+-- Persistent multipoint inspections linked one-to-one with repair orders.
+-- Safe to run more than once.
 
-begin;
-
-alter table public.customers
-  add column if not exists archived_at timestamptz;
-
-alter table public.repair_orders
-  add column if not exists archived_at timestamptz;
-
-create index if not exists customers_owner_archived_idx
-  on public.customers(owner_id, archived_at);
-
-create index if not exists repair_orders_owner_archived_idx
-  on public.repair_orders(owner_id, archived_at);
-
-commit;
-
--- Multipoint inspections saved and recalled with each repair order.
 begin;
 
 create table if not exists public.multipoint_inspections (
@@ -36,12 +19,14 @@ create index if not exists multipoint_inspections_owner_idx
 alter table public.multipoint_inspections enable row level security;
 
 drop policy if exists "Owners can view multipoint inspections" on public.multipoint_inspections;
-create policy "Owners can view multipoint inspections" on public.multipoint_inspections
-  for select using (auth.uid() = owner_id);
+create policy "Owners can view multipoint inspections"
+  on public.multipoint_inspections for select
+  using (auth.uid() = owner_id);
 
 drop policy if exists "Owners can create multipoint inspections" on public.multipoint_inspections;
-create policy "Owners can create multipoint inspections" on public.multipoint_inspections
-  for insert with check (
+create policy "Owners can create multipoint inspections"
+  on public.multipoint_inspections for insert
+  with check (
     auth.uid() = owner_id
     and exists (
       select 1 from public.repair_orders
@@ -51,8 +36,9 @@ create policy "Owners can create multipoint inspections" on public.multipoint_in
   );
 
 drop policy if exists "Owners can update multipoint inspections" on public.multipoint_inspections;
-create policy "Owners can update multipoint inspections" on public.multipoint_inspections
-  for update using (auth.uid() = owner_id)
+create policy "Owners can update multipoint inspections"
+  on public.multipoint_inspections for update
+  using (auth.uid() = owner_id)
   with check (
     auth.uid() = owner_id
     and exists (
@@ -63,7 +49,8 @@ create policy "Owners can update multipoint inspections" on public.multipoint_in
   );
 
 drop policy if exists "Owners can delete multipoint inspections" on public.multipoint_inspections;
-create policy "Owners can delete multipoint inspections" on public.multipoint_inspections
-  for delete using (auth.uid() = owner_id);
+create policy "Owners can delete multipoint inspections"
+  on public.multipoint_inspections for delete
+  using (auth.uid() = owner_id);
 
 commit;

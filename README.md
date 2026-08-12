@@ -16,6 +16,8 @@ A cloud-based repair order, estimate, and invoice app using Next.js, Netlify, an
 - Paid/unpaid status with paid date
 - Search by customer, phone, email, VIN, plate, vehicle, or RO number
 - Printable/PDF document layout
+- In-app multipoint inspections saved to and recalled from each repair order
+- Editable multipoint-inspection PDF export generated from saved inspection data
 
 ## Netlify environment variables
 
@@ -45,4 +47,4 @@ For email confirmation links, set the deployed Netlify URL in Supabase under **A
 
 ## Current database expectation
 
-This app expects the `settings`, `customers`, `vehicles`, `repair_orders`, and `line_items` tables created in the earlier SQL setup.
+This app expects the `settings`, `customers`, `vehicles`, `repair_orders`, `line_items`, and `multipoint_inspections` tables. Run `RUN_THIS_IN_SUPABASE.sql` after deploying database-related updates.
