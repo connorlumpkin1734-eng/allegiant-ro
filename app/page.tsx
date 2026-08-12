@@ -2,9 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
+import { MultipointInspection } from "@/components/MultipointInspection";
 import { supabase } from "@/lib/supabase";
 
-type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document";
+type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection";
 type DocumentMode = "estimate" | "work_order" | "invoice";
 type WorkspaceTab = "work_order" | "invoice";
 type DocumentType = "estimate" | "repair_order" | "invoice";
@@ -347,6 +348,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const [newContext, setNewContext] = useState<{ customerId: string; vehicleId: string }>({ customerId: "", vehicleId: "" });
   const [documentMode, setDocumentMode] = useState<DocumentMode>("work_order");
   const [documentReturnView, setDocumentReturnView] = useState<"dashboard" | "customer_profile" | "editor">("dashboard");
+  const [inspectionReturnView, setInspectionReturnView] = useState<"dashboard" | "customer_profile" | "editor" | "document">("dashboard");
   const [editorTab, setEditorTab] = useState<WorkspaceTab>("work_order");
   const [editorReturnView, setEditorReturnView] = useState<"dashboard" | "customer_profile">("dashboard");
   const [loading, setLoading] = useState(true);
@@ -463,6 +465,29 @@ function RepairOrderApp({ user }: { user: User }) {
     setView("editor");
   }
 
+  async function openInspection(
+    id: string,
+    returnView: "dashboard" | "customer_profile" | "editor" | "document" = "dashboard"
+  ) {
+    setError("");
+    const { data, error: fetchError } = await supabase
+      .from("repair_orders")
+      .select("*, customers(*), vehicles(*), line_items(*)")
+      .eq("id", id)
+      .single();
+
+    if (fetchError) {
+      setError(fetchError.message);
+      return;
+    }
+
+    const loaded = data as RepairOrder;
+    loaded.line_items = [...(loaded.line_items ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+    setSelectedRo(loaded);
+    setInspectionReturnView(returnView);
+    setView("inspection");
+  }
+
   function startNew(customerId = "", vehicleId = "", returnView: "dashboard" | "customer_profile" = "dashboard") {
     setEditingRo(null);
     setNewContext({ customerId, vehicleId });
@@ -526,7 +551,7 @@ function RepairOrderApp({ user }: { user: User }) {
 
   async function deleteRo(ro: RepairOrder) {
     const confirmed = window.confirm(
-      `Permanently delete RO #${padRo(ro.ro_number)}?\n\nThis also deletes its line items and cannot be undone.`
+      `Permanently delete RO #${padRo(ro.ro_number)}?\n\nThis also deletes its line items and saved inspection and cannot be undone.`
     );
     if (!confirmed) return;
 
@@ -608,6 +633,20 @@ function RepairOrderApp({ user }: { user: User }) {
     }
   };
 
+  const returnFromInspection = () => {
+    if (!selectedRo) {
+      setView("dashboard");
+    } else if (inspectionReturnView === "editor") {
+      void editDocument(selectedRo.id, editorReturnView, editorTab);
+    } else if (inspectionReturnView === "document") {
+      setView("document");
+    } else if (inspectionReturnView === "customer_profile" && selectedCustomer) {
+      setView("customer_profile");
+    } else {
+      setView("dashboard");
+    }
+  };
+
   return (
     <div className="app-shell">
       <header className="topbar no-print">
@@ -652,6 +691,7 @@ function RepairOrderApp({ user }: { user: User }) {
               }
             }}
             onEdit={(id) => editDocument(id, "dashboard", "work_order")}
+            onInspection={(id) => openInspection(id, "dashboard")}
             onOpenCustomer={openCustomer}
             onVoid={toggleVoid}
             onArchive={toggleArchiveRo}
@@ -667,6 +707,7 @@ function RepairOrderApp({ user }: { user: User }) {
             initialCustomerId={newContext.customerId}
             initialVehicleId={newContext.vehicleId}
             initialTab={editorTab}
+            onInspection={editingRo ? () => openInspection(editingRo.id, "editor") : undefined}
             onCancel={returnFromEditor}
             onSaved={async (id, tab, previewMode) => {
               setEditorTab(tab);
@@ -714,6 +755,8 @@ function RepairOrderApp({ user }: { user: User }) {
               setView("dashboard");
             }}
           />
+        ) : view === "inspection" && selectedRo ? (
+          <MultipointInspection ro={selectedRo} userId={user.id} onBack={returnFromInspection} />
         ) : selectedRo ? (
           <DocumentView
             ro={selectedRo}
@@ -726,6 +769,7 @@ function RepairOrderApp({ user }: { user: User }) {
               documentReturnView === "customer_profile" ? "customer_profile" : editorReturnView,
               documentMode === "invoice" ? "invoice" : "work_order"
             )}
+            onInspection={() => openInspection(selectedRo.id, "document")}
             onVoid={() => toggleVoid(selectedRo)}
             onArchive={() => toggleArchiveRo(selectedRo)}
             onDelete={() => deleteRo(selectedRo)}
@@ -741,6 +785,7 @@ function Dashboard({
   onNew,
   onOpen,
   onEdit,
+  onInspection,
   onOpenCustomer,
   onVoid,
   onArchive,
@@ -750,6 +795,7 @@ function Dashboard({
   onNew: () => void;
   onOpen: (id: string, mode: DocumentMode) => void;
   onEdit: (id: string) => void;
+  onInspection: (id: string) => void;
   onOpenCustomer: (customer: Customer) => void;
   onVoid: (ro: RepairOrder) => void;
   onArchive: (ro: RepairOrder) => void;
@@ -878,6 +924,9 @@ function Dashboard({
                   </td>
                   <td>{money(repairOrderTotal(ro))}</td>
                   <td className="actions-cell">
+                    <button className="button small primary" onClick={() => onInspection(ro.id)}>
+                      Inspection
+                    </button>
                     <button className="button small secondary" onClick={() => onOpen(ro.id, "work_order")}>
                       Work order
                     </button>
@@ -925,6 +974,7 @@ function RepairOrderEditor({
   initialCustomerId,
   initialVehicleId,
   initialTab,
+  onInspection,
   onCancel,
   onSaved,
 }: {
@@ -936,6 +986,7 @@ function RepairOrderEditor({
   initialCustomerId: string;
   initialVehicleId: string;
   initialTab: WorkspaceTab;
+  onInspection?: () => void;
   onCancel: () => void;
   onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode) => void;
 }) {
@@ -1272,6 +1323,9 @@ function RepairOrderEditor({
         </div>
         <div className="button-row">
           <button className="button secondary" onClick={onCancel}>Close</button>
+          {initialRo && workspaceTab === "work_order" && onInspection && (
+            <button className="button primary" onClick={onInspection}>Multipoint Inspection</button>
+          )}
           {initialRo && workspaceTab === "work_order" && (
             <>
               <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Preview Estimate</button>
@@ -1595,6 +1649,9 @@ function RepairOrderEditor({
 
       <div className="bottom-actions workspace-bottom-actions">
         <button className="button secondary" onClick={onCancel}>Close</button>
+        {initialRo && workspaceTab === "work_order" && onInspection && (
+          <button className="button primary" onClick={onInspection}>Multipoint Inspection</button>
+        )}
         {initialRo && workspaceTab === "work_order" && (
           <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Save & Preview Estimate</button>
         )}
@@ -1980,6 +2037,7 @@ function DocumentView({
   onModeChange,
   onBack,
   onEdit,
+  onInspection,
   onVoid,
   onArchive,
   onDelete,
@@ -1990,6 +2048,7 @@ function DocumentView({
   onModeChange: (mode: DocumentMode) => void;
   onBack: () => void;
   onEdit: () => void;
+  onInspection: () => void;
   onVoid: () => void;
   onArchive: () => void;
   onDelete: () => void;
@@ -2020,65 +2079,6 @@ function DocumentView({
       : "Services requested / performed";
   const finalTotalLabel = isEstimate ? "Estimated total" : isWorkOrder ? "Work order total" : "Invoice total";
   const className = isEstimate ? "document-estimate" : isWorkOrder ? "document-repair-order" : "document-invoice";
-  const [inspectionBusy, setInspectionBusy] = useState(false);
-  const [inspectionError, setInspectionError] = useState("");
-
-  async function downloadInspection() {
-    setInspectionBusy(true);
-    setInspectionError("");
-
-    try {
-      const { PDFDocument, StandardFonts } = await import("pdf-lib");
-      const templateResponse = await fetch("/multipoint-inspection-template.pdf");
-      if (!templateResponse.ok) {
-        throw new Error("The inspection template could not be loaded.");
-      }
-
-      const pdf = await PDFDocument.load(await templateResponse.arrayBuffer());
-      const form = pdf.getForm();
-      const inspectionDate = new Date().toLocaleDateString("en-US");
-      const roNumber = padRo(ro.ro_number);
-      const mileage = ro.mileage_in?.toLocaleString("en-US") ?? "";
-      const plate = [vehicle?.license_plate, vehicle?.plate_state].filter(Boolean).join(" ");
-      const values: Record<string, string> = {
-        customer: customer?.name ?? "",
-        ro_number: roNumber,
-        date: inspectionDate,
-        phone: customer?.phone ?? "",
-        email: customer?.email ?? "",
-        year: vehicle?.year?.toString() ?? "",
-        make: vehicle?.make ?? "",
-        model: [vehicle?.model, vehicle?.trim].filter(Boolean).join(" "),
-        mileage,
-        vin: vehicle?.vin ?? "",
-        plate,
-        final_date: inspectionDate,
-        final_ro_number: roNumber,
-      };
-
-      for (const [fieldName, value] of Object.entries(values)) {
-        form.getTextField(fieldName).setText(value);
-      }
-
-      const font = await pdf.embedFont(StandardFonts.Helvetica);
-      form.updateFieldAppearances(font);
-      const bytes = await pdf.save();
-      const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `Allegiant_Multipoint_Inspection_RO_${roNumber}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      setInspectionError(error instanceof Error ? error.message : "Could not create the inspection PDF.");
-    } finally {
-      setInspectionBusy(false);
-    }
-  }
-
   return (
     <section className="document-shell">
       <div className="document-actions no-print">
@@ -2090,9 +2090,7 @@ function DocumentView({
         </div>
         <div className="button-row">
           {!ro.archived_at && <button className="button secondary" onClick={onEdit}>Edit Work Order</button>}
-          <button className="button secondary" onClick={downloadInspection} disabled={inspectionBusy}>
-            {inspectionBusy ? "Creating Inspection…" : "Multipoint Inspection"}
-          </button>
+          <button className="button primary" onClick={onInspection}>Multipoint Inspection</button>
           <button className={`button ${ro.status === "voided" ? "success" : "warning"}`} onClick={onVoid}>
             {ro.status === "voided" ? "Reopen" : "Void"}
           </button>
@@ -2103,8 +2101,6 @@ function DocumentView({
           <button className="button primary" onClick={() => window.print()}>Print / Save PDF</button>
         </div>
       </div>
-      {inspectionError && <div className="error-banner no-print">{inspectionError}</div>}
-
       <article className={`document-page ${className} ${ro.status === "voided" ? "voided-document" : ""}`}>
         {ro.status === "voided" && <div className="void-watermark">VOID</div>}
 

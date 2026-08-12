@@ -1,7 +1,11 @@
-# Archive / delete update
+# Multipoint inspection and archive update
 
 Added:
 
+- In-app multipoint inspection workspace linked to each saved repair order.
+- Good, Monitor, Service, and N/A controls with measurements, notes, technician details, and final recommendations.
+- Supabase save/recall for one editable inspection per RO.
+- Editable branded PDF export generated from the saved inspection.
 - Void and reopen repair orders from the dashboard or document screen.
 - Large VOID watermark on voided documents and printed PDFs.
 - Archive and restore repair orders.
