@@ -241,6 +241,96 @@ tbody tr:hover { background: #f8fafc; }
 .line-total span { color: var(--muted); font-size: 11px; font-weight: 700; }
 .icon-button { align-self: end; width: 34px; height: 40px; border: 0; border-radius: 8px; background: #fae9eb; color: #9e1d28; font-size: 24px; line-height: 1; }
 
+.service-jobs { display: flex; flex-direction: column; gap: 18px; margin-top: 16px; }
+.service-job-card {
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 13px;
+  background: white;
+  box-shadow: 0 7px 20px rgba(16, 38, 77, 0.08);
+}
+.service-job-header {
+  display: grid;
+  grid-template-columns: 38px minmax(250px, 1fr) 120px auto;
+  gap: 12px;
+  align-items: end;
+  padding: 14px 16px;
+  background: #eef3f8;
+  border-bottom: 1px solid #d8e0ea;
+}
+.service-job-number {
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: white;
+  font-weight: 900;
+}
+.service-job-header input { color: var(--navy); font-size: 17px; font-weight: 900; }
+.service-job-total { align-self: center; text-align: right; }
+.service-job-total span, .service-job-total strong { display: block; }
+.service-job-total span { color: var(--muted); font-size: 10px; font-weight: 900; text-transform: uppercase; }
+.service-job-total strong { margin-top: 3px; color: var(--navy); font-size: 18px; }
+.technician-story { padding: 14px 16px; background: #fbfcfe; border-bottom: 1px solid #e2e8f0; }
+.technician-story textarea { background: white; }
+.job-lines { display: flex; flex-direction: column; }
+.charge-line {
+  display: grid;
+  grid-template-columns: 100px minmax(230px, 1.8fr) 75px repeat(3, minmax(85px, 0.7fr)) 55px 95px 34px;
+  gap: 9px;
+  align-items: end;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e9f0;
+  background: white;
+}
+.charge-line.associated-part { padding-left: 42px; background: #f8fafc; }
+.charge-line.associated-part .charge-type-label::before { content: "↳ "; color: var(--blue); }
+.charge-type-label {
+  align-self: center;
+  color: var(--navy);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.charge-line.discount {
+  border: 2px solid #9ed5b7;
+  background: #eaf8f0;
+}
+.charge-line.discount .charge-type-label,
+.charge-line.discount .line-total strong { color: #096c3d; }
+.job-add-actions { display: flex; gap: 8px; padding: 12px 16px; background: #f8fafc; }
+.ungrouped-charges {
+  overflow: hidden;
+  border: 1px solid #d8e0ea;
+  border-radius: 12px;
+  background: white;
+}
+.ungrouped-charges > div:first-child { padding: 13px 16px; background: #f4f6f9; }
+.ungrouped-charges h3 { margin: 0; }
+.discount-button { color: #096c3d; background: #dff4e9; }
+.discount-button:hover { background: #c8ead9; }
+
+.document-job-heading td { padding-top: 14px; padding-bottom: 14px; background: #eaf0f6; color: var(--navy); }
+.document-job-heading td:last-child { text-align: right; }
+.document-job-heading p { margin: 5px 0 0; color: #40516a; font-size: 12px; line-height: 1.4; white-space: pre-wrap; }
+.document-job-heading p span { font-weight: 900; text-transform: uppercase; }
+.document-associated-part td:first-child { padding-left: 28px; }
+.document-associated-part td:first-child::before { content: "↳ "; color: var(--blue); font-weight: 900; }
+.document-discount-row td { background: #e8f7ef !important; color: #08683b; border-top: 2px solid #83c9a3; border-bottom: 2px solid #83c9a3; font-weight: 900; }
+.discount-applied-label { display: block; margin-bottom: 3px; font-size: 9px; letter-spacing: 0.08em; }
+.discount-amount { color: #08683b; font-size: 16px; }
+
+@media (max-width: 900px) {
+  .service-job-header { grid-template-columns: 38px minmax(0, 1fr); }
+  .service-job-total { text-align: left; }
+  .charge-line { min-width: 1050px; }
+  .job-lines { overflow-x: auto; }
+}
+
 .customer-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin-top: 16px; }
 .customer-card p { margin-bottom: 12px; }
 .vehicle-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }

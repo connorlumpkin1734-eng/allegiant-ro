@@ -2,6 +2,9 @@
 
 Added:
 
+- Service-job cards that keep labor, associated parts, and the technician story together.
+- Technician stories print on customer estimates, work orders, and invoices.
+- Discounts use a high-visibility savings treatment in the editor and printed documents.
 - In-app multipoint inspection workspace linked to each saved repair order.
 - Good, Monitor, Service, and N/A controls with measurements, notes, technician details, and final recommendations.
 - Supabase save/recall for one editable inspection per RO.

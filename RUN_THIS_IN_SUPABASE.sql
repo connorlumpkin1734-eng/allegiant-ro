@@ -17,6 +17,23 @@ create index if not exists repair_orders_owner_archived_idx
 
 commit;
 
+-- Customer-facing service jobs group labor, associated parts, and technician stories.
+begin;
+
+alter table public.line_items
+  add column if not exists service_group_id uuid;
+
+alter table public.line_items
+  add column if not exists service_group_title text;
+
+alter table public.line_items
+  add column if not exists technician_story text;
+
+create index if not exists line_items_service_group_idx
+  on public.line_items(repair_order_id, service_group_id);
+
+commit;
+
 -- Multipoint inspections saved and recalled with each repair order.
 begin;
 

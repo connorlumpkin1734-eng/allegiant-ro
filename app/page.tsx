@@ -64,6 +64,9 @@ type LineItem = {
   unit_price: number;
   taxable: boolean;
   sort_order: number;
+  service_group_id: string | null;
+  service_group_title: string | null;
+  technician_story: string | null;
 };
 
 type RepairOrder = {
@@ -188,7 +191,14 @@ function numberOrNull(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function emptyLine(type: ItemType, settings: Settings, index: number): LineItem {
+function emptyLine(
+  type: ItemType,
+  settings: Settings,
+  index: number,
+  groupId: string | null = null,
+  groupTitle: string | null = null,
+  technicianStory: string | null = null
+): LineItem {
   if (type === "labor") {
     return {
       id: crypto.randomUUID(),
@@ -200,6 +210,9 @@ function emptyLine(type: ItemType, settings: Settings, index: number): LineItem 
       unit_price: settings.default_labor_rate,
       taxable: false,
       sort_order: index,
+      service_group_id: groupId,
+      service_group_title: groupTitle,
+      technician_story: technicianStory,
     };
   }
 
@@ -214,6 +227,9 @@ function emptyLine(type: ItemType, settings: Settings, index: number): LineItem 
       unit_price: 0,
       taxable: true,
       sort_order: index,
+      service_group_id: groupId,
+      service_group_title: groupTitle,
+      technician_story: technicianStory,
     };
   }
 
@@ -227,6 +243,9 @@ function emptyLine(type: ItemType, settings: Settings, index: number): LineItem 
     unit_price: 0,
     taxable: type === "fee",
     sort_order: index,
+    service_group_id: groupId,
+    service_group_title: groupTitle,
+    technician_story: technicianStory,
   };
 }
 
@@ -1039,7 +1058,7 @@ function RepairOrderEditor({
   const [items, setItems] = useState<LineItem[]>(() =>
     initialRo?.line_items?.length
       ? initialRo.line_items.map((item, index) => ({ ...item, sort_order: index }))
-      : [emptyLine("labor", settings, 0)]
+      : [emptyLine("labor", settings, 0, crypto.randomUUID(), "New Service Job", "")]
   );
   const [busy, setBusy] = useState(false);
   const [vinBusy, setVinBusy] = useState(false);
@@ -1065,6 +1084,18 @@ function RepairOrderEditor({
     const tax = Math.max(0, taxableSubtotal) * (taxRate / 100);
     return { subtotal, taxableSubtotal, tax, total: subtotal + tax };
   }, [items, taxRate]);
+
+  const serviceGroups = useMemo(() => {
+    const grouped = new Map<string, LineItem[]>();
+    for (const item of items) {
+      if (!item.service_group_id) continue;
+      const groupItems = grouped.get(item.service_group_id) ?? [];
+      groupItems.push(item);
+      grouped.set(item.service_group_id, groupItems);
+    }
+    return [...grouped.entries()].map(([id, groupItems]) => ({ id, items: groupItems }));
+  }, [items]);
+  const ungroupedItems = useMemo(() => items.filter((item) => !item.service_group_id), [items]);
 
   function chooseCustomer(id: string) {
     setSelectedCustomerId(id);
@@ -1115,8 +1146,32 @@ function RepairOrderEditor({
     });
   }
 
-  function addItem(type: ItemType) {
-    setItems((current) => [...current, emptyLine(type, settings, current.length)]);
+  function addItem(type: ItemType, groupId: string | null = null) {
+    setItems((current) => {
+      const groupedItem = groupId ? current.find((item) => item.service_group_id === groupId) : null;
+      return [...current, emptyLine(
+        type,
+        settings,
+        current.length,
+        groupId,
+        groupedItem?.service_group_title ?? null,
+        groupedItem?.technician_story ?? null
+      )];
+    });
+  }
+
+  function addServiceJob() {
+    const groupId = crypto.randomUUID();
+    setItems((current) => [
+      ...current,
+      emptyLine("labor", settings, current.length, groupId, "New Service Job", ""),
+    ]);
+  }
+
+  function updateServiceJob(groupId: string, field: "service_group_title" | "technician_story", value: string) {
+    setItems((current) => current.map((item) =>
+      item.service_group_id === groupId ? { ...item, [field]: value } : item
+    ));
   }
 
   function changeItem(id: string, field: keyof LineItem, rawValue: string | boolean | number) {
@@ -1126,7 +1181,14 @@ function RepairOrderEditor({
         const next = { ...item };
 
         if (field === "item_type") {
-          return emptyLine(rawValue as ItemType, settings, item.sort_order);
+          return emptyLine(
+            rawValue as ItemType,
+            settings,
+            item.sort_order,
+            item.service_group_id,
+            item.service_group_title,
+            item.technician_story
+          );
         }
 
         if (field === "description") next.description = String(rawValue);
@@ -1301,6 +1363,9 @@ function RepairOrderEditor({
         unit_price: item.unit_price,
         taxable: item.taxable,
         sort_order: index,
+        service_group_id: item.service_group_id,
+        service_group_title: valueOrNull(item.service_group_title ?? ""),
+        technician_story: valueOrNull(item.technician_story ?? ""),
       }));
 
       const { error: lineError } = await supabase.from("line_items").insert(linePayload);
@@ -1574,76 +1639,73 @@ function RepairOrderEditor({
       <section className="panel line-items-panel">
         <div className="section-heading wrap">
           <div>
-            <h2>{workspaceTab === "invoice" ? "Invoice charges" : "Work-order line items"}</h2>
+            <h2>{workspaceTab === "invoice" ? "Invoice service jobs" : "Service jobs"}</h2>
             <p className="muted">
               {workspaceTab === "invoice"
-                ? "These are the same editable charges used by the work order and estimate."
-                : `Labor defaults to ${money(settings.default_labor_rate)}/hr. Parts default to ${settings.default_parts_markup}% markup.`}
+                ? "Labor, related parts, and the technician story stay together on the final invoice."
+                : `Build each repair as a job. Labor defaults to ${money(settings.default_labor_rate)}/hr and parts to ${settings.default_parts_markup}% markup.`}
             </p>
           </div>
           <div className="button-row">
-            <button className="button small secondary" onClick={() => addItem("labor")}>+ Labor</button>
-            <button className="button small secondary" onClick={() => addItem("part")}>+ Part</button>
-            <button className="button small secondary" onClick={() => addItem("fee")}>+ Fee</button>
-            <button className="button small secondary" onClick={() => addItem("discount")}>+ Discount</button>
+            <button className="button primary" onClick={addServiceJob}>+ Add Service Job</button>
+            <button className="button secondary" onClick={() => addItem("fee")}>+ Fee</button>
+            <button className="button discount-button" onClick={() => addItem("discount")}>+ Discount</button>
           </div>
         </div>
 
-        <div className="line-items">
-          {items.map((item, index) => (
-            <div className="line-item" key={item.id}>
-              <div className="line-number">{index + 1}</div>
-              <label>
-                Type
-                <select value={item.item_type} onChange={(event) => changeItem(item.id, "item_type", event.target.value)}>
-                  <option value="labor">Labor</option>
-                  <option value="part">Part</option>
-                  <option value="fee">Fee</option>
-                  <option value="discount">Discount</option>
-                </select>
-              </label>
-              <label className="description-field">
-                Description
-                <input value={item.description} onChange={(event) => changeItem(item.id, "description", event.target.value)} />
-              </label>
-              <label>
-                {item.item_type === "labor" ? "Hours" : "Qty"}
-                <input type="number" step="0.01" value={item.quantity} onChange={(event) => changeItem(item.id, "quantity", event.target.value)} />
-              </label>
-              {item.item_type === "part" && (
-                <>
+        <div className="service-jobs">
+          {serviceGroups.map((group, groupIndex) => {
+            const first = group.items[0];
+            const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+            return (
+              <article className="service-job-card" key={group.id}>
+                <header className="service-job-header">
+                  <div className="service-job-number">{groupIndex + 1}</div>
                   <label>
-                    Your cost
-                    <input type="number" step="0.01" value={item.unit_cost ?? 0} onChange={(event) => changeItem(item.id, "unit_cost", event.target.value)} />
+                    Service job
+                    <input value={first.service_group_title ?? ""} onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)} />
                   </label>
-                  <label>
-                    Markup %
-                    <input type="number" step="0.01" value={Number(item.markup_percent ?? 0).toFixed(2)} onChange={(event) => changeItem(item.id, "markup_percent", event.target.value)} />
-                  </label>
-                </>
-              )}
-              <label>
-                {item.item_type === "labor" ? "Rate" : item.item_type === "discount" ? "Discount" : "Unit price"}
-                <input
-                  type="number"
-                  step="0.01"
-                  value={item.item_type === "discount" ? Math.abs(item.unit_price) : Number(item.unit_price.toFixed(2))}
-                  onChange={(event) => changeItem(item.id, "unit_price", event.target.value)}
-                />
-              </label>
-              <label className="checkbox-row compact">
-                <input type="checkbox" checked={item.taxable} onChange={(event) => changeItem(item.id, "taxable", event.target.checked)} />
-                Tax
-              </label>
-              <div className="line-total">
-                <span>Total</span>
-                <strong>{money(item.quantity * item.unit_price)}</strong>
+                  <div className="service-job-total"><span>Job total</span><strong>{money(jobTotal)}</strong></div>
+                  <button className="button small danger" onClick={() => setItems((current) => current.filter((item) => item.service_group_id !== group.id))}>Delete job</button>
+                </header>
+                <label className="technician-story">
+                  Technician story - prints on invoice
+                  <textarea
+                    rows={3}
+                    placeholder="Example: Replaced front brake pads and rotors, lubricated slide pins, and bled brakes."
+                    value={first.technician_story ?? ""}
+                    onChange={(event) => updateServiceJob(group.id, "technician_story", event.target.value)}
+                  />
+                </label>
+                <div className="job-lines">
+                  {group.items.map((item) => (
+                    <ChargeLine key={item.id} item={item} changeItem={changeItem} removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))} />
+                  ))}
+                </div>
+                <div className="job-add-actions">
+                  <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>
+                  <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Associated Part</button>
+                </div>
+              </article>
+            );
+          })}
+
+          {ungroupedItems.length > 0 && (
+            <section className="ungrouped-charges">
+              <div>
+                <h3>Fees & Discounts</h3>
               </div>
-              <button className="icon-button" title="Remove line" onClick={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}>
-                ×
-              </button>
-            </div>
-          ))}
+              <div className="job-lines">
+                {ungroupedItems.map((item) => (
+                  <ChargeLine key={item.id} item={item} changeItem={changeItem} removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {!serviceGroups.length && !ungroupedItems.length && (
+            <div className="empty-state">Add a service job to begin building this repair order.</div>
+          )}
         </div>
       </section>
 
@@ -1661,6 +1723,62 @@ function RepairOrderEditor({
         <button className="button primary" onClick={() => save()} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
       </div>
     </section>
+  );
+}
+
+function ChargeLine({
+  item,
+  changeItem,
+  removeItem,
+}: {
+  item: LineItem;
+  changeItem: (id: string, field: keyof LineItem, rawValue: string | boolean | number) => void;
+  removeItem: () => void;
+}) {
+  return (
+    <div className={`charge-line ${item.item_type} ${item.item_type === "part" ? "associated-part" : ""}`}>
+      <span className="charge-type-label">
+        {item.item_type === "discount" ? "Discount applied" : item.item_type}
+      </span>
+      <label className="description-field">
+        Description
+        <input value={item.description} onChange={(event) => changeItem(item.id, "description", event.target.value)} />
+      </label>
+      <label>
+        {item.item_type === "labor" ? "Hours" : "Qty"}
+        <input type="number" step="0.01" value={item.quantity} onChange={(event) => changeItem(item.id, "quantity", event.target.value)} />
+      </label>
+      {item.item_type === "part" && (
+        <>
+          <label>
+            Your cost
+            <input type="number" step="0.01" value={item.unit_cost ?? 0} onChange={(event) => changeItem(item.id, "unit_cost", event.target.value)} />
+          </label>
+          <label>
+            Markup %
+            <input type="number" step="0.01" value={Number(item.markup_percent ?? 0).toFixed(2)} onChange={(event) => changeItem(item.id, "markup_percent", event.target.value)} />
+          </label>
+        </>
+      )}
+      <label>
+        {item.item_type === "labor" ? "Rate" : item.item_type === "discount" ? "Discount amount" : "Unit price"}
+        <input
+          type="number"
+          step="0.01"
+          value={item.item_type === "discount" ? Math.abs(item.unit_price) : Number(item.unit_price.toFixed(2))}
+          onChange={(event) => changeItem(item.id, "unit_price", event.target.value)}
+        />
+      </label>
+      <label className="checkbox-row compact">
+        <input type="checkbox" checked={item.taxable} onChange={(event) => changeItem(item.id, "taxable", event.target.checked)} />
+        Tax
+      </label>
+      <div className="line-total">
+        <span>{item.item_type === "discount" ? "You save" : "Total"}</span>
+        <strong>{money(item.item_type === "discount" ? Math.abs(item.quantity * item.unit_price) : item.quantity * item.unit_price)}</strong>
+      </div>
+      <button className="icon-button" title="Remove line" onClick={removeItem}>×</button>
+    </div>
   );
 }
 
@@ -2064,6 +2182,29 @@ function DocumentView({
   const isWorkOrder = mode === "work_order";
   const isInvoice = mode === "invoice";
   const currentStatusLabel = statusLabel(ro.status);
+  const groupedDocumentItems = (() => {
+    const groups: Array<{ id: string; title: string; story: string; items: LineItem[] }> = [];
+    const byId = new Map<string, { id: string; title: string; story: string; items: LineItem[] }>();
+    for (const item of items) {
+      if (!item.service_group_id) {
+        groups.push({ id: `line-${item.id}`, title: "", story: "", items: [item] });
+        continue;
+      }
+      let group = byId.get(item.service_group_id);
+      if (!group) {
+        group = {
+          id: item.service_group_id,
+          title: item.service_group_title || "Service Job",
+          story: item.technician_story || "",
+          items: [],
+        };
+        byId.set(item.service_group_id, group);
+        groups.push(group);
+      }
+      group.items.push(item);
+    }
+    return groups;
+  })();
 
   const title = isEstimate ? "Estimate" : isWorkOrder ? "Work Order" : "Invoice";
   const documentSubtitle = isEstimate
@@ -2212,15 +2353,33 @@ function DocumentView({
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
-              <tr key={item.id}>
-                <td>{item.description}</td>
-                <td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td>
-                <td>{item.quantity}</td>
-                <td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td>
-                <td>{money(item.quantity * item.unit_price)}</td>
-              </tr>
-            ))}
+            {groupedDocumentItems.map((group) => {
+              const isServiceJob = Boolean(group.title);
+              const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+              return [
+                isServiceJob && (
+                  <tr className="document-job-heading" key={`${group.id}-heading`}>
+                    <td colSpan={4}>
+                      <strong>{group.title}</strong>
+                      {group.story && <p><span>Technician story:</span> {group.story}</p>}
+                    </td>
+                    <td><strong>{money(jobTotal)}</strong></td>
+                  </tr>
+                ),
+                ...group.items.map((item) => (
+                  <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : item.item_type === "part" && isServiceJob ? "document-associated-part" : ""}>
+                    <td>
+                      {item.item_type === "discount" && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}
+                      {item.description}
+                    </td>
+                    <td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td>
+                    <td>{item.quantity}</td>
+                    <td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td>
+                    <td className={item.item_type === "discount" ? "discount-amount" : ""}>{money(item.quantity * item.unit_price)}</td>
+                  </tr>
+                )),
+              ];
+            })}
           </tbody>
         </table>
 
