@@ -147,7 +147,7 @@ const sections: InspectionSection[] = [
   },
 ];
 
-const blankValue = (): InspectionValue => ({ status: "", measurement1: "", measurement2: "", notes: "" });
+const blankValue = (): InspectionValue => ({ status: "good", measurement1: "", measurement2: "", notes: "" });
 
 function blankInspection(): InspectionData {
   const items: Record<string, InspectionValue> = {};
