@@ -2020,6 +2020,64 @@ function DocumentView({
       : "Services requested / performed";
   const finalTotalLabel = isEstimate ? "Estimated total" : isWorkOrder ? "Work order total" : "Invoice total";
   const className = isEstimate ? "document-estimate" : isWorkOrder ? "document-repair-order" : "document-invoice";
+  const [inspectionBusy, setInspectionBusy] = useState(false);
+  const [inspectionError, setInspectionError] = useState("");
+
+  async function downloadInspection() {
+    setInspectionBusy(true);
+    setInspectionError("");
+
+    try {
+      const { PDFDocument, StandardFonts } = await import("pdf-lib");
+      const templateResponse = await fetch("/multipoint-inspection-template.pdf");
+      if (!templateResponse.ok) {
+        throw new Error("The inspection template could not be loaded.");
+      }
+
+      const pdf = await PDFDocument.load(await templateResponse.arrayBuffer());
+      const form = pdf.getForm();
+      const inspectionDate = new Date().toLocaleDateString("en-US");
+      const roNumber = padRo(ro.ro_number);
+      const mileage = ro.mileage_in?.toLocaleString("en-US") ?? "";
+      const plate = [vehicle?.license_plate, vehicle?.plate_state].filter(Boolean).join(" ");
+      const values: Record<string, string> = {
+        customer: customer?.name ?? "",
+        ro_number: roNumber,
+        date: inspectionDate,
+        phone: customer?.phone ?? "",
+        email: customer?.email ?? "",
+        year: vehicle?.year?.toString() ?? "",
+        make: vehicle?.make ?? "",
+        model: [vehicle?.model, vehicle?.trim].filter(Boolean).join(" "),
+        mileage,
+        vin: vehicle?.vin ?? "",
+        plate,
+        final_date: inspectionDate,
+        final_ro_number: roNumber,
+      };
+
+      for (const [fieldName, value] of Object.entries(values)) {
+        form.getTextField(fieldName).setText(value);
+      }
+
+      const font = await pdf.embedFont(StandardFonts.Helvetica);
+      form.updateFieldAppearances(font);
+      const bytes = await pdf.save();
+      const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `Allegiant_Multipoint_Inspection_RO_${roNumber}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setInspectionError(error instanceof Error ? error.message : "Could not create the inspection PDF.");
+    } finally {
+      setInspectionBusy(false);
+    }
+  }
 
   return (
     <section className="document-shell">
@@ -2032,6 +2090,9 @@ function DocumentView({
         </div>
         <div className="button-row">
           {!ro.archived_at && <button className="button secondary" onClick={onEdit}>Edit Work Order</button>}
+          <button className="button secondary" onClick={downloadInspection} disabled={inspectionBusy}>
+            {inspectionBusy ? "Creating Inspection…" : "Multipoint Inspection"}
+          </button>
           <button className={`button ${ro.status === "voided" ? "success" : "warning"}`} onClick={onVoid}>
             {ro.status === "voided" ? "Reopen" : "Void"}
           </button>
@@ -2042,6 +2103,7 @@ function DocumentView({
           <button className="button primary" onClick={() => window.print()}>Print / Save PDF</button>
         </div>
       </div>
+      {inspectionError && <div className="error-banner no-print">{inspectionError}</div>}
 
       <article className={`document-page ${className} ${ro.status === "voided" ? "voided-document" : ""}`}>
         {ro.status === "voided" && <div className="void-watermark">VOID</div>}
