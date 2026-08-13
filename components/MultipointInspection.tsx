@@ -161,13 +161,21 @@ function normalizeInspection(value: unknown): InspectionData {
   const blank = blankInspection();
   if (!value || typeof value !== "object") return blank;
   const candidate = value as Partial<InspectionData>;
+  const normalizedItems = { ...blank.items };
+  for (const [key, item] of Object.entries(candidate.items ?? {})) {
+    normalizedItems[key] = {
+      ...(blank.items[key] ?? blankValue()),
+      ...item,
+      status: item.status || "good",
+    };
+  }
   return {
     ...blank,
     ...candidate,
     initials: Array.isArray(candidate.initials)
       ? [String(candidate.initials[0] ?? ""), String(candidate.initials[1] ?? ""), String(candidate.initials[2] ?? "")]
       : blank.initials,
-    items: { ...blank.items, ...(candidate.items ?? {}) },
+    items: normalizedItems,
   };
 }
 
