@@ -334,6 +334,20 @@ tbody tr:hover { background: #f8fafc; }
 .document-job-heading td:last-child { text-align: right; }
 .document-job-heading p { margin: 5px 0 0; color: #40516a; font-size: 12px; line-height: 1.4; white-space: pre-wrap; }
 .document-job-heading p span { font-weight: 900; text-transform: uppercase; }
+.document-job-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.authorization-mark { display: inline-flex; min-width: max-content; border-radius: 999px; padding: 4px 9px; font-size: 10px; font-weight: 1000; letter-spacing: .05em; text-transform: uppercase; }
+.authorization-mark.approved { background: #dff4e9; color: #0f633c; }
+.authorization-mark.declined { background: #fae7e9; color: #981c28; }
+.document-job-heading.authorization-approved td { background: #edf8f2; }
+.document-job-heading.authorization-declined td { background: #fff0f1; }
+.authorization-declined-line td { background: #fffafa; color: #7d8795; }
+.document-authorization-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0 18px; border: 1px solid #bfd7ca; border-left: 6px solid #16804e; border-radius: 8px; padding: 13px 15px; background: #f3fbf6; }
+.document-authorization-summary.partially_approved { border-color: #bfd0ea; border-left-color: #2459a9; background: #f3f7ff; }
+.document-authorization-summary.declined { border-color: #e4bfc3; border-left-color: #b21f2d; background: #fff5f6; }
+.document-authorization-summary div { display: flex; flex-direction: column; gap: 2px; }
+.document-authorization-summary span { color: var(--muted); font-size: 10px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; }
+.document-authorization-summary strong { color: var(--navy); font-size: 12px; text-transform: capitalize; }
+@media (max-width: 700px) { .document-authorization-summary { grid-template-columns: 1fr; } }
 .document-associated-part td:first-child { padding-left: 28px; }
 .document-associated-part td:first-child::before { content: "↳ "; color: var(--blue); font-weight: 900; }
 .document-discount-row td { background: #e8f7ef !important; color: #08683b; border-top: 2px solid #83c9a3; border-bottom: 2px solid #83c9a3; font-weight: 900; }
