@@ -3,6 +3,8 @@ type RepairOrderRow = {
   owner_id: string;
   ro_number: number;
   tax_rate: number;
+  created_at: string;
+  customer_concern: string | null;
   customers: { name: string; email: string | null } | null;
   vehicles: { year: number | null; make: string | null; model: string | null; vin: string | null } | null;
   line_items: Array<{ description: string; quantity: number; unit_price: number; taxable: boolean; sort_order: number; service_group_id: string | null; service_group_title: string | null }>;
@@ -80,12 +82,16 @@ export default async (request: Request) => {
     customerEmail,
     vehicle: [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" "),
     vin: ro.vehicles?.vin || "",
+    estimateDate: ro.created_at,
+    customerConcern: ro.customer_concern || "",
     items,
     photos,
     subtotal,
     tax,
     total,
+    taxRate: Number(ro.tax_rate),
     businessName: settings.business_name || "Allegiant Auto Care",
+    businessAddress: settings.business_address || "",
     businessPhone: settings.business_phone || "",
     businessEmail: settings.business_email || "",
   };
@@ -111,7 +117,7 @@ export default async (request: Request) => {
       from: fromEmail,
       to: [customerEmail],
       subject: `Estimate #${String(ro.ro_number).padStart(4, "0")} from Allegiant Auto Care`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#102a4c"><h1>Allegiant Auto Care</h1><p>Hi ${escapeHtml(snapshot.customerName)},</p><p>Your estimate for the ${escapeHtml(snapshot.vehicle)} is ready.</p><div style="background:#f3f6fa;padding:18px;border-radius:10px;margin:22px 0"><strong>Estimate #${String(ro.ro_number).padStart(4, "0")}</strong><div style="font-size:28px;font-weight:800;margin-top:8px">${money(total)}</div></div><p><a href="${approvalUrl}" style="display:inline-block;background:#b21f2d;color:white;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:700">Review and approve estimate</a></p><p style="color:#64748b;font-size:13px">Please use the secure link to approve or decline. Additional repairs require separate authorization.</p></div>`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden"><div style="padding:24px;border-bottom:5px solid #2459a9"><h1 style="margin:0">Allegiant Auto Care</h1><p style="margin:6px 0 0;color:#64748b">Estimate #${String(ro.ro_number).padStart(4, "0")} · ${escapeHtml(snapshot.vehicle)}</p></div><div style="padding:24px"><p>Hi ${escapeHtml(snapshot.customerName)},</p><p>Your itemized estimate is ready. You can approve or decline each recommended service separately.</p><div style="background:#edf4ff;border-left:6px solid #2459a9;padding:18px;margin:22px 0"><div style="font-size:12px;font-weight:700;text-transform:uppercase">Estimated total</div><div style="font-size:30px;font-weight:800;margin-top:5px">${money(total)}</div></div><p><a href="${approvalUrl}" style="display:inline-block;background:#b21f2d;color:white;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:700">Review estimate and choose services</a></p><p style="color:#64748b;font-size:13px">The secure estimate includes the full itemization, repair photos, and signature authorization. Additional repairs require separate approval.</p></div></div>`,
     }),
   });
   if (!emailResponse.ok) {
