@@ -513,6 +513,13 @@ tbody tr:hover { background: #f8fafc; }
 .estimate-decision.approved { color: #0f633c; }
 .estimate-decision.declined { color: #981c28; }
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+.ro-link { font-size: inherit; font-weight: 1000; }
+.vin-scanner-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 16px; background: rgba(4, 15, 30, .82); }
+.vin-scanner-modal { width: min(720px, 100%); border-radius: 16px; padding: 20px; background: white; box-shadow: 0 24px 70px rgba(0, 0, 0, .38); }
+.vin-camera-frame { position: relative; overflow: hidden; aspect-ratio: 16 / 9; border-radius: 12px; background: #07111e; }
+.vin-camera-frame video { width: 100%; height: 100%; object-fit: cover; }
+.vin-camera-guide { position: absolute; inset: 35% 5%; display: grid; place-items: center; border: 3px solid #fff; border-radius: 8px; box-shadow: 0 0 0 999px rgba(0, 0, 0, .28); color: white; font-size: 11px; font-weight: 1000; letter-spacing: .18em; text-shadow: 0 1px 3px #000; }
+.vin-scanner-status { margin: 12px 0; color: var(--muted); font-size: 13px; font-weight: 700; }
 
 .approval-shell { min-height: 100vh; padding: 32px 16px; background: #eef2f7; }
 .approval-card { width: min(1040px, 100%); margin: 0 auto; padding: 34px; background: white; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 16px 40px rgba(15, 39, 71, 0.1); }
