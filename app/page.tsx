@@ -392,6 +392,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const [selectedRo, setSelectedRo] = useState<RepairOrder | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [editingRo, setEditingRo] = useState<RepairOrder | null>(null);
+  const [editorVersion, setEditorVersion] = useState(0);
   const [newContext, setNewContext] = useState<{ customerId: string; vehicleId: string }>({ customerId: "", vehicleId: "" });
   const [documentMode, setDocumentMode] = useState<DocumentMode>("work_order");
   const [documentReturnView, setDocumentReturnView] = useState<"dashboard" | "customer_profile" | "editor">("dashboard");
@@ -401,8 +402,8 @@ function RepairOrderApp({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  async function loadData() {
-    setLoading(true);
+  async function loadData(showLoading = true) {
+    if (showLoading) setLoading(true);
     setError("");
 
     const [settingsResult, customersResult, vehiclesResult, roResult, authorizationsResult] = await Promise.all([
@@ -424,7 +425,7 @@ function RepairOrderApp({ user }: { user: User }) {
 
     if (firstError) {
       setError(firstError.message);
-      setLoading(false);
+      if (showLoading) setLoading(false);
       return;
     }
 
@@ -462,7 +463,7 @@ function RepairOrderApp({ user }: { user: User }) {
       setSelectedCustomer(refreshed ?? null);
     }
 
-    setLoading(false);
+    if (showLoading) setLoading(false);
   }
 
   useEffect(() => {
@@ -472,7 +473,7 @@ function RepairOrderApp({ user }: { user: User }) {
 
   useEffect(() => {
     const refreshWhenReturning = () => {
-      if (document.visibilityState === "visible") void loadData();
+      if (document.visibilityState === "visible" && view !== "editor") void loadData(false);
     };
     window.addEventListener("focus", refreshWhenReturning);
     document.addEventListener("visibilitychange", refreshWhenReturning);
@@ -481,7 +482,7 @@ function RepairOrderApp({ user }: { user: User }) {
       document.removeEventListener("visibilitychange", refreshWhenReturning);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [view]);
 
   async function openDocument(
     id: string,
@@ -538,6 +539,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const loaded = data as RepairOrder;
     loaded.line_items = [...(loaded.line_items ?? [])].sort((a, b) => a.sort_order - b.sort_order);
     setEditingRo(loaded);
+    setEditorVersion((current) => current + 1);
     setNewContext({ customerId: loaded.customer_id, vehicleId: loaded.vehicle_id });
     setEditorReturnView(returnView);
     setEditorTab(tab);
@@ -569,6 +571,7 @@ function RepairOrderApp({ user }: { user: User }) {
 
   function startNew(customerId = "", vehicleId = "", returnView: "dashboard" | "customer_profile" = "dashboard") {
     setEditingRo(null);
+    setEditorVersion((current) => current + 1);
     setNewContext({ customerId, vehicleId });
     setEditorReturnView(returnView);
     setEditorTab("work_order");
@@ -814,7 +817,7 @@ function RepairOrderApp({ user }: { user: User }) {
           />
         ) : view === "editor" ? (
           <RepairOrderEditor
-            key={editingRo?.id ?? "new-repair-order"}
+            key={`${editingRo?.id ?? "new-repair-order"}-${editorVersion}`}
             user={user}
             settings={settings}
             customers={customers}
@@ -827,7 +830,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onCancel={returnFromEditor}
             onSaved={async (id, tab, previewMode) => {
               setEditorTab(tab);
-              await loadData();
+              await loadData(false);
               if (previewMode) {
                 await openDocument(id, previewMode, "editor");
               } else {
