@@ -86,6 +86,9 @@ type RepairOrder = {
   created_at: string;
   updated_at: string;
   archived_at: string | null;
+  estimate_status?: "not_sent" | "sent" | "approved" | "declined";
+  estimate_sent_at?: string | null;
+  estimate_responded_at?: string | null;
   customers?: Customer | null;
   vehicles?: Vehicle | null;
   line_items?: LineItem[];
@@ -754,6 +757,7 @@ function RepairOrderApp({ user }: { user: User }) {
           />
         ) : view === "editor" ? (
           <RepairOrderEditor
+            key={editingRo?.id ?? "new-repair-order"}
             user={user}
             settings={settings}
             customers={customers}
@@ -999,6 +1003,11 @@ function Dashboard({
                           <option value="completed">Completed</option>
                         </select>
                       )}
+                      {ro.estimate_status && ro.estimate_status !== "not_sent" && (
+                        <span className={`badge estimate-${ro.estimate_status}`}>
+                          {ro.estimate_status === "sent" ? "Estimate sent" : ro.estimate_status}
+                        </span>
+                      )}
                       {ro.archived_at && <span className="badge archived">Archived</span>}
                     </div>
                   </td>
@@ -1134,6 +1143,35 @@ function RepairOrderEditor({
   const [vinBusy, setVinBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(initialTab);
+
+  async function emailEstimate() {
+    if (!initialRo) return;
+    if (!customerForm.email.trim()) {
+      setMessage("Add the customer's email address before sending the estimate.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again before sending.");
+
+      const response = await fetch("/.netlify/functions/send-estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ repairOrderId: initialRo.id }),
+      });
+      const body = await response.json() as { error?: string; message?: string };
+      if (!response.ok) throw new Error(body.error || "The estimate could not be emailed.");
+      setMessage(body.message || `Estimate emailed to ${customerForm.email.trim()}.`);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "The estimate could not be emailed.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const selectableCustomers = useMemo(
     () => customers.filter((customer) => !customer.archived_at || customer.id === initialRo?.customer_id),
@@ -1465,6 +1503,7 @@ function RepairOrderEditor({
             <>
               <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Preview Estimate</button>
               <button className="button ghost" onClick={() => save("work_order")} disabled={busy}>Preview Work Order</button>
+              <button className="button primary" onClick={() => void emailEstimate()} disabled={busy}>Email Estimate</button>
             </>
           )}
           {initialRo && workspaceTab === "invoice" && (

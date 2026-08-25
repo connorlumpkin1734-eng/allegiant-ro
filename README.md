@@ -20,6 +20,7 @@ A cloud-based repair order, estimate, and invoice app using Next.js, Netlify, an
 - Editable multipoint-inspection PDF export generated from saved inspection data
 - Customer-facing service jobs that group labor, associated parts, and technician stories
 - High-visibility discount rows on the editor and printed documents
+- Customer estimate emails with secure approve/decline links and captured signatures
 
 ## Netlify environment variables
 
@@ -27,6 +28,9 @@ These must already exist in Netlify:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `RESEND_API_KEY`
+- `ESTIMATE_FROM_EMAIL` (for example `Allegiant Auto Care <estimates@allegiantautocare.com>`)
 
 Never commit a Supabase secret key or service-role key.
 
