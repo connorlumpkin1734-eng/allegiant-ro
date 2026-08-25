@@ -21,6 +21,7 @@ A cloud-based repair order, estimate, and invoice app using Next.js, Netlify, an
 - Customer-facing service jobs that group labor, associated parts, and technician stories
 - High-visibility discount rows on the editor and printed documents
 - Customer estimate emails with secure approve/decline links and captured signatures
+- Phone-camera job photos with captions, RO recall, and customer-estimate display
 
 ## Netlify environment variables
 

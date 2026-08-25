@@ -69,6 +69,17 @@ type LineItem = {
   technician_story: string | null;
 };
 
+type EstimatePhoto = {
+  id: string;
+  repair_order_id: string;
+  service_group_id: string;
+  storage_path: string;
+  caption: string | null;
+  sort_order: number;
+  created_at: string;
+  signed_url?: string;
+};
+
 type RepairOrder = {
   id: string;
   ro_number: number;
@@ -1282,6 +1293,18 @@ function RepairOrderEditor({
     ));
   }
 
+  async function deleteServiceJob(groupId: string) {
+    if (!window.confirm("Delete this service job and its attached photos?")) return;
+    if (initialRo) {
+      const { data } = await supabase.from("estimate_photos").select("storage_path")
+        .eq("repair_order_id", initialRo.id).eq("service_group_id", groupId);
+      const paths = (data ?? []).map((photo) => photo.storage_path as string);
+      if (paths.length) await supabase.storage.from("estimate-photos").remove(paths);
+      await supabase.from("estimate_photos").delete().eq("repair_order_id", initialRo.id).eq("service_group_id", groupId);
+    }
+    setItems((current) => current.filter((item) => item.service_group_id !== groupId));
+  }
+
   function changeItem(id: string, field: keyof LineItem, rawValue: string | boolean | number) {
     setItems((current) =>
       current.map((item) => {
@@ -1775,7 +1798,7 @@ function RepairOrderEditor({
                     <input value={first.service_group_title ?? ""} onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)} />
                   </label>
                   <div className="service-job-total"><span>Job total</span><strong>{money(jobTotal)}</strong></div>
-                  <button className="button small danger" onClick={() => setItems((current) => current.filter((item) => item.service_group_id !== group.id))}>Delete job</button>
+                  <button className="button small danger" onClick={() => void deleteServiceJob(group.id)}>Delete job</button>
                 </header>
                 <label className="technician-story">
                   Technician story - prints on invoice
@@ -1791,6 +1814,9 @@ function RepairOrderEditor({
                     <ChargeLine key={item.id} item={item} changeItem={changeItem} removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))} />
                   ))}
                 </div>
+                {initialRo && workspaceTab === "work_order" && (
+                  <JobPhotos user={user} repairOrderId={initialRo.id} serviceGroupId={group.id} />
+                )}
                 <div className="job-add-actions">
                   <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>
                   <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Associated Part</button>
@@ -1831,6 +1857,104 @@ function RepairOrderEditor({
         )}
         <button className="button primary" onClick={() => save()} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
       </div>
+    </section>
+  );
+}
+
+async function compressPhoto(file: File): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  const maxDimension = 1600;
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return await new Promise<Blob>((resolve, reject) => canvas.toBlob(
+    (blob) => blob ? resolve(blob) : reject(new Error("Could not prepare the photo.")),
+    "image/jpeg",
+    0.8
+  ));
+}
+
+function JobPhotos({ user, repairOrderId, serviceGroupId }: { user: User; repairOrderId: string; serviceGroupId: string }) {
+  const [photos, setPhotos] = useState<EstimatePhoto[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadPhotos() {
+    const { data, error } = await supabase.from("estimate_photos").select("*")
+      .eq("repair_order_id", repairOrderId).eq("service_group_id", serviceGroupId).order("sort_order");
+    if (error) { setMessage(error.message); return; }
+    const withUrls = await Promise.all(((data ?? []) as EstimatePhoto[]).map(async (photo) => {
+      const result = await supabase.storage.from("estimate-photos").createSignedUrl(photo.storage_path, 3600);
+      return { ...photo, signed_url: result.data?.signedUrl };
+    }));
+    setPhotos(withUrls);
+  }
+
+  useEffect(() => { void loadPhotos(); }, [repairOrderId, serviceGroupId]);
+
+  async function upload(files: FileList | null) {
+    if (!files?.length) return;
+    setBusy(true); setMessage("");
+    try {
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith("image/")) continue;
+        const compressed = await compressPhoto(file);
+        const path = `${user.id}/${repairOrderId}/${serviceGroupId}/${crypto.randomUUID()}.jpg`;
+        const uploadResult = await supabase.storage.from("estimate-photos").upload(path, compressed, { contentType: "image/jpeg" });
+        if (uploadResult.error) throw uploadResult.error;
+        const insertResult = await supabase.from("estimate_photos").insert({
+          owner_id: user.id, repair_order_id: repairOrderId, service_group_id: serviceGroupId,
+          storage_path: path, caption: null, sort_order: photos.length,
+        });
+        if (insertResult.error) {
+          await supabase.storage.from("estimate-photos").remove([path]);
+          throw insertResult.error;
+        }
+      }
+      await loadPhotos();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Photo upload failed.");
+    } finally { setBusy(false); }
+  }
+
+  async function saveCaption(photo: EstimatePhoto, caption: string) {
+    setPhotos((current) => current.map((entry) => entry.id === photo.id ? { ...entry, caption } : entry));
+    const { error } = await supabase.from("estimate_photos").update({ caption: valueOrNull(caption) }).eq("id", photo.id);
+    if (error) setMessage(error.message);
+  }
+
+  async function removePhoto(photo: EstimatePhoto) {
+    if (!window.confirm("Delete this job photo?")) return;
+    setBusy(true); setMessage("");
+    const storageResult = await supabase.storage.from("estimate-photos").remove([photo.storage_path]);
+    const tableResult = storageResult.error ? null : await supabase.from("estimate_photos").delete().eq("id", photo.id);
+    if (storageResult.error || tableResult?.error) setMessage(storageResult.error?.message || tableResult?.error?.message || "Delete failed.");
+    else setPhotos((current) => current.filter((entry) => entry.id !== photo.id));
+    setBusy(false);
+  }
+
+  return (
+    <section className="job-photos">
+      <div className="job-photo-heading">
+        <div><strong>Customer estimate photos</strong><small>Saved with this RO and shown under this service job.</small></div>
+        <label className={`button small secondary photo-upload-button ${busy ? "disabled" : ""}`}>
+          {busy ? "Uploading…" : "+ Take or add photos"}
+          <input type="file" accept="image/*" capture="environment" multiple disabled={busy} onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} />
+        </label>
+      </div>
+      {photos.length > 0 && <div className="job-photo-grid">{photos.map((photo) => (
+        <article className="job-photo-card" key={photo.id}>
+          {photo.signed_url && <img src={photo.signed_url} alt={photo.caption || "Service job photo"} />}
+          <input placeholder="Add a customer-facing caption…" value={photo.caption ?? ""}
+            onChange={(event) => setPhotos((current) => current.map((entry) => entry.id === photo.id ? { ...entry, caption: event.target.value } : entry))}
+            onBlur={(event) => void saveCaption(photo, event.target.value)} />
+          <button className="button small danger" disabled={busy} onClick={() => void removePhoto(photo)}>Delete photo</button>
+        </article>
+      ))}</div>}
+      {message && <div className="notice">{message}</div>}
     </section>
   );
 }

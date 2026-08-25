@@ -20,7 +20,20 @@ export default async (request: Request) => {
   const lookup = await fetch(`${supabaseUrl}/rest/v1/estimate_authorizations?select=id,repair_order_id,status,customer_name,estimate_snapshot,responded_at&token_hash=eq.${tokenHash}&limit=1`, { headers: serviceHeaders });
   const authorization = (await lookup.json() as Array<Record<string, unknown>>)[0];
   if (!authorization) return json({ error: "This approval link is invalid or expired." }, 404);
-  if (request.method === "GET") return json({ authorization });
+  if (request.method === "GET") {
+    const snapshot = authorization.estimate_snapshot as { photos?: Array<Record<string, unknown>> };
+    if (snapshot?.photos?.length) {
+      snapshot.photos = await Promise.all(snapshot.photos.map(async (photo) => {
+        const signResponse = await fetch(`${supabaseUrl}/storage/v1/object/sign/estimate-photos/${photo.storage_path}`, {
+          method: "POST", headers: serviceHeaders, body: JSON.stringify({ expiresIn: 3600 }),
+        });
+        const signed = signResponse.ok ? await signResponse.json() as { signedURL?: string; signedUrl?: string } : {};
+        const signedPath = signed.signedURL || signed.signedUrl;
+        return { ...photo, url: signedPath ? `${supabaseUrl}/storage/v1${signedPath}` : null };
+      }));
+    }
+    return json({ authorization: { ...authorization, estimate_snapshot: snapshot } });
+  }
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
 
   if (!['approved', 'declined'].includes(body.action || "")) return json({ error: "Choose approve or decline." }, 400);
