@@ -548,6 +548,43 @@ function RepairOrderApp({ user }: { user: User }) {
     await refreshCurrentDocument(ro.id);
   }
 
+  async function updateRoStatus(ro: RepairOrder, status: "open" | "completed") {
+    if (ro.status === status) return;
+
+    setError("");
+    const { error: updateError } = await supabase
+      .from("repair_orders")
+      .update({ status })
+      .eq("id", ro.id);
+
+    if (updateError) {
+      setError(`Could not update RO #${padRo(ro.ro_number)} status: ${updateError.message}`);
+      return;
+    }
+
+    await loadData();
+  }
+
+  async function updateRoPaidStatus(ro: RepairOrder, paid: boolean) {
+    if (ro.paid === paid) return;
+
+    setError("");
+    const { error: updateError } = await supabase
+      .from("repair_orders")
+      .update({
+        paid,
+        paid_at: paid ? ro.paid_at || new Date().toISOString() : null,
+      })
+      .eq("id", ro.id);
+
+    if (updateError) {
+      setError(`Could not update RO #${padRo(ro.ro_number)} payment status: ${updateError.message}`);
+      return;
+    }
+
+    await loadData();
+  }
+
   async function toggleArchiveRo(ro: RepairOrder) {
     const restoring = Boolean(ro.archived_at);
     if (!restoring && !window.confirm(`Archive RO #${padRo(ro.ro_number)}? It will be hidden from the normal dashboard but can be restored.`)) {
@@ -712,9 +749,8 @@ function RepairOrderApp({ user }: { user: User }) {
             onEdit={(id) => editDocument(id, "dashboard", "work_order")}
             onInspection={(id) => openInspection(id, "dashboard")}
             onOpenCustomer={openCustomer}
-            onVoid={toggleVoid}
-            onArchive={toggleArchiveRo}
-            onDelete={deleteRo}
+            onStatusChange={updateRoStatus}
+            onPaidChange={updateRoPaidStatus}
           />
         ) : view === "editor" ? (
           <RepairOrderEditor
@@ -806,9 +842,8 @@ function Dashboard({
   onEdit,
   onInspection,
   onOpenCustomer,
-  onVoid,
-  onArchive,
-  onDelete,
+  onStatusChange,
+  onPaidChange,
 }: {
   repairOrders: RepairOrder[];
   onNew: () => void;
@@ -816,13 +851,31 @@ function Dashboard({
   onEdit: (id: string) => void;
   onInspection: (id: string) => void;
   onOpenCustomer: (customer: Customer) => void;
-  onVoid: (ro: RepairOrder) => void;
-  onArchive: (ro: RepairOrder) => void;
-  onDelete: (ro: RepairOrder) => void;
+  onStatusChange: (ro: RepairOrder, status: "open" | "completed") => Promise<void>;
+  onPaidChange: (ro: RepairOrder, paid: boolean) => Promise<void>;
 }) {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
   const normalized = search.toLowerCase().trim();
+
+  async function changeStatus(ro: RepairOrder, status: "open" | "completed") {
+    setSavingId(ro.id);
+    try {
+      await onStatusChange(ro, status);
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function changePaidStatus(ro: RepairOrder, paid: boolean) {
+    setSavingId(ro.id);
+    try {
+      await onPaidChange(ro, paid);
+    } finally {
+      setSavingId(null);
+    }
+  }
 
   const visibleRecords = repairOrders.filter((ro) => showArchived || !ro.archived_at);
   const filtered = visibleRecords.filter((ro) => {
@@ -932,14 +985,40 @@ function Dashboard({
                   </td>
                   <td>
                     <div className="badge-row">
-                      <span className={`badge ${ro.status}`}>{statusLabel(ro.status)}</span>
+                      {ro.archived_at || ro.status === "voided" ? (
+                        <span className={`badge ${ro.status}`}>{statusLabel(ro.status)}</span>
+                      ) : (
+                        <select
+                          className={`status-select ${ro.status}`}
+                          aria-label={`Job status for RO ${padRo(ro.ro_number)}`}
+                          value={ro.status}
+                          disabled={savingId === ro.id}
+                          onChange={(event) => void changeStatus(ro, event.target.value as "open" | "completed")}
+                        >
+                          <option value="open">Open</option>
+                          <option value="completed">Completed</option>
+                        </select>
+                      )}
                       {ro.archived_at && <span className="badge archived">Archived</span>}
                     </div>
                   </td>
                   <td>
-                    <span className={`badge ${ro.paid ? "paid" : ro.status === "completed" ? "unpaid" : "neutral"}`}>
-                      {ro.paid ? "Paid" : ro.status === "completed" ? "Unpaid" : "Not final"}
-                    </span>
+                    {ro.archived_at || ro.status === "voided" ? (
+                      <span className={`badge ${ro.paid ? "paid" : ro.status === "completed" ? "unpaid" : "neutral"}`}>
+                        {ro.paid ? "Paid" : ro.status === "completed" ? "Unpaid" : "Not final"}
+                      </span>
+                    ) : (
+                      <select
+                        className={`status-select ${ro.paid ? "paid" : "unpaid"}`}
+                        aria-label={`Payment status for RO ${padRo(ro.ro_number)}`}
+                        value={ro.paid ? "paid" : "unpaid"}
+                        disabled={savingId === ro.id}
+                        onChange={(event) => void changePaidStatus(ro, event.target.value === "paid")}
+                      >
+                        <option value="unpaid">Unpaid</option>
+                        <option value="paid">Paid</option>
+                      </select>
+                    )}
                   </td>
                   <td>{money(repairOrderTotal(ro))}</td>
                   <td className="actions-cell">
@@ -957,15 +1036,6 @@ function Dashboard({
                         Edit
                       </button>
                     )}
-                    <button className={`button small ${ro.status === "voided" ? "success" : "warning"}`} onClick={() => onVoid(ro)}>
-                      {ro.status === "voided" ? "Reopen" : "Void"}
-                    </button>
-                    <button className="button small ghost" onClick={() => onArchive(ro)}>
-                      {ro.archived_at ? "Restore" : "Archive"}
-                    </button>
-                    <button className="button small danger" onClick={() => onDelete(ro)}>
-                      Delete
-                    </button>
                   </td>
                 </tr>
               ))}
