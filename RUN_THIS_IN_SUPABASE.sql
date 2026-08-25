@@ -70,6 +70,9 @@ create table if not exists public.estimate_authorizations (
   responded_at timestamptz
 );
 
+alter table public.estimate_authorizations add column if not exists line_decisions jsonb not null default '{}'::jsonb;
+alter table public.estimate_authorizations add column if not exists approved_total numeric(12,2);
+
 create index if not exists estimate_authorizations_owner_idx on public.estimate_authorizations(owner_id);
 create index if not exists estimate_authorizations_ro_idx on public.estimate_authorizations(repair_order_id);
 alter table public.estimate_authorizations enable row level security;

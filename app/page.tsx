@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { MultipointInspection } from "@/components/MultipointInspection";
 import { supabase } from "@/lib/supabase";
@@ -97,7 +97,7 @@ type RepairOrder = {
   created_at: string;
   updated_at: string;
   archived_at: string | null;
-  estimate_status?: "not_sent" | "sent" | "approved" | "declined";
+  estimate_status?: "not_sent" | "sent" | "approved" | "partially_approved" | "declined";
   estimate_sent_at?: string | null;
   estimate_responded_at?: string | null;
   customers?: Customer | null;
@@ -1037,6 +1037,8 @@ function Dashboard({
                         ? "Sent"
                         : ro.estimate_status === "approved"
                           ? "Approved"
+                          : ro.estimate_status === "partially_approved"
+                            ? "Partial"
                           : ro.estimate_status === "declined"
                             ? "Declined"
                             : "Not sent"}
@@ -1172,6 +1174,7 @@ function RepairOrderEditor({
   );
   const [busy, setBusy] = useState(false);
   const [vinBusy, setVinBusy] = useState(false);
+  const vinPhotoRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(initialTab);
 
@@ -1367,8 +1370,8 @@ function RepairOrderEditor({
     );
   }
 
-  async function decodeVin() {
-    const vin = vehicleForm.vin.trim().toUpperCase();
+  async function decodeVin(vinOverride?: string) {
+    const vin = (vinOverride ?? vehicleForm.vin).trim().toUpperCase();
     if (vin.length < 8) {
       setMessage("Enter a VIN before decoding.");
       return;
@@ -1406,6 +1409,42 @@ function RepairOrderEditor({
       setMessage(caught instanceof Error ? caught.message : "VIN decoding failed.");
     } finally {
       setVinBusy(false);
+    }
+  }
+
+  async function scanVinPhoto(file?: File) {
+    if (!file) return;
+    setVinBusy(true);
+    setMessage("Reading VIN from photo…");
+    try {
+      let detected = "";
+      const BarcodeDetectorClass = (window as unknown as { BarcodeDetector?: new (options: { formats: string[] }) => { detect: (source: ImageBitmap) => Promise<Array<{ rawValue: string }>> } }).BarcodeDetector;
+      if (BarcodeDetectorClass) {
+        const bitmap = await createImageBitmap(file);
+        const codes = await new BarcodeDetectorClass({ formats: ["code_39", "code_128", "qr_code"] }).detect(bitmap);
+        bitmap.close();
+        detected = codes.map((code) => code.rawValue).join(" ");
+      }
+      if (!/[A-HJ-NPR-Z0-9]{17}/i.test(detected)) {
+        const { createWorker } = await import("tesseract.js");
+        const worker = await createWorker("eng");
+        const result = await worker.recognize(file);
+        await worker.terminate();
+        detected = result.data.text;
+      }
+      const vin = detected.toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/)?.[0];
+      if (!vin) throw new Error("I couldn't find a clear 17-character VIN. Try a closer, straight-on photo with good light.");
+      if (!window.confirm(`VIN read as ${vin}. Use and decode this VIN?`)) {
+        setMessage("VIN scan canceled. Nothing was changed.");
+        return;
+      }
+      setVehicleForm((current) => ({ ...current, vin }));
+      await decodeVin(vin);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "VIN photo could not be read.");
+    } finally {
+      setVinBusy(false);
+      if (vinPhotoRef.current) vinPhotoRef.current.value = "";
     }
   }
 
@@ -1664,8 +1703,12 @@ function RepairOrderEditor({
                   onChange={(event) => setVehicleForm({ ...vehicleForm, vin: event.target.value.toUpperCase() })}
                 />
               </label>
-              <button className="button secondary" type="button" onClick={decodeVin} disabled={vinBusy}>
+              <button className="button secondary" type="button" onClick={() => void decodeVin()} disabled={vinBusy}>
                 {vinBusy ? "Decoding…" : "Decode VIN"}
+              </button>
+              <input ref={vinPhotoRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void scanVinPhoto(event.target.files?.[0])} />
+              <button className="button primary" type="button" onClick={() => vinPhotoRef.current?.click()} disabled={vinBusy}>
+                {vinBusy ? "Reading…" : "Scan VIN photo"}
               </button>
             </div>
             <div className="form-grid four">
