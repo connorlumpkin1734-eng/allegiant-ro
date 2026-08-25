@@ -492,6 +492,7 @@ tbody tr:hover { background: #f8fafc; }
 .badge.estimate-sent { background: #fff0cf; color: #895000; }
 .badge.estimate-approved { background: #dff4e9; color: #0f633c; }
 .badge.estimate-declined { background: #fae7e9; color: #981c28; }
+.badge.estimate-not_sent { background: #edf1f6; color: #455468; }
 
 .approval-shell { min-height: 100vh; padding: 32px 16px; background: #eef2f7; }
 .approval-card { width: min(820px, 100%); margin: 0 auto; padding: 28px; background: white; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 16px 40px rgba(15, 39, 71, 0.1); }

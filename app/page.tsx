@@ -447,6 +447,19 @@ function RepairOrderApp({ user }: { user: User }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const refreshWhenReturning = () => {
+      if (document.visibilityState === "visible") void loadData();
+    };
+    window.addEventListener("focus", refreshWhenReturning);
+    document.addEventListener("visibilitychange", refreshWhenReturning);
+    return () => {
+      window.removeEventListener("focus", refreshWhenReturning);
+      document.removeEventListener("visibilitychange", refreshWhenReturning);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function openDocument(
     id: string,
     mode: DocumentMode = "work_order",
@@ -978,6 +991,7 @@ function Dashboard({
                 <th>Customer</th>
                 <th>Vehicle</th>
                 <th>Job status</th>
+                <th>Estimate</th>
                 <th>Invoice</th>
                 <th>Total</th>
                 <th></th>
@@ -1014,13 +1028,19 @@ function Dashboard({
                           <option value="completed">Completed</option>
                         </select>
                       )}
-                      {ro.estimate_status && ro.estimate_status !== "not_sent" && (
-                        <span className={`badge estimate-${ro.estimate_status}`}>
-                          {ro.estimate_status === "sent" ? "Estimate sent" : ro.estimate_status}
-                        </span>
-                      )}
                       {ro.archived_at && <span className="badge archived">Archived</span>}
                     </div>
+                  </td>
+                  <td>
+                    <span className={`badge estimate-${ro.estimate_status ?? "not_sent"}`}>
+                      {ro.estimate_status === "sent"
+                        ? "Sent"
+                        : ro.estimate_status === "approved"
+                          ? "Approved"
+                          : ro.estimate_status === "declined"
+                            ? "Declined"
+                            : "Not sent"}
+                    </span>
                   </td>
                   <td>
                     {ro.archived_at || ro.status === "voided" ? (
@@ -1061,7 +1081,7 @@ function Dashboard({
               ))}
               {!filtered.length && (
                 <tr>
-                  <td colSpan={8} className="empty-state">
+                  <td colSpan={9} className="empty-state">
                     {showArchived ? "No matching work orders." : "No matching active work orders."}
                   </td>
                 </tr>
