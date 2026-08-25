@@ -494,6 +494,10 @@ tbody tr:hover { background: #f8fafc; }
 .badge.estimate-partially_approved { background: #e8efff; color: #244f91; }
 .badge.estimate-declined { background: #fae7e9; color: #981c28; }
 .badge.estimate-not_sent { background: #edf1f6; color: #455468; }
+.estimate-dashboard-status { display: flex; align-items: flex-start; flex-direction: column; gap: 5px; min-width: 130px; }
+.estimate-decision { max-width: 190px; font-size: 11px; font-weight: 800; line-height: 1.25; }
+.estimate-decision.approved { color: #0f633c; }
+.estimate-decision.declined { color: #981c28; }
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 
 .approval-shell { min-height: 100vh; padding: 32px 16px; background: #eef2f7; }
