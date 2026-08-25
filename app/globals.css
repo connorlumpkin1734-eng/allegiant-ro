@@ -473,7 +473,27 @@ tbody tr:hover { background: #f8fafc; }
 .badge.voided { background: #fae7e9; color: #981c28; }
 .badge.archived { background: #e9e7f5; color: #54458c; }
 
-.actions-cell { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; min-width: 330px; }
+.status-select {
+  width: auto;
+  min-width: 92px;
+  min-height: 34px;
+  padding: 5px 30px 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.status-select.open { background-color: #e9f1ff; color: #204f91; }
+.status-select.completed,
+.status-select.paid { background-color: #e7f7ef; color: var(--green); }
+.status-select.unpaid { background-color: #fff0cf; color: #9a5a00; }
+.status-select:focus-visible { outline: 3px solid rgba(36, 89, 169, 0.22); outline-offset: 2px; }
+.status-select:disabled { cursor: wait; opacity: 0.65; }
+
+.actions-cell { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; min-width: 300px; }
 .actions-cell .button + .button { margin-left: 0; }
 .archived-row { background: #f3f1f8; opacity: 0.82; }
 .archived-row:hover { background: #ece8f4; }
