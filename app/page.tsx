@@ -194,6 +194,10 @@ function padRo(value: number | string | null | undefined): string {
   return String(value ?? "").padStart(4, "0");
 }
 
+function extractVin(value: string): string | null {
+  return value.toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/)?.[0] ?? null;
+}
+
 function statusLabel(status: RepairOrder["status"]): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
@@ -809,7 +813,6 @@ function RepairOrderApp({ user }: { user: User }) {
                 void editDocument(id, "dashboard", mode === "invoice" ? "invoice" : "work_order");
               }
             }}
-            onEdit={(id) => editDocument(id, "dashboard", "work_order")}
             onInspection={(id) => openInspection(id, "dashboard")}
             onOpenCustomer={openCustomer}
             onStatusChange={updateRoStatus}
@@ -903,7 +906,6 @@ function Dashboard({
   repairOrders,
   onNew,
   onOpen,
-  onEdit,
   onInspection,
   onOpenCustomer,
   onStatusChange,
@@ -912,7 +914,6 @@ function Dashboard({
   repairOrders: RepairOrder[];
   onNew: () => void;
   onOpen: (id: string, mode: DocumentMode) => void;
-  onEdit: (id: string) => void;
   onInspection: (id: string) => void;
   onOpenCustomer: (customer: Customer) => void;
   onStatusChange: (ro: RepairOrder, status: "open" | "completed") => Promise<void>;
@@ -1046,7 +1047,7 @@ function Dashboard({
                 const declinedJobs = [...jobTitles].filter(([id]) => decisions[id] === "declined").map(([, title]) => title);
                 return (
                 <tr key={ro.id} className={ro.archived_at ? "archived-row" : ""}>
-                  <td className="ro-number">#{padRo(ro.ro_number)}</td>
+                  <td className="ro-number"><button className="table-link ro-link" onClick={() => onOpen(ro.id, "work_order")}>#{padRo(ro.ro_number)}</button></td>
                   <td>{new Date(ro.created_at).toLocaleDateString()}</td>
                   <td>
                     {ro.customers ? (
@@ -1123,11 +1124,6 @@ function Dashboard({
                     <button className="button small ghost" onClick={() => onOpen(ro.id, "invoice")}>
                       Invoice
                     </button>
-                    {!ro.archived_at && (
-                      <button className="button small ghost" onClick={() => onEdit(ro.id)}>
-                        Edit
-                      </button>
-                    )}
                   </td>
                 </tr>
               );})}
@@ -1225,8 +1221,75 @@ function RepairOrderEditor({
   const [busy, setBusy] = useState(false);
   const [vinBusy, setVinBusy] = useState(false);
   const vinPhotoRef = useRef<HTMLInputElement>(null);
+  const vinVideoRef = useRef<HTMLVideoElement>(null);
+  const [vinScannerOpen, setVinScannerOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(initialTab);
+
+  useEffect(() => {
+    if (!vinScannerOpen) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stream: MediaStream | undefined;
+    let worker: { recognize: (image: HTMLCanvasElement) => Promise<{ data: { text: string } }>; terminate: () => Promise<unknown> } | undefined;
+
+    async function startScanner() {
+      setVinBusy(true);
+      setMessage("Point the camera at the VIN. It will capture automatically when clear.");
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Live camera scanning is not supported by this browser. Use Take VIN photo instead.");
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+        const video = vinVideoRef.current;
+        if (!video || cancelled) return;
+        video.srcObject = stream;
+        await video.play();
+        const { createWorker } = await import("tesseract.js");
+        worker = await createWorker("eng");
+
+        const scanFrame = async () => {
+          if (cancelled || !video.videoWidth || !worker) return;
+          const canvas = document.createElement("canvas");
+          const scale = Math.min(1, 1280 / video.videoWidth);
+          canvas.width = Math.round(video.videoWidth * scale);
+          canvas.height = Math.round(video.videoHeight * scale);
+          canvas.getContext("2d")!.drawImage(video, 0, 0, canvas.width, canvas.height);
+          let vin: string | null = null;
+          const BarcodeDetectorClass = (window as unknown as { BarcodeDetector?: new (options: { formats: string[] }) => { detect: (source: CanvasImageSource) => Promise<Array<{ rawValue: string }>> } }).BarcodeDetector;
+          if (BarcodeDetectorClass) {
+            const codes = await new BarcodeDetectorClass({ formats: ["code_39", "code_128", "qr_code"] }).detect(canvas);
+            vin = extractVin(codes.map((code) => code.rawValue).join(" "));
+          }
+          if (!vin) vin = extractVin((await worker.recognize(canvas)).data.text);
+          if (vin && !cancelled) {
+            if (window.confirm(`VIN captured as ${vin}. Use and decode this VIN?`)) {
+              setVehicleForm((current) => ({ ...current, vin }));
+              await decodeVin(vin);
+            } else {
+              setMessage("VIN capture canceled. Nothing was changed.");
+            }
+            setVinScannerOpen(false);
+            return;
+          }
+          timer = setTimeout(() => void scanFrame(), 900);
+        };
+        await scanFrame();
+      } catch (caught) {
+        setMessage(caught instanceof Error ? caught.message : "The live VIN scanner could not start.");
+        setVinScannerOpen(false);
+      }
+    }
+
+    void startScanner();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      stream?.getTracks().forEach((track) => track.stop());
+      if (worker) void worker.terminate();
+      setVinBusy(false);
+    };
+    // The scanner intentionally owns its camera/worker lifecycle only while the modal is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vinScannerOpen]);
 
   async function emailEstimate() {
     if (!initialRo) return;
@@ -1482,7 +1545,7 @@ function RepairOrderEditor({
         await worker.terminate();
         detected = result.data.text;
       }
-      const vin = detected.toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/)?.[0];
+      const vin = extractVin(detected);
       if (!vin) throw new Error("I couldn't find a clear 17-character VIN. Try a closer, straight-on photo with good light.");
       if (!window.confirm(`VIN read as ${vin}. Use and decode this VIN?`)) {
         setMessage("VIN scan canceled. Nothing was changed.");
@@ -1621,6 +1684,14 @@ function RepairOrderEditor({
 
   return (
     <section>
+      {vinScannerOpen && <div className="vin-scanner-backdrop" role="dialog" aria-modal="true" aria-label="Automatic VIN scanner">
+        <div className="vin-scanner-modal">
+          <div className="section-heading"><div><h2>Auto-scan VIN</h2><p className="muted">Hold steady with the full 17-character VIN inside the guide.</p></div><button className="button ghost" type="button" onClick={() => setVinScannerOpen(false)}>Cancel</button></div>
+          <div className="vin-camera-frame"><video ref={vinVideoRef} muted playsInline /><div className="vin-camera-guide"><span>VIN</span></div></div>
+          <p className="vin-scanner-status">Reading automatically… good lighting and a straight-on view work best.</p>
+          <button className="button secondary" type="button" onClick={() => { setVinScannerOpen(false); window.setTimeout(() => vinPhotoRef.current?.click(), 0); }}>Take VIN photo instead</button>
+        </div>
+      </div>}
       <div className="workspace-heading">
         <div>
           <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : "New Work Order"}</h1>
@@ -1757,8 +1828,11 @@ function RepairOrderEditor({
                 {vinBusy ? "Decoding…" : "Decode VIN"}
               </button>
               <input ref={vinPhotoRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void scanVinPhoto(event.target.files?.[0])} />
-              <button className="button primary" type="button" onClick={() => vinPhotoRef.current?.click()} disabled={vinBusy}>
-                {vinBusy ? "Reading…" : "Scan VIN photo"}
+              <button className="button primary" type="button" onClick={() => setVinScannerOpen(true)} disabled={vinBusy}>
+                {vinBusy ? "Reading…" : "Auto-scan VIN"}
+              </button>
+              <button className="button ghost" type="button" onClick={() => vinPhotoRef.current?.click()} disabled={vinBusy}>
+                Take VIN photo
               </button>
             </div>
             <div className="form-grid four">
