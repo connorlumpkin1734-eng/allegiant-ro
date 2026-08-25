@@ -103,6 +103,20 @@ type RepairOrder = {
   customers?: Customer | null;
   vehicles?: Vehicle | null;
   line_items?: LineItem[];
+  latest_estimate_authorization?: EstimateAuthorization | null;
+};
+
+type EstimateAuthorization = {
+  id: string;
+  repair_order_id: string;
+  status: "sent" | "approved" | "partially_approved" | "declined" | "superseded";
+  line_decisions: Record<string, "approved" | "declined"> | null;
+  approved_total: number | null;
+  responded_at: string | null;
+  sent_at: string;
+  estimate_snapshot: {
+    items?: Array<{ service_group_id?: string | null; service_group_title?: string | null }>;
+  };
 };
 
 type CustomerForm = {
@@ -391,7 +405,7 @@ function RepairOrderApp({ user }: { user: User }) {
     setLoading(true);
     setError("");
 
-    const [settingsResult, customersResult, vehiclesResult, roResult] = await Promise.all([
+    const [settingsResult, customersResult, vehiclesResult, roResult, authorizationsResult] = await Promise.all([
       supabase.from("settings").select("*").maybeSingle(),
       supabase.from("customers").select("*").order("name"),
       supabase.from("vehicles").select("*").order("year", { ascending: false }),
@@ -399,10 +413,14 @@ function RepairOrderApp({ user }: { user: User }) {
         .from("repair_orders")
         .select("*, customers(*), vehicles(*), line_items(*)")
         .order("created_at", { ascending: false }),
+      supabase
+        .from("estimate_authorizations")
+        .select("id, repair_order_id, status, line_decisions, approved_total, responded_at, sent_at, estimate_snapshot")
+        .order("sent_at", { ascending: false }),
     ]);
 
     const firstError =
-      settingsResult.error || customersResult.error || vehiclesResult.error || roResult.error;
+      settingsResult.error || customersResult.error || vehiclesResult.error || roResult.error || authorizationsResult.error;
 
     if (firstError) {
       setError(firstError.message);
@@ -424,9 +442,14 @@ function RepairOrderApp({ user }: { user: User }) {
       }
     }
 
+    const latestAuthorizationByRo = new Map<string, EstimateAuthorization>();
+    for (const authorization of (authorizationsResult.data ?? []) as EstimateAuthorization[]) {
+      if (!latestAuthorizationByRo.has(authorization.repair_order_id)) latestAuthorizationByRo.set(authorization.repair_order_id, authorization);
+    }
     const loadedRos = ((roResult.data ?? []) as RepairOrder[]).map((ro) => ({
       ...ro,
       line_items: [...(ro.line_items ?? [])].sort((a, b) => a.sort_order - b.sort_order),
+      latest_estimate_authorization: latestAuthorizationByRo.get(ro.id) ?? null,
     }));
 
     setSettings(loadedSettings ?? defaultSettings);
@@ -998,7 +1021,17 @@ function Dashboard({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((ro) => (
+              {filtered.map((ro) => {
+                const authorization = ro.latest_estimate_authorization;
+                const displayedEstimateStatus = authorization && authorization.status !== "superseded" ? authorization.status : ro.estimate_status ?? "not_sent";
+                const decisions = authorization?.line_decisions ?? {};
+                const jobTitles = new Map<string, string>();
+                for (const item of authorization?.estimate_snapshot?.items ?? []) {
+                  if (item.service_group_id && !jobTitles.has(item.service_group_id)) jobTitles.set(item.service_group_id, item.service_group_title || "Service job");
+                }
+                const approvedJobs = [...jobTitles].filter(([id]) => decisions[id] === "approved").map(([, title]) => title);
+                const declinedJobs = [...jobTitles].filter(([id]) => decisions[id] === "declined").map(([, title]) => title);
+                return (
                 <tr key={ro.id} className={ro.archived_at ? "archived-row" : ""}>
                   <td className="ro-number">#{padRo(ro.ro_number)}</td>
                   <td>{new Date(ro.created_at).toLocaleDateString()}</td>
@@ -1032,17 +1065,21 @@ function Dashboard({
                     </div>
                   </td>
                   <td>
-                    <span className={`badge estimate-${ro.estimate_status ?? "not_sent"}`}>
-                      {ro.estimate_status === "sent"
+                    <div className="estimate-dashboard-status">
+                    <span className={`badge estimate-${displayedEstimateStatus}`}>
+                      {displayedEstimateStatus === "sent"
                         ? "Sent"
-                        : ro.estimate_status === "approved"
+                        : displayedEstimateStatus === "approved"
                           ? "Approved"
-                          : ro.estimate_status === "partially_approved"
+                          : displayedEstimateStatus === "partially_approved"
                             ? "Partial"
-                          : ro.estimate_status === "declined"
+                          : displayedEstimateStatus === "declined"
                             ? "Declined"
                             : "Not sent"}
                     </span>
+                    {approvedJobs.length > 0 && <div className="estimate-decision approved" title={approvedJobs.join("\n")}>✓ {approvedJobs.length} approved · {money(Number(authorization?.approved_total || 0))}</div>}
+                    {declinedJobs.length > 0 && <div className="estimate-decision declined" title={declinedJobs.join("\n")}>✕ {declinedJobs.length} declined</div>}
+                    </div>
                   </td>
                   <td>
                     {ro.archived_at || ro.status === "voided" ? (
@@ -1080,7 +1117,7 @@ function Dashboard({
                     )}
                   </td>
                 </tr>
-              ))}
+              );})}
               {!filtered.length && (
                 <tr>
                   <td colSpan={9} className="empty-state">
