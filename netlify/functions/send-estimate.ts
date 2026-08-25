@@ -30,9 +30,19 @@ export default async (request: Request) => {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const resendKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.ESTIMATE_FROM_EMAIL;
-  const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL;
-  if (!supabaseUrl || !publicKey || !serviceKey || !resendKey || !fromEmail || !siteUrl) {
-    return json({ error: "Estimate email is not configured in Netlify yet." }, 500);
+  const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(request.url).origin;
+  const missing = [
+    ["NEXT_PUBLIC_SUPABASE_URL", supabaseUrl],
+    ["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", publicKey],
+    ["SUPABASE_SERVICE_ROLE_KEY", serviceKey],
+    ["RESEND_API_KEY", resendKey],
+    ["ESTIMATE_FROM_EMAIL", fromEmail],
+  ].filter(([, value]) => !value).map(([key]) => key);
+  if (missing.length) {
+    return json({ error: `Estimate email is missing Netlify variable${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}.` }, 500);
+  }
+  if (!supabaseUrl || !publicKey || !serviceKey || !resendKey || !fromEmail) {
+    return json({ error: "Estimate email configuration could not be loaded." }, 500);
   }
 
   const authorization = request.headers.get("authorization") || "";
