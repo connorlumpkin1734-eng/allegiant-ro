@@ -489,19 +489,29 @@ function RepairOrderApp({ user }: { user: User }) {
     returnView: "dashboard" | "customer_profile" | "editor" = "dashboard"
   ) {
     setError("");
-    const { data, error: fetchError } = await supabase
-      .from("repair_orders")
-      .select("*, customers(*), vehicles(*), line_items(*)")
-      .eq("id", id)
-      .single();
+    const [roResult, authorizationResult] = await Promise.all([
+      supabase
+        .from("repair_orders")
+        .select("*, customers(*), vehicles(*), line_items(*)")
+        .eq("id", id)
+        .single(),
+      supabase
+        .from("estimate_authorizations")
+        .select("id, repair_order_id, status, line_decisions, approved_total, responded_at, sent_at, estimate_snapshot")
+        .eq("repair_order_id", id)
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
 
-    if (fetchError) {
-      setError(fetchError.message);
+    if (roResult.error || authorizationResult.error) {
+      setError((roResult.error || authorizationResult.error)?.message || "Could not open the repair order.");
       return;
     }
 
-    const loaded = data as RepairOrder;
+    const loaded = roResult.data as RepairOrder;
     loaded.line_items = [...(loaded.line_items ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+    loaded.latest_estimate_authorization = authorizationResult.data as EstimateAuthorization | null;
     setSelectedRo(loaded);
     setDocumentMode(mode);
     setDocumentReturnView(returnView);
@@ -2505,15 +2515,22 @@ function DocumentView({
   onDelete: () => void;
 }) {
   const items = ro.line_items ?? [];
-  const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-  const taxableSubtotal = items.reduce((sum, item) => sum + (item.taxable ? item.quantity * item.unit_price : 0), 0);
-  const tax = Math.max(0, taxableSubtotal) * (Number(ro.tax_rate) / 100);
-  const total = subtotal + tax;
   const customer = ro.customers;
   const vehicle = ro.vehicles;
   const isEstimate = mode === "estimate";
   const isWorkOrder = mode === "work_order";
   const isInvoice = mode === "invoice";
+  const authorization = ro.latest_estimate_authorization;
+  const decisions = authorization?.line_decisions ?? {};
+  const hasCustomerResponse = Boolean(authorization && ["approved", "partially_approved", "declined"].includes(authorization.status) && Object.keys(decisions).length > 0);
+  const hasApprovedService = Object.values(decisions).includes("approved");
+  const pricedItems = isEstimate || !hasCustomerResponse
+    ? items
+    : items.filter((item) => item.service_group_id ? decisions[item.service_group_id] === "approved" : hasApprovedService);
+  const subtotal = pricedItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+  const taxableSubtotal = pricedItems.reduce((sum, item) => sum + (item.taxable ? item.quantity * item.unit_price : 0), 0);
+  const tax = Math.max(0, taxableSubtotal) * (Number(ro.tax_rate) / 100);
+  const total = subtotal + tax;
   const currentStatusLabel = statusLabel(ro.status);
   const groupedDocumentItems = (() => {
     const groups: Array<{ id: string; title: string; story: string; items: LineItem[] }> = [];
@@ -2675,6 +2692,14 @@ function DocumentView({
           {isInvoice && <span>Final billed amount</span>}
         </div>
 
+        {!isEstimate && hasCustomerResponse && (
+          <section className={`document-authorization-summary ${authorization?.status}`}>
+            <div><span>Customer authorization</span><strong>{authorization?.status.replaceAll("_", " ")}</strong></div>
+            <div><span>Authorized amount</span><strong>{money(Number(authorization?.approved_total || 0))}</strong></div>
+            {authorization?.responded_at && <div><span>Response received</span><strong>{new Date(authorization.responded_at).toLocaleString()}</strong></div>}
+          </section>
+        )}
+
         <table className="document-table">
           <thead>
             <tr>
@@ -2689,18 +2714,19 @@ function DocumentView({
             {groupedDocumentItems.map((group) => {
               const isServiceJob = Boolean(group.title);
               const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+              const decision = isServiceJob && hasCustomerResponse ? decisions[group.id] : undefined;
               return [
                 isServiceJob && (
-                  <tr className="document-job-heading" key={`${group.id}-heading`}>
+                  <tr className={`document-job-heading ${decision ? `authorization-${decision}` : ""}`} key={`${group.id}-heading`}>
                     <td colSpan={4}>
-                      <strong>{group.title}</strong>
+                      <div className="document-job-title"><strong>{group.title}</strong>{decision && <span className={`authorization-mark ${decision}`}>{decision}</span>}</div>
                       {group.story && <p><span>Technician story:</span> {group.story}</p>}
                     </td>
                     <td><strong>{money(jobTotal)}</strong></td>
                   </tr>
                 ),
                 ...group.items.map((item) => (
-                  <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : item.item_type === "part" && isServiceJob ? "document-associated-part" : ""}>
+                  <tr key={item.id} className={`${item.item_type === "discount" ? "document-discount-row" : item.item_type === "part" && isServiceJob ? "document-associated-part" : ""} ${decision === "declined" ? "authorization-declined-line" : ""}`}>
                     <td>
                       {item.item_type === "discount" && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}
                       {item.description}
