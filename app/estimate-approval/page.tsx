@@ -7,7 +7,8 @@ type Snapshot = {
   customerName: string;
   vehicle: string;
   vin: string;
-  items: Array<{ description: string; quantity: number; unit_price: number }>;
+  items: Array<{ description: string; quantity: number; unit_price: number; service_group_id?: string | null; service_group_title?: string | null }>;
+  photos?: Array<{ service_group_id: string; caption?: string | null; url?: string | null }>;
   subtotal: number;
   tax: number;
   total: number;
@@ -113,12 +114,22 @@ export default function EstimateApprovalPage() {
               <div><span>Estimate total</span><strong>{money(snapshot.total)}</strong></div>
             </div>
             <div className="approval-jobs">
-              {snapshot.items.map((item, index) => (
-                <div className="approval-job" key={`${item.description}-${index}`}>
-                  <div><strong>{item.description}</strong>{item.quantity !== 1 && <div className="muted">Qty {item.quantity}</div>}</div>
-                  <strong>{money(item.quantity * item.unit_price)}</strong>
-                </div>
-              ))}
+              {snapshot.items.map((item, index) => {
+                const groupPhotos = (snapshot.photos ?? []).filter((photo) => photo.service_group_id === item.service_group_id && photo.url);
+                const lastInGroup = item.service_group_id && !snapshot.items.slice(index + 1).some((next) => next.service_group_id === item.service_group_id);
+                return <div key={`${item.description}-${index}`}>
+                  <div className="approval-job">
+                    <div><strong>{item.description}</strong>{item.quantity !== 1 && <div className="muted">Qty {item.quantity}</div>}</div>
+                    <strong>{money(item.quantity * item.unit_price)}</strong>
+                  </div>
+                  {lastInGroup && groupPhotos.length > 0 && <div className="estimate-photo-grid">
+                    {groupPhotos.map((photo, photoIndex) => <figure className="estimate-photo" key={`${photo.url}-${photoIndex}`}>
+                      <img src={photo.url!} alt={photo.caption || item.service_group_title || "Repair photo"} />
+                      {photo.caption && <figcaption>{photo.caption}</figcaption>}
+                    </figure>)}
+                  </div>}
+                </div>;
+              })}
               <div className="approval-job"><span>Subtotal</span><strong>{money(snapshot.subtotal)}</strong></div>
               <div className="approval-job"><span>Tax</span><strong>{money(snapshot.tax)}</strong></div>
               <div className="approval-job"><strong>Total</strong><strong>{money(snapshot.total)}</strong></div>
