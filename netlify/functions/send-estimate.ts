@@ -98,7 +98,9 @@ export default async (request: Request) => {
 
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
   const tokenHash = await hashToken(token);
-  const approvalUrl = `${siteUrl.replace(/\/$/, "")}/estimate-approval/?token=${token}`;
+  const approvalLink = new URL("/estimate-approval/", siteUrl);
+  approvalLink.searchParams.set("token", token);
+  const approvalUrl = approvalLink.toString();
 
   await fetch(`${supabaseUrl}/rest/v1/estimate_authorizations?repair_order_id=eq.${ro.id}&status=eq.sent`, {
     method: "PATCH", headers: serviceHeaders, body: JSON.stringify({ status: "superseded" }),
@@ -117,7 +119,8 @@ export default async (request: Request) => {
       from: fromEmail,
       to: [customerEmail],
       subject: `Estimate #${String(ro.ro_number).padStart(4, "0")} from Allegiant Auto Care`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden"><div style="padding:24px;border-bottom:5px solid #2459a9"><h1 style="margin:0">Allegiant Auto Care</h1><p style="margin:6px 0 0;color:#64748b">Estimate #${String(ro.ro_number).padStart(4, "0")} · ${escapeHtml(snapshot.vehicle)}</p></div><div style="padding:24px"><p>Hi ${escapeHtml(snapshot.customerName)},</p><p>Your itemized estimate is ready. You can approve or decline each recommended service separately.</p><div style="background:#edf4ff;border-left:6px solid #2459a9;padding:18px;margin:22px 0"><div style="font-size:12px;font-weight:700;text-transform:uppercase">Estimated total</div><div style="font-size:30px;font-weight:800;margin-top:5px">${money(total)}</div></div><p><a href="${approvalUrl}" style="display:inline-block;background:#b21f2d;color:white;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:700">Review estimate and choose services</a></p><p style="color:#64748b;font-size:13px">The secure estimate includes the full itemization, repair photos, and signature authorization. Additional repairs require separate approval.</p></div></div>`,
+      text: `Hi ${snapshot.customerName},\n\nYour estimate #${String(ro.ro_number).padStart(4, "0")} for ${snapshot.vehicle} is ready. Review it and approve or decline each service here:\n\n${approvalUrl}\n\nEstimated total: ${money(total)}\n\nAllegiant Auto Care`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden"><div style="padding:24px;border-bottom:5px solid #2459a9"><h1 style="margin:0">Allegiant Auto Care</h1><p style="margin:6px 0 0;color:#64748b">Estimate #${String(ro.ro_number).padStart(4, "0")} · ${escapeHtml(snapshot.vehicle)}</p></div><div style="padding:24px"><p>Hi ${escapeHtml(snapshot.customerName)},</p><p>Your itemized estimate is ready. You can approve or decline each recommended service separately.</p><div style="background:#edf4ff;border-left:6px solid #2459a9;padding:18px;margin:22px 0"><div style="font-size:12px;font-weight:700;text-transform:uppercase">Estimated total</div><div style="font-size:30px;font-weight:800;margin-top:5px">${money(total)}</div></div><table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0"><tr><td bgcolor="#b21f2d" style="border-radius:8px"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#b21f2d;color:#ffffff;text-decoration:none;padding:15px 22px;border-radius:8px;font-weight:700">Review estimate and choose services</a></td></tr></table><p style="color:#64748b;font-size:13px">If the button does not open, tap or copy this secure link:</p><p style="font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-all"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="color:#2459a9">${escapeHtml(approvalUrl)}</a></p><p style="color:#64748b;font-size:13px">The secure estimate includes the full itemization, repair photos, and signature authorization. Additional repairs require separate approval.</p></div></div>`,
     }),
   });
   if (!emailResponse.ok) {
