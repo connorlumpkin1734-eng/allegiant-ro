@@ -1976,6 +1976,11 @@ function RepairOrderEditor({
           {serviceGroups.map((group, groupIndex) => {
             const first = group.items[0];
             const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+            const jobCost = group.items.reduce((sum, item) =>
+              sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0
+            );
+            const jobGrossProfit = jobTotal - jobCost;
+            const jobGrossMargin = jobTotal !== 0 ? (jobGrossProfit / jobTotal) * 100 : 0;
             return (
               <article className="service-job-card" key={group.id}>
                 <header className="service-job-header">
@@ -1996,6 +2001,17 @@ function RepairOrderEditor({
                     onChange={(event) => updateServiceJob(group.id, "technician_story", event.target.value)}
                   />
                 </label>
+                <section className="job-profit-panel" aria-label="Internal job profitability">
+                  <div className="job-profit-heading">
+                    <strong>Internal job profit</strong>
+                    <span>Private — never shown on customer documents</span>
+                  </div>
+                  <div><span>Job revenue</span><strong>{money(jobTotal)}</strong></div>
+                  <div><span>Recorded cost</span><strong>{money(jobCost)}</strong></div>
+                  <div className={jobGrossProfit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(jobGrossProfit)}</strong></div>
+                  <div className={jobGrossMargin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{jobGrossMargin.toFixed(1)}%</strong></div>
+                  <small>Uses customer price minus recorded part/sublet costs. Labor and shop overhead are not deducted.</small>
+                </section>
                 <div className="job-lines">
                   {group.items.map((item) => (
                     <ChargeLine key={item.id} item={item} changeItem={changeItem} removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))} />
@@ -2845,10 +2861,6 @@ function DocumentView({
           <section className="document-terms estimate-terms">
             <strong>Estimate terms</strong>
             <p>This estimate is based on currently known conditions and listed work. Additional repairs require customer approval and may change the final invoice total.</p>
-            <div className="signature-row">
-              <span>Approved by: ______________________________</span>
-              <span>Date: __________________</span>
-            </div>
           </section>
         )}
 
@@ -2856,10 +2868,6 @@ function DocumentView({
           <section className="document-terms repair-order-terms">
             <strong>Work authorization</strong>
             <p>Customer authorizes Allegiant Auto Care to perform the work listed above and acknowledges that additional work requires further approval.</p>
-            <div className="signature-row">
-              <span>Authorized by: ____________________________</span>
-              <span>Date: __________________</span>
-            </div>
           </section>
         )}
 
