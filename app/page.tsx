@@ -114,11 +114,19 @@ type EstimateAuthorization = {
   status: "sent" | "approved" | "partially_approved" | "declined" | "superseded";
   line_decisions: Record<string, "approved" | "declined"> | null;
   approved_total: number | null;
+  customer_name?: string | null;
+  signature_data?: string | null;
+  consent_accepted?: boolean | null;
   responded_at: string | null;
   sent_at: string;
   estimate_snapshot: {
     items?: Array<{ service_group_id?: string | null; service_group_title?: string | null }>;
   };
+};
+
+type AuthorizationDecisionSummary = {
+  approved: string[];
+  declined: string[];
 };
 
 type CustomerForm = {
@@ -212,6 +220,33 @@ function repairOrderTotal(ro: RepairOrder): number {
     0
   );
   return subtotal + Math.max(0, taxableSubtotal) * (Number(ro.tax_rate) / 100);
+}
+
+function authorizationDecisionSummary(
+  authorization: EstimateAuthorization | null | undefined
+): AuthorizationDecisionSummary {
+  const decisions = authorization?.line_decisions ?? {};
+  const jobTitles = new Map<string, string>();
+
+  for (const item of authorization?.estimate_snapshot?.items ?? []) {
+    if (item.service_group_id && !jobTitles.has(item.service_group_id)) {
+      jobTitles.set(item.service_group_id, item.service_group_title || "Service job");
+    }
+  }
+
+  return {
+    approved: [...jobTitles]
+      .filter(([id]) => decisions[id] === "approved")
+      .map(([, title]) => title),
+    declined: [...jobTitles]
+      .filter(([id]) => decisions[id] === "declined")
+      .map(([, title]) => title),
+  };
+}
+
+function compactDecisionTitles(titles: string[]): string {
+  if (titles.length <= 2) return titles.join(", ");
+  return `${titles.slice(0, 2).join(", ")} +${titles.length - 2} more`;
 }
 
 function valueOrNull(value: string): string | null {
@@ -512,7 +547,7 @@ function RepairOrderApp({ user }: { user: User }) {
         .single(),
       supabase
         .from("estimate_authorizations")
-        .select("id, repair_order_id, status, line_decisions, approved_total, responded_at, sent_at, estimate_snapshot")
+        .select("id, repair_order_id, status, line_decisions, approved_total, customer_name, signature_data, consent_accepted, responded_at, sent_at, estimate_snapshot")
         .eq("repair_order_id", id)
         .order("sent_at", { ascending: false })
         .limit(1)
@@ -539,19 +574,29 @@ function RepairOrderApp({ user }: { user: User }) {
     tab: WorkspaceTab = "work_order"
   ) {
     setError("");
-    const { data, error: fetchError } = await supabase
-      .from("repair_orders")
-      .select("*, customers(*), vehicles(*), line_items(*)")
-      .eq("id", id)
-      .single();
+    const [roResult, authorizationResult] = await Promise.all([
+      supabase
+        .from("repair_orders")
+        .select("*, customers(*), vehicles(*), line_items(*)")
+        .eq("id", id)
+        .single(),
+      supabase
+        .from("estimate_authorizations")
+        .select("id, repair_order_id, status, line_decisions, approved_total, customer_name, responded_at, sent_at, estimate_snapshot")
+        .eq("repair_order_id", id)
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
 
-    if (fetchError) {
-      setError(fetchError.message);
+    if (roResult.error || authorizationResult.error) {
+      setError((roResult.error || authorizationResult.error)?.message || "Could not open the repair order.");
       return;
     }
 
-    const loaded = data as RepairOrder;
+    const loaded = roResult.data as RepairOrder;
     loaded.line_items = [...(loaded.line_items ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+    loaded.latest_estimate_authorization = authorizationResult.data as EstimateAuthorization | null;
     setEditingRo(loaded);
     setEditorVersion((current) => current + 1);
     setNewContext({ customerId: loaded.customer_id, vehicleId: loaded.vehicle_id });
@@ -1048,13 +1093,7 @@ function Dashboard({
               {filtered.map((ro) => {
                 const authorization = ro.latest_estimate_authorization;
                 const displayedEstimateStatus = authorization && authorization.status !== "superseded" ? authorization.status : ro.estimate_status ?? "not_sent";
-                const decisions = authorization?.line_decisions ?? {};
-                const jobTitles = new Map<string, string>();
-                for (const item of authorization?.estimate_snapshot?.items ?? []) {
-                  if (item.service_group_id && !jobTitles.has(item.service_group_id)) jobTitles.set(item.service_group_id, item.service_group_title || "Service job");
-                }
-                const approvedJobs = [...jobTitles].filter(([id]) => decisions[id] === "approved").map(([, title]) => title);
-                const declinedJobs = [...jobTitles].filter(([id]) => decisions[id] === "declined").map(([, title]) => title);
+                const decisionSummary = authorizationDecisionSummary(authorization);
                 return (
                 <tr key={ro.id} className={ro.archived_at ? "archived-row" : ""}>
                   <td className="ro-number"><button className="table-link ro-link" onClick={() => onOpen(ro.id, "work_order")}>#{padRo(ro.ro_number)}</button></td>
@@ -1101,8 +1140,18 @@ function Dashboard({
                             ? "Declined"
                             : "Not sent"}
                     </span>
-                    {approvedJobs.length > 0 && <div className="estimate-decision approved" title={approvedJobs.join("\n")}>✓ {approvedJobs.length} approved · {money(Number(authorization?.approved_total || 0))}</div>}
-                    {declinedJobs.length > 0 && <div className="estimate-decision declined" title={declinedJobs.join("\n")}>✕ {declinedJobs.length} declined</div>}
+                    {decisionSummary.approved.length > 0 && (
+                      <div className="estimate-decision approved" title={decisionSummary.approved.join("\n")}>
+                        <strong>✓ Approved · {money(Number(authorization?.approved_total || 0))}</strong>
+                        <small>{compactDecisionTitles(decisionSummary.approved)}</small>
+                      </div>
+                    )}
+                    {decisionSummary.declined.length > 0 && (
+                      <div className="estimate-decision declined" title={decisionSummary.declined.join("\n")}>
+                        <strong>✕ Declined</strong>
+                        <small>{compactDecisionTitles(decisionSummary.declined)}</small>
+                      </div>
+                    )}
                     </div>
                   </td>
                   <td>
@@ -1350,19 +1399,28 @@ function RepairOrderEditor({
     return { subtotal, taxableSubtotal, tax, total: subtotal + tax };
   }, [items, taxRate]);
 
+  const currentAuthorization = initialRo?.latest_estimate_authorization;
+  const currentDecisions = currentAuthorization?.line_decisions ?? {};
+  const hasCustomerAuthorizationResponse = Boolean(
+    currentAuthorization
+      && ["approved", "partially_approved", "declined"].includes(currentAuthorization.status)
+      && Object.keys(currentDecisions).length > 0
+  );
+  const currentDecisionSummary = useMemo(
+    () => authorizationDecisionSummary(currentAuthorization),
+    [currentAuthorization]
+  );
+
   const profitSummary = useMemo(() => {
-    const authorization = initialRo?.latest_estimate_authorization;
-    const decisions = authorization?.line_decisions ?? {};
-    const hasResponse = Boolean(authorization && ["approved", "partially_approved", "declined"].includes(authorization.status) && Object.keys(decisions).length > 0);
-    const hasApprovedService = Object.values(decisions).includes("approved");
-    const includedItems = !hasResponse
+    const hasApprovedService = Object.values(currentDecisions).includes("approved");
+    const includedItems = !hasCustomerAuthorizationResponse
       ? items
-      : items.filter((item) => item.service_group_id ? decisions[item.service_group_id] === "approved" : hasApprovedService);
+      : items.filter((item) => item.service_group_id ? currentDecisions[item.service_group_id] === "approved" : hasApprovedService);
     const revenue = includedItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
     const cost = includedItems.reduce((sum, item) => sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0);
     const profit = revenue - cost;
-    return { revenue, cost, profit, margin: revenue !== 0 ? (profit / revenue) * 100 : 0, usesAuthorization: hasResponse };
-  }, [initialRo?.latest_estimate_authorization, items]);
+    return { revenue, cost, profit, margin: revenue !== 0 ? (profit / revenue) * 100 : 0, usesAuthorization: hasCustomerAuthorizationResponse };
+  }, [currentDecisions, hasCustomerAuthorizationResponse, items]);
 
   const serviceGroups = useMemo(() => {
     const grouped = new Map<string, LineItem[]>();
@@ -1776,6 +1834,35 @@ function RepairOrderEditor({
       )}
       {message && <div className="notice">{message}</div>}
 
+      {hasCustomerAuthorizationResponse && currentAuthorization && (
+        <section className={`approval-overview ${currentAuthorization.status}`} aria-label="Customer estimate decisions">
+          <div className="approval-overview-heading">
+            <div>
+              <span>Customer decision</span>
+              <h2>{currentAuthorization.status.replaceAll("_", " ")}</h2>
+              <small>
+                {currentAuthorization.customer_name ? `${currentAuthorization.customer_name} · ` : ""}
+                {currentAuthorization.responded_at ? new Date(currentAuthorization.responded_at).toLocaleString() : "Response received"}
+              </small>
+            </div>
+            <div className="approval-overview-total">
+              <span>Authorized total</span>
+              <strong>{money(Number(currentAuthorization.approved_total || 0))}</strong>
+            </div>
+          </div>
+          <div className="approval-overview-decisions">
+            <div className="approved">
+              <strong>✓ Approved ({currentDecisionSummary.approved.length})</strong>
+              <p>{currentDecisionSummary.approved.length ? currentDecisionSummary.approved.join(" · ") : "None"}</p>
+            </div>
+            <div className="declined">
+              <strong>✕ Declined ({currentDecisionSummary.declined.length})</strong>
+              <p>{currentDecisionSummary.declined.length ? currentDecisionSummary.declined.join(" · ") : "None"}</p>
+            </div>
+          </div>
+        </section>
+      )}
+
       <div className="editor-grid">
         <div className="stack">
           {workspaceTab === "work_order" ? (
@@ -2013,6 +2100,7 @@ function RepairOrderEditor({
         <div className="service-jobs">
           {serviceGroups.map((group, groupIndex) => {
             const first = group.items[0];
+            const customerDecision = hasCustomerAuthorizationResponse ? currentDecisions[group.id] : undefined;
             const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
             const jobCost = group.items.reduce((sum, item) =>
               sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0
@@ -2020,14 +2108,17 @@ function RepairOrderEditor({
             const jobGrossProfit = jobTotal - jobCost;
             const jobGrossMargin = jobTotal !== 0 ? (jobGrossProfit / jobTotal) * 100 : 0;
             return (
-              <article className="service-job-card" key={group.id}>
+              <article className={`service-job-card ${customerDecision ? `customer-${customerDecision}` : ""}`} key={group.id}>
                 <header className="service-job-header">
                   <div className="service-job-number">{groupIndex + 1}</div>
                   <label>
                     Recommended service
                     <input value={first.service_group_title ?? ""} onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)} />
                   </label>
-                  <div className="service-job-total"><span>Job total</span><strong>{money(jobTotal)}</strong></div>
+                  <div className="service-job-total">
+                    {customerDecision && <span className={`authorization-mark ${customerDecision}`}>{customerDecision}</span>}
+                    <span>Job total</span><strong>{money(jobTotal)}</strong>
+                  </div>
                   <button className="button small danger" onClick={() => void deleteServiceJob(group.id)}>Delete job</button>
                 </header>
                 <div className="service-job-narratives">
@@ -2674,6 +2765,7 @@ function DocumentView({
   const authorization = ro.latest_estimate_authorization;
   const decisions = authorization?.line_decisions ?? {};
   const hasCustomerResponse = Boolean(authorization && ["approved", "partially_approved", "declined"].includes(authorization.status) && Object.keys(decisions).length > 0);
+  const decisionSummary = authorizationDecisionSummary(authorization);
   const hasApprovedService = Object.values(decisions).includes("approved");
   const pricedItems = isEstimate || !hasCustomerResponse
     ? items
@@ -2683,10 +2775,11 @@ function DocumentView({
   const tax = Math.max(0, taxableSubtotal) * (Number(ro.tax_rate) / 100);
   const total = subtotal + tax;
   const currentStatusLabel = statusLabel(ro.status);
+  const displayedItems = isInvoice && hasCustomerResponse ? pricedItems : items;
   const groupedDocumentItems = (() => {
     const groups: Array<{ id: string; title: string; recommendation: string; workPerformed: string; items: LineItem[] }> = [];
     const byId = new Map<string, { id: string; title: string; recommendation: string; workPerformed: string; items: LineItem[] }>();
-    for (const item of items) {
+    for (const item of displayedItems) {
       if (!item.service_group_id) {
         groups.push({ id: `line-${item.id}`, title: "", recommendation: "", workPerformed: "", items: [item] });
         continue;
@@ -2849,6 +2942,16 @@ function DocumentView({
             <div><span>Customer authorization</span><strong>{authorization?.status.replaceAll("_", " ")}</strong></div>
             <div><span>Authorized amount</span><strong>{money(Number(authorization?.approved_total || 0))}</strong></div>
             {authorization?.responded_at && <div><span>Response received</span><strong>{new Date(authorization.responded_at).toLocaleString()}</strong></div>}
+            <div className="document-decision-breakdown">
+              <section className="approved">
+                <span>✓ Approved ({decisionSummary.approved.length})</span>
+                <strong>{decisionSummary.approved.length ? decisionSummary.approved.join(" · ") : "None"}</strong>
+              </section>
+              <section className="declined">
+                <span>✕ Declined ({decisionSummary.declined.length})</span>
+                <strong>{decisionSummary.declined.length ? decisionSummary.declined.join(" · ") : "None"}</strong>
+              </section>
+            </div>
           </section>
         )}
 
@@ -2966,10 +3069,23 @@ function DocumentView({
         )}
 
         {isInvoice && (
-          <footer className="document-footer">
-            <strong>{ro.paid ? "PAID IN FULL" : "PAYMENT DUE UPON COMPLETION"}</strong>
-            <p>{settings.invoice_footer}</p>
-          </footer>
+          <>
+            {authorization?.signature_data && (
+              <section className="invoice-authorization-signature">
+                <div>
+                  <span>Customer authorization signature</span>
+                  <strong>{authorization.customer_name || customer?.name || "Customer"}</strong>
+                  {authorization.responded_at && <small>Signed {new Date(authorization.responded_at).toLocaleString()}</small>}
+                  <small>Authorized amount: {money(Number(authorization.approved_total || 0))}</small>
+                </div>
+                <img src={authorization.signature_data} alt={`Approval signature for ${authorization.customer_name || customer?.name || "customer"}`} />
+              </section>
+            )}
+            <footer className="document-footer">
+              <strong>{ro.paid ? "PAID IN FULL" : "PAYMENT DUE UPON COMPLETION"}</strong>
+              <p>{settings.invoice_footer}</p>
+            </footer>
+          </>
         )}
       </article>
     </section>
