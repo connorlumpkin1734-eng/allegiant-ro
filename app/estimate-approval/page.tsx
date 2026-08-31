@@ -2,10 +2,10 @@
 import { PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Decision = "approved" | "declined";
-type Item = { description: string; quantity: number; unit_price: number; taxable?: boolean; service_group_id?: string | null; service_group_title?: string | null };
+type Item = { description: string; quantity: number; unit_price: number; taxable?: boolean; service_group_id?: string | null; service_group_title?: string | null; technician_story?: string | null };
 type Snapshot = { roNumber: number; customerName: string; vehicle: string; vin: string; estimateDate?: string; customerConcern?: string; items: Item[]; photos?: Array<{ service_group_id: string; caption?: string | null; url?: string | null }>; subtotal: number; tax: number; total: number; taxRate?: number; businessName: string; businessAddress?: string; businessPhone: string; businessEmail: string };
 type Authorization = { status: string; estimate_snapshot: Snapshot; line_decisions?: Record<string, Decision>; approved_total?: number | null; responded_at?: string | null };
-type Group = { id: string; title: string; items: Item[] };
+type Group = { id: string; title: string; recommendation: string; items: Item[] };
 const money = (amount: number) => Number(amount || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 export default function EstimateApprovalPage() {
@@ -28,7 +28,7 @@ export default function EstimateApprovalPage() {
     for (const item of snapshot?.items ?? []) {
       if (!item.service_group_id) continue;
       let group = byId.get(item.service_group_id);
-      if (!group) { group = { id: item.service_group_id, title: item.service_group_title || "Service Job", items: [] }; byId.set(group.id, group); result.push(group); }
+      if (!group) { group = { id: item.service_group_id, title: item.service_group_title || "Recommended Service", recommendation: item.technician_story || "", items: [] }; byId.set(group.id, group); result.push(group); }
       group.items.push(item);
     }
     return result;
@@ -61,6 +61,7 @@ export default function EstimateApprovalPage() {
       <div className="document-section-heading"><h3>Proposed services</h3><span>Approve or decline each job</span></div>
       {groups.map((group) => { const groupTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0); const photos = (snapshot.photos ?? []).filter((photo) => photo.service_group_id === group.id && photo.url); return <section className={`approval-service ${decisions[group.id] || ""}`} key={group.id}>
         <div className="approval-service-heading"><div><h3>{group.title}</h3><strong>{money(groupTotal)}</strong></div><div className="approval-choice"><button type="button" className={decisions[group.id] === "approved" ? "selected approve" : "approve"} onClick={() => setDecisions((current) => ({ ...current, [group.id]: "approved" }))} disabled={authorization.status !== "sent"}>✓ Approve</button><button type="button" className={decisions[group.id] === "declined" ? "selected decline" : "decline"} onClick={() => setDecisions((current) => ({ ...current, [group.id]: "declined" }))} disabled={authorization.status !== "sent"}>✕ Decline</button></div></div>
+        {group.recommendation && <p className="approval-recommendation">{group.recommendation}</p>}
         <table className="document-table"><thead><tr><th>Description</th><th>Qty/Hrs</th><th>Est. Rate/Price</th><th>Amount</th></tr></thead><tbody>{group.items.map((item, index) => <tr key={`${item.description}-${index}`}><td>{item.description}</td><td>{item.quantity}</td><td>{money(item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>)}</tbody></table>
         {photos.length > 0 && <div className="estimate-photo-grid">{photos.map((photo, index) => <figure className="estimate-photo" key={`${photo.url}-${index}`}><img src={photo.url!} alt={photo.caption || group.title} />{photo.caption && <figcaption>{photo.caption}</figcaption>}</figure>)}</div>}
       </section>; })}

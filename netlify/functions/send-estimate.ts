@@ -7,7 +7,7 @@ type RepairOrderRow = {
   customer_concern: string | null;
   customers: { name: string; email: string | null } | null;
   vehicles: { year: number | null; make: string | null; model: string | null; vin: string | null } | null;
-  line_items: Array<{ description: string; quantity: number; unit_price: number; taxable: boolean; sort_order: number; service_group_id: string | null; service_group_title: string | null }>;
+  line_items: Array<{ description: string; quantity: number; unit_price: number; taxable: boolean; sort_order: number; service_group_id: string | null; service_group_title: string | null; technician_story: string | null }>;
 };
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -58,7 +58,7 @@ export default async (request: Request) => {
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=*,customers(name,email),vehicles(year,make,model,vin),line_items(description,quantity,unit_price,taxable,sort_order,service_group_id,service_group_title)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${user.id}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=*,customers(name,email),vehicles(year,make,model,vin),line_items(description,quantity,unit_price,taxable,sort_order,service_group_id,service_group_title,technician_story)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${user.id}`,
     { headers: serviceHeaders }
   );
   const rows = await roResponse.json() as RepairOrderRow[];

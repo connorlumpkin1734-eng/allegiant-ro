@@ -274,8 +274,14 @@ tbody tr:hover { background: #f8fafc; }
 .service-job-total span, .service-job-total strong { display: block; }
 .service-job-total span { color: var(--muted); font-size: 10px; font-weight: 900; text-transform: uppercase; }
 .service-job-total strong { margin-top: 3px; color: var(--navy); font-size: 18px; }
-.technician-story { padding: 14px 16px; background: #fbfcfe; border-bottom: 1px solid #e2e8f0; }
-.technician-story textarea { background: white; }
+.service-job-narratives { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 14px 16px; background: #fbfcfe; border-bottom: 1px solid #e2e8f0; }
+.service-job-narratives label { position: relative; }
+.service-job-narratives textarea { min-height: 96px; background: white; }
+.visibility-tag { float: right; padding: 3px 7px; border-radius: 999px; font-size: 9px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
+.visibility-tag.customer { color: #1552a3; background: #dcecff; }
+.visibility-tag.invoice { color: #087443; background: #dcf5e8; }
+.visibility-tag.private { color: #7b4b00; background: #fff0c7; }
+.service-job-narratives .internal-job-notes textarea { border-color: #e9cb78; background: #fffdf5; }
 .job-profit-panel {
   display: grid;
   grid-template-columns: minmax(210px, 1.5fr) repeat(4, minmax(105px, .7fr));
@@ -293,6 +299,16 @@ tbody tr:hover { background: #f8fafc; }
 .job-profit-panel .positive > strong { color: #087443; }
 .job-profit-panel .negative > strong { color: #b4232f; }
 .job-profit-panel small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+.ro-profit-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; padding: 14px; border: 1px solid #bed3eb; border-radius: 12px; background: #edf5ff; }
+.ro-profit-title { grid-column: 1 / -1; }
+.ro-profit-title strong, .ro-profit-title span, .ro-profit-summary div > span, .ro-profit-summary div > strong { display: block; }
+.ro-profit-title strong { color: var(--navy); }
+.ro-profit-title span { color: #2459a9; font-size: 9px; font-weight: 900; text-transform: uppercase; }
+.ro-profit-summary div > span { color: var(--muted); font-size: 9px; font-weight: 900; text-transform: uppercase; }
+.ro-profit-summary div > strong { margin-top: 2px; color: var(--navy); font-size: 16px; }
+.ro-profit-summary .positive > strong { color: #087443; }
+.ro-profit-summary .negative > strong { color: #b4232f; }
+.ro-profit-summary small { grid-column: 1 / -1; display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
 .job-lines { display: flex; flex-direction: column; }
 .charge-line {
   display: grid;
@@ -374,6 +390,7 @@ tbody tr:hover { background: #f8fafc; }
 @media (max-width: 900px) {
   .service-job-header { grid-template-columns: 38px minmax(0, 1fr); }
   .service-job-total { text-align: left; }
+  .service-job-narratives { grid-template-columns: 1fr; }
   .job-profit-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .job-profit-heading, .job-profit-panel small { grid-column: 1 / -1; }
   .charge-line { min-width: 1050px; }
@@ -409,6 +426,17 @@ tbody tr:hover { background: #f8fafc; }
 .concern-box p { margin-bottom: 0; white-space: pre-wrap; }
 .document-table th { background: var(--navy); color: white; }
 .document-table th:nth-child(n+3), .document-table td:nth-child(n+3) { text-align: right; }
+.estimate-service-cards { display: flex; flex-direction: column; gap: 16px; }
+.estimate-service-card { overflow: hidden; border: 1px solid #cbd5e1; border-radius: 11px; break-inside: avoid; }
+.estimate-service-card > header { display: grid; grid-template-columns: 1fr auto; gap: 16px; padding: 14px 16px; background: #eaf0f6; }
+.estimate-service-card > header h3 { margin: 0; color: var(--navy); }
+.estimate-service-card > header span { color: var(--muted); font-size: 10px; font-weight: 900; text-transform: uppercase; }
+.estimate-service-card > header strong { color: var(--navy); font-size: 18px; }
+.estimate-recommendation { margin: 0; padding: 14px 16px; border-top: 1px solid #d8e0ea; white-space: pre-wrap; }
+.estimate-service-card details { border-top: 1px solid #d8e0ea; }
+.estimate-service-card summary { padding: 10px 16px; color: #2459a9; font-size: 12px; font-weight: 900; cursor: pointer; }
+.estimate-service-card .document-table { margin: 0; }
+.estimate-service-card.additional-charges { margin-top: 2px; }
 .document-bottom { display: grid; grid-template-columns: 1fr 330px; gap: 30px; margin-top: 24px; }
 .document-notes p { white-space: pre-wrap; }
 .document-footer { margin-top: 50px; padding-top: 15px; border-top: 1px solid #aeb8c7; color: #596578; font-size: 12px; line-height: 1.5; }
@@ -556,6 +584,7 @@ tbody tr:hover { background: #f8fafc; }
 .approval-service-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 17px; background: #edf4ff; }
 .approval-service-heading h3 { margin: 0 0 3px; color: #173f7b; }
 .approval-service-heading > div:first-child { display: flex; flex-direction: column; }
+.approval-recommendation { margin: 0; padding: 14px 17px; border-top: 1px solid #d8e0ea; background: #fbfcfe; white-space: pre-wrap; }
 .approval-choice { display: flex; gap: 8px; }
 .approval-choice button { min-height: 42px; padding: 8px 14px; border: 2px solid #cbd5e1; border-radius: 8px; background: white; color: var(--navy); font-weight: 900; cursor: pointer; }
 .approval-choice .approve.selected { border-color: #16804e; background: #dff4e9; color: #0f633c; }

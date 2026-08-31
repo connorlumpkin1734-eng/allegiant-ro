@@ -17,6 +17,13 @@ create index if not exists repair_orders_owner_archived_idx
 
 commit;
 
+-- Separate customer recommendations, completed work, and private technician notes.
+alter table public.line_items
+  add column if not exists work_performed text;
+
+alter table public.line_items
+  add column if not exists internal_notes text;
+
 -- Private RO photos attached to customer-facing service jobs.
 begin;
 create table if not exists public.estimate_photos (

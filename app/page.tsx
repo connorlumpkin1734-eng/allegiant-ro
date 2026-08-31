@@ -67,6 +67,8 @@ type LineItem = {
   service_group_id: string | null;
   service_group_title: string | null;
   technician_story: string | null;
+  work_performed: string | null;
+  internal_notes: string | null;
 };
 
 type EstimatePhoto = {
@@ -229,7 +231,9 @@ function emptyLine(
   index: number,
   groupId: string | null = null,
   groupTitle: string | null = null,
-  technicianStory: string | null = null
+  technicianStory: string | null = null,
+  workPerformed: string | null = null,
+  internalNotes: string | null = null
 ): LineItem {
   if (type === "labor") {
     return {
@@ -245,6 +249,8 @@ function emptyLine(
       service_group_id: groupId,
       service_group_title: groupTitle,
       technician_story: technicianStory,
+      work_performed: workPerformed,
+      internal_notes: internalNotes,
     };
   }
 
@@ -262,6 +268,8 @@ function emptyLine(
       service_group_id: groupId,
       service_group_title: groupTitle,
       technician_story: technicianStory,
+      work_performed: workPerformed,
+      internal_notes: internalNotes,
     };
   }
 
@@ -278,6 +286,8 @@ function emptyLine(
     service_group_id: groupId,
     service_group_title: groupTitle,
     technician_story: technicianStory,
+    work_performed: workPerformed,
+    internal_notes: internalNotes,
   };
 }
 
@@ -1340,6 +1350,20 @@ function RepairOrderEditor({
     return { subtotal, taxableSubtotal, tax, total: subtotal + tax };
   }, [items, taxRate]);
 
+  const profitSummary = useMemo(() => {
+    const authorization = initialRo?.latest_estimate_authorization;
+    const decisions = authorization?.line_decisions ?? {};
+    const hasResponse = Boolean(authorization && ["approved", "partially_approved", "declined"].includes(authorization.status) && Object.keys(decisions).length > 0);
+    const hasApprovedService = Object.values(decisions).includes("approved");
+    const includedItems = !hasResponse
+      ? items
+      : items.filter((item) => item.service_group_id ? decisions[item.service_group_id] === "approved" : hasApprovedService);
+    const revenue = includedItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+    const cost = includedItems.reduce((sum, item) => sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0);
+    const profit = revenue - cost;
+    return { revenue, cost, profit, margin: revenue !== 0 ? (profit / revenue) * 100 : 0, usesAuthorization: hasResponse };
+  }, [initialRo?.latest_estimate_authorization, items]);
+
   const serviceGroups = useMemo(() => {
     const grouped = new Map<string, LineItem[]>();
     for (const item of items) {
@@ -1410,7 +1434,9 @@ function RepairOrderEditor({
         current.length,
         groupId,
         groupedItem?.service_group_title ?? null,
-        groupedItem?.technician_story ?? null
+        groupedItem?.technician_story ?? null,
+        groupedItem?.work_performed ?? null,
+        groupedItem?.internal_notes ?? null
       )];
     });
   }
@@ -1423,7 +1449,7 @@ function RepairOrderEditor({
     ]);
   }
 
-  function updateServiceJob(groupId: string, field: "service_group_title" | "technician_story", value: string) {
+  function updateServiceJob(groupId: string, field: "service_group_title" | "technician_story" | "work_performed" | "internal_notes", value: string) {
     setItems((current) => current.map((item) =>
       item.service_group_id === groupId ? { ...item, [field]: value } : item
     ));
@@ -1454,7 +1480,9 @@ function RepairOrderEditor({
             item.sort_order,
             item.service_group_id,
             item.service_group_title,
-            item.technician_story
+            item.technician_story,
+            item.work_performed,
+            item.internal_notes
           );
         }
 
@@ -1669,6 +1697,8 @@ function RepairOrderEditor({
         service_group_id: item.service_group_id,
         service_group_title: valueOrNull(item.service_group_title ?? ""),
         technician_story: valueOrNull(item.technician_story ?? ""),
+        work_performed: valueOrNull(item.work_performed ?? ""),
+        internal_notes: valueOrNull(item.internal_notes ?? ""),
       }));
 
       const { error: lineError } = await supabase.from("line_items").insert(linePayload);
@@ -1952,6 +1982,14 @@ function RepairOrderEditor({
             <div><span>Tax</span><strong>{money(totals.tax)}</strong></div>
             <div className="grand-total"><span>Total</span><strong>{money(totals.total)}</strong></div>
           </div>
+          <section className="ro-profit-summary">
+            <div className="ro-profit-title"><strong>Internal RO profit</strong><span>Private</span></div>
+            <div><span>Revenue</span><strong>{money(profitSummary.revenue)}</strong></div>
+            <div><span>Recorded cost</span><strong>{money(profitSummary.cost)}</strong></div>
+            <div className={profitSummary.profit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(profitSummary.profit)}</strong></div>
+            <div className={profitSummary.margin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{profitSummary.margin.toFixed(1)}%</strong></div>
+            <small>{profitSummary.usesAuthorization ? "Approved services only." : "All currently listed services."} Labor and overhead are not deducted.</small>
+          </section>
         </aside>
       </div>
 
@@ -1961,7 +1999,7 @@ function RepairOrderEditor({
             <h2>{workspaceTab === "invoice" ? "Invoice service jobs" : "Service jobs"}</h2>
             <p className="muted">
               {workspaceTab === "invoice"
-                ? "Labor, related parts, and the technician story stay together on the final invoice."
+                ? "Labor, related parts, and the completed-work description stay together on the final invoice."
                 : `Build each repair as a job. Labor defaults to ${money(settings.default_labor_rate)}/hr and parts to ${settings.default_parts_markup}% markup.`}
             </p>
           </div>
@@ -1986,21 +2024,41 @@ function RepairOrderEditor({
                 <header className="service-job-header">
                   <div className="service-job-number">{groupIndex + 1}</div>
                   <label>
-                    Service job
+                    Recommended service
                     <input value={first.service_group_title ?? ""} onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)} />
                   </label>
                   <div className="service-job-total"><span>Job total</span><strong>{money(jobTotal)}</strong></div>
                   <button className="button small danger" onClick={() => void deleteServiceJob(group.id)}>Delete job</button>
                 </header>
-                <label className="technician-story">
-                  Technician story - prints on invoice
-                  <textarea
-                    rows={3}
-                    placeholder="Example: Replaced front brake pads and rotors, lubricated slide pins, and bled brakes."
-                    value={first.technician_story ?? ""}
-                    onChange={(event) => updateServiceJob(group.id, "technician_story", event.target.value)}
-                  />
-                </label>
+                <div className="service-job-narratives">
+                  <label className="recommendation-story">
+                    Recommendation / reason <span className="visibility-tag customer">Estimate + approval</span>
+                    <textarea
+                      rows={3}
+                      placeholder="Example: Front brake pads are below minimum thickness and the rotors are scored. Recommend replacing pads and rotors."
+                      value={first.technician_story ?? ""}
+                      onChange={(event) => updateServiceJob(group.id, "technician_story", event.target.value)}
+                    />
+                  </label>
+                  <label className="work-performed-story">
+                    Work performed <span className="visibility-tag invoice">Invoice only</span>
+                    <textarea
+                      rows={3}
+                      placeholder="Complete after the repair. Example: Replaced front pads and rotors, lubricated slide pins, and road-tested vehicle."
+                      value={first.work_performed ?? ""}
+                      onChange={(event) => updateServiceJob(group.id, "work_performed", event.target.value)}
+                    />
+                  </label>
+                  <label className="internal-job-notes">
+                    Internal technician notes <span className="visibility-tag private">Private</span>
+                    <textarea
+                      rows={2}
+                      placeholder="Shop instructions, reminders, or details the customer should not see."
+                      value={first.internal_notes ?? ""}
+                      onChange={(event) => updateServiceJob(group.id, "internal_notes", event.target.value)}
+                    />
+                  </label>
+                </div>
                 <section className="job-profit-panel" aria-label="Internal job profitability">
                   <div className="job-profit-heading">
                     <strong>Internal job profit</strong>
@@ -2626,11 +2684,11 @@ function DocumentView({
   const total = subtotal + tax;
   const currentStatusLabel = statusLabel(ro.status);
   const groupedDocumentItems = (() => {
-    const groups: Array<{ id: string; title: string; story: string; items: LineItem[] }> = [];
-    const byId = new Map<string, { id: string; title: string; story: string; items: LineItem[] }>();
+    const groups: Array<{ id: string; title: string; recommendation: string; workPerformed: string; items: LineItem[] }> = [];
+    const byId = new Map<string, { id: string; title: string; recommendation: string; workPerformed: string; items: LineItem[] }>();
     for (const item of items) {
       if (!item.service_group_id) {
-        groups.push({ id: `line-${item.id}`, title: "", story: "", items: [item] });
+        groups.push({ id: `line-${item.id}`, title: "", recommendation: "", workPerformed: "", items: [item] });
         continue;
       }
       let group = byId.get(item.service_group_id);
@@ -2638,7 +2696,8 @@ function DocumentView({
         group = {
           id: item.service_group_id,
           title: item.service_group_title || "Service Job",
-          story: item.technician_story || "",
+          recommendation: item.technician_story || "",
+          workPerformed: item.work_performed || "",
           items: [],
         };
         byId.set(item.service_group_id, group);
@@ -2793,7 +2852,41 @@ function DocumentView({
           </section>
         )}
 
-        <table className="document-table">
+        {isEstimate ? (
+          <div className="estimate-service-cards">
+            {groupedDocumentItems.map((group) => {
+              const isServiceJob = Boolean(group.title);
+              const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+              if (!isServiceJob) return null;
+              return (
+                <section className="estimate-service-card" key={group.id}>
+                  <header><div><span>Recommended service</span><h3>{group.title}</h3></div><strong>{money(jobTotal)}</strong></header>
+                  {group.recommendation && <p className="estimate-recommendation">{group.recommendation}</p>}
+                  <details className="estimate-breakdown" open>
+                    <summary>Parts and labor breakdown</summary>
+                    <table className="document-table">
+                      <thead><tr><th>Description</th><th>Qty/Hrs</th><th>Est. Rate/Price</th><th>Amount</th></tr></thead>
+                      <tbody>{group.items.map((item) => (
+                        <tr key={item.id}><td>{item.description}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
+                      ))}</tbody>
+                    </table>
+                  </details>
+                </section>
+              );
+            })}
+            {groupedDocumentItems.some((group) => !group.title) && (
+              <section className="estimate-service-card additional-charges">
+                <header><div><span>Estimate details</span><h3>Additional charges and discounts</h3></div></header>
+                <table className="document-table">
+                  <thead><tr><th>Description</th><th>Qty</th><th>Rate/Price</th><th>Amount</th></tr></thead>
+                  <tbody>{groupedDocumentItems.filter((group) => !group.title).flatMap((group) => group.items).map((item) => (
+                    <tr key={item.id}><td>{item.description}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
+                  ))}</tbody>
+                </table>
+              </section>
+            )}
+          </div>
+        ) : <table className="document-table">
           <thead>
             <tr>
               <th>Description</th>
@@ -2813,7 +2906,8 @@ function DocumentView({
                   <tr className={`document-job-heading ${decision ? `authorization-${decision}` : ""}`} key={`${group.id}-heading`}>
                     <td colSpan={4}>
                       <div className="document-job-title"><strong>{group.title}</strong>{decision && <span className={`authorization-mark ${decision}`}>{decision}</span>}</div>
-                      {group.story && <p><span>Technician story:</span> {group.story}</p>}
+                      {isWorkOrder && group.recommendation && <p><span>Authorized scope:</span> {group.recommendation}</p>}
+                      {isInvoice && group.workPerformed && <p><span>Work performed:</span> {group.workPerformed}</p>}
                     </td>
                     <td><strong>{money(jobTotal)}</strong></td>
                   </tr>
@@ -2833,7 +2927,7 @@ function DocumentView({
               ];
             })}
           </tbody>
-        </table>
+        </table>}
 
         <div className="document-bottom">
           <div className="document-notes">
