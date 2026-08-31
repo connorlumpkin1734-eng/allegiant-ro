@@ -120,13 +120,32 @@ type EstimateAuthorization = {
   responded_at: string | null;
   sent_at: string;
   estimate_snapshot: {
-    items?: Array<{ service_group_id?: string | null; service_group_title?: string | null }>;
+    items?: Array<{
+      description?: string;
+      quantity?: number;
+      unit_price?: number;
+      taxable?: boolean;
+      service_group_id?: string | null;
+      service_group_title?: string | null;
+      technician_story?: string | null;
+    }>;
   };
 };
 
 type AuthorizationDecisionSummary = {
   approved: string[];
   declined: string[];
+};
+
+type DeclinedEstimateGroup = {
+  id: string;
+  title: string;
+  recommendation: string;
+  items: Array<{
+    description: string;
+    quantity: number;
+    unit_price: number;
+  }>;
 };
 
 type CustomerForm = {
@@ -212,14 +231,46 @@ function statusLabel(status: RepairOrder["status"]): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-function repairOrderTotal(ro: RepairOrder): number {
-  const items = ro.line_items ?? [];
+function hasAuthorizationResponse(
+  authorization: EstimateAuthorization | null | undefined
+): authorization is EstimateAuthorization {
+  return Boolean(
+    authorization
+      && ["approved", "partially_approved", "declined"].includes(authorization.status)
+      && Object.keys(authorization.line_decisions ?? {}).length > 0
+  );
+}
+
+function authorizedLineItems<T extends { service_group_id: string | null }>(
+  items: T[],
+  authorization: EstimateAuthorization | null | undefined
+): T[] {
+  if (!hasAuthorizationResponse(authorization)) return items;
+  const decisions = authorization.line_decisions ?? {};
+  const hasApprovedService = Object.values(decisions).includes("approved");
+  return items.filter((item) =>
+    item.service_group_id
+      ? decisions[item.service_group_id] === "approved"
+      : hasApprovedService
+  );
+}
+
+function calculateLineItemTotals(
+  items: Array<Pick<LineItem, "quantity" | "unit_price" | "taxable">>,
+  taxRate: number
+) {
   const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
   const taxableSubtotal = items.reduce(
     (sum, item) => sum + (item.taxable ? item.quantity * item.unit_price : 0),
     0
   );
-  return subtotal + Math.max(0, taxableSubtotal) * (Number(ro.tax_rate) / 100);
+  const tax = Math.max(0, taxableSubtotal) * (taxRate / 100);
+  return { subtotal, taxableSubtotal, tax, total: subtotal + tax };
+}
+
+function repairOrderTotal(ro: RepairOrder): number {
+  const items = authorizedLineItems(ro.line_items ?? [], ro.latest_estimate_authorization);
+  return calculateLineItemTotals(items, Number(ro.tax_rate)).total;
 }
 
 function authorizationDecisionSummary(
@@ -247,6 +298,37 @@ function authorizationDecisionSummary(
 function compactDecisionTitles(titles: string[]): string {
   if (titles.length <= 2) return titles.join(", ");
   return `${titles.slice(0, 2).join(", ")} +${titles.length - 2} more`;
+}
+
+function declinedEstimateGroups(
+  authorization: EstimateAuthorization | null | undefined
+): DeclinedEstimateGroup[] {
+  const decisions = authorization?.line_decisions ?? {};
+  const groups = new Map<string, DeclinedEstimateGroup>();
+
+  for (const item of authorization?.estimate_snapshot?.items ?? []) {
+    const groupId = item.service_group_id;
+    if (!groupId || decisions[groupId] !== "declined") continue;
+
+    let group = groups.get(groupId);
+    if (!group) {
+      group = {
+        id: groupId,
+        title: item.service_group_title || "Recommended service",
+        recommendation: item.technician_story || "",
+        items: [],
+      };
+      groups.set(groupId, group);
+    }
+
+    group.items.push({
+      description: item.description || "Service item",
+      quantity: Number(item.quantity || 0),
+      unit_price: Number(item.unit_price || 0),
+    });
+  }
+
+  return [...groups.values()];
 }
 
 function valueOrNull(value: string): string | null {
@@ -1023,12 +1105,13 @@ function Dashboard({
     return haystack.includes(normalized);
   });
 
-  const activeRecords = repairOrders.filter((ro) => !ro.archived_at);
-  const archivedCount = repairOrders.length - activeRecords.length;
-  const openCount = activeRecords.filter((ro) => ro.status === "open").length;
-  const unpaidCount = activeRecords.filter(
+  const currentRecords = repairOrders.filter((ro) => !ro.archived_at);
+  const archivedCount = repairOrders.length - currentRecords.length;
+  const openCount = currentRecords.filter((ro) => ro.status === "open").length;
+  const unpaidCount = currentRecords.filter(
     (ro) => ro.status === "completed" && !ro.paid
   ).length;
+  const activeCount = openCount + unpaidCount;
 
   return (
     <section>
@@ -1045,7 +1128,7 @@ function Dashboard({
       <div className="summary-grid">
         <div className="summary-card">
           <span>Active work orders</span>
-          <strong>{activeRecords.length}</strong>
+          <strong>{activeCount}</strong>
         </div>
         <div className="summary-card">
           <span>Open jobs</span>
@@ -1085,7 +1168,7 @@ function Dashboard({
                 <th>Job status</th>
                 <th>Estimate</th>
                 <th>Invoice</th>
-                <th>Total</th>
+                <th>Billable total</th>
                 <th></th>
               </tr>
             </thead>
@@ -1390,37 +1473,35 @@ function RepairOrderEditor({
   );
 
   const totals = useMemo(() => {
-    const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-    const taxableSubtotal = items.reduce(
-      (sum, item) => sum + (item.taxable ? item.quantity * item.unit_price : 0),
-      0
-    );
-    const tax = Math.max(0, taxableSubtotal) * (taxRate / 100);
-    return { subtotal, taxableSubtotal, tax, total: subtotal + tax };
+    return calculateLineItemTotals(items, taxRate);
   }, [items, taxRate]);
 
   const currentAuthorization = initialRo?.latest_estimate_authorization;
   const currentDecisions = currentAuthorization?.line_decisions ?? {};
-  const hasCustomerAuthorizationResponse = Boolean(
-    currentAuthorization
-      && ["approved", "partially_approved", "declined"].includes(currentAuthorization.status)
-      && Object.keys(currentDecisions).length > 0
-  );
+  const hasCustomerAuthorizationResponse = hasAuthorizationResponse(currentAuthorization);
   const currentDecisionSummary = useMemo(
     () => authorizationDecisionSummary(currentAuthorization),
     [currentAuthorization]
   );
+  const invoiceItems = useMemo(
+    () => authorizedLineItems(items, currentAuthorization),
+    [items, currentAuthorization]
+  );
+  const invoiceTotals = useMemo(
+    () => calculateLineItemTotals(invoiceItems, taxRate),
+    [invoiceItems, taxRate]
+  );
+  const displayedTotals = workspaceTab === "invoice" ? invoiceTotals : totals;
+  const authorizationOverage = hasCustomerAuthorizationResponse
+    ? invoiceTotals.total - Number(currentAuthorization?.approved_total || 0)
+    : 0;
 
   const profitSummary = useMemo(() => {
-    const hasApprovedService = Object.values(currentDecisions).includes("approved");
-    const includedItems = !hasCustomerAuthorizationResponse
-      ? items
-      : items.filter((item) => item.service_group_id ? currentDecisions[item.service_group_id] === "approved" : hasApprovedService);
-    const revenue = includedItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-    const cost = includedItems.reduce((sum, item) => sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0);
+    const revenue = invoiceItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+    const cost = invoiceItems.reduce((sum, item) => sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0);
     const profit = revenue - cost;
     return { revenue, cost, profit, margin: revenue !== 0 ? (profit / revenue) * 100 : 0, usesAuthorization: hasCustomerAuthorizationResponse };
-  }, [currentDecisions, hasCustomerAuthorizationResponse, items]);
+  }, [hasCustomerAuthorizationResponse, invoiceItems]);
 
   const serviceGroups = useMemo(() => {
     const grouped = new Map<string, LineItem[]>();
@@ -2065,10 +2146,19 @@ function RepairOrderEditor({
             <p className="sidebar-help">Use Preview Estimate to send proposed pricing to the customer. Payment status lives on the Invoice tab.</p>
           )}
           <div className="totals-box">
-            <div><span>Subtotal</span><strong>{money(totals.subtotal)}</strong></div>
-            <div><span>Tax</span><strong>{money(totals.tax)}</strong></div>
-            <div className="grand-total"><span>Total</span><strong>{money(totals.total)}</strong></div>
+            <div><span>Subtotal</span><strong>{money(displayedTotals.subtotal)}</strong></div>
+            <div><span>Tax</span><strong>{money(displayedTotals.tax)}</strong></div>
+            <div className="grand-total"><span>{workspaceTab === "invoice" ? "Billable total" : "Estimate total"}</span><strong>{money(displayedTotals.total)}</strong></div>
           </div>
+          {workspaceTab === "invoice" && hasCustomerAuthorizationResponse && (
+            <p className="sidebar-help invoice-authorization-help">Approved services only. Declined recommendations remain documented but are not charged.</p>
+          )}
+          {workspaceTab === "invoice" && authorizationOverage > 0.01 && (
+            <div className="invoice-authorization-warning" role="alert">
+              <strong>Invoice exceeds authorization by {money(authorizationOverage)}</strong>
+              <span>Get separate customer approval before billing the additional amount.</span>
+            </div>
+          )}
           <section className="ro-profit-summary">
             <div className="ro-profit-title"><strong>Internal RO profit</strong><span>Private</span></div>
             <div><span>Revenue</span><strong>{money(profitSummary.revenue)}</strong></div>
@@ -2086,7 +2176,7 @@ function RepairOrderEditor({
             <h2>{workspaceTab === "invoice" ? "Invoice service jobs" : "Service jobs"}</h2>
             <p className="muted">
               {workspaceTab === "invoice"
-                ? "Labor, related parts, and the completed-work description stay together on the final invoice."
+                ? "Approved jobs are billed. Declined jobs stay visible here and print separately as not authorized / not charged."
                 : `Build each repair as a job. Labor defaults to ${money(settings.default_labor_rate)}/hr and parts to ${settings.default_parts_markup}% markup.`}
             </p>
           </div>
@@ -2434,12 +2524,7 @@ function CustomerDirectory({
             <article
               className={`panel customer-card clickable-card ${customer.archived_at ? "archived-card" : ""}`}
               key={customer.id}
-              role="button"
-              tabIndex={0}
               onClick={() => onOpenCustomer(customer)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") onOpenCustomer(customer);
-              }}
             >
               <div className="section-heading">
                 <div>
@@ -2624,7 +2709,7 @@ function CustomerProfile({
                     <th>Requested work</th>
                     <th>Status</th>
                     <th>Invoice</th>
-                    <th>Total</th>
+                    <th>Billable total</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -2764,16 +2849,11 @@ function DocumentView({
   const isInvoice = mode === "invoice";
   const authorization = ro.latest_estimate_authorization;
   const decisions = authorization?.line_decisions ?? {};
-  const hasCustomerResponse = Boolean(authorization && ["approved", "partially_approved", "declined"].includes(authorization.status) && Object.keys(decisions).length > 0);
+  const hasCustomerResponse = hasAuthorizationResponse(authorization);
   const decisionSummary = authorizationDecisionSummary(authorization);
-  const hasApprovedService = Object.values(decisions).includes("approved");
-  const pricedItems = isEstimate || !hasCustomerResponse
-    ? items
-    : items.filter((item) => item.service_group_id ? decisions[item.service_group_id] === "approved" : hasApprovedService);
-  const subtotal = pricedItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-  const taxableSubtotal = pricedItems.reduce((sum, item) => sum + (item.taxable ? item.quantity * item.unit_price : 0), 0);
-  const tax = Math.max(0, taxableSubtotal) * (Number(ro.tax_rate) / 100);
-  const total = subtotal + tax;
+  const pricedItems = isEstimate ? items : authorizedLineItems(items, authorization);
+  const { subtotal, tax, total } = calculateLineItemTotals(pricedItems, Number(ro.tax_rate));
+  const declinedGroups = isInvoice ? declinedEstimateGroups(authorization) : [];
   const currentStatusLabel = statusLabel(ro.status);
   const displayedItems = isInvoice && hasCustomerResponse ? pricedItems : items;
   const groupedDocumentItems = (() => {
@@ -3031,6 +3111,35 @@ function DocumentView({
             })}
           </tbody>
         </table>}
+
+        {isInvoice && declinedGroups.length > 0 && (
+          <section className="invoice-declined-work">
+            <header>
+              <div>
+                <span>Customer declined</span>
+                <h3>Not authorized / not charged</h3>
+              </div>
+              <strong>{declinedGroups.length} declined job{declinedGroups.length === 1 ? "" : "s"}</strong>
+            </header>
+            <p>These recommendations were included on the estimate and declined by the customer. They are excluded from the invoice total.</p>
+            <div className="invoice-declined-list">
+              {declinedGroups.map((group) => {
+                const groupTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+                const descriptions = group.items.map((item) => item.description).filter(Boolean).join(" · ");
+                return (
+                  <div className="invoice-declined-job" key={group.id}>
+                    <div>
+                      <strong>{group.title}</strong>
+                      {descriptions && <small>{descriptions}</small>}
+                    </div>
+                    <span>Declined</span>
+                    <b>{money(groupTotal)} not charged</b>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         <div className="document-bottom">
           <div className="document-notes">
