@@ -31,7 +31,7 @@ export default async (request: Request) => {
   const publicKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const resendKey = process.env.RESEND_API_KEY;
-  const fromEmail = process.env.ESTIMATE_FROM_EMAIL;
+  const fromEmail = "Allegiant Auto Care <estimates@allegiantautocare.com>";
   const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(request.url).origin;
   const missing = [
     ["NEXT_PUBLIC_SUPABASE_URL", supabaseUrl],
