@@ -2,11 +2,19 @@
 import { PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Decision = "approved" | "declined";
-type Item = { description: string; quantity: number; unit_price: number; taxable?: boolean; service_group_id?: string | null; service_group_title?: string | null; technician_story?: string | null };
+type Item = { item_type?: string; description: string; quantity: number; unit_price: number; taxable?: boolean; service_group_id?: string | null; service_group_title?: string | null; technician_story?: string | null };
 type Snapshot = { roNumber: number; customerName: string; vehicle: string; vin: string; estimateDate?: string; customerConcern?: string; items: Item[]; photos?: Array<{ service_group_id: string; caption?: string | null; url?: string | null }>; subtotal: number; tax: number; total: number; taxRate?: number; businessName: string; businessAddress?: string; businessPhone: string; businessEmail: string };
 type Authorization = { status: string; estimate_snapshot: Snapshot; line_decisions?: Record<string, Decision>; approved_total?: number | null; responded_at?: string | null };
 type Group = { id: string; title: string; recommendation: string; items: Item[] };
 const money = (amount: number) => Number(amount || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+// Older sent snapshots omit item_type; negative amounts still identify savings.
+const isDiscount = (item: Item) => item.item_type === "discount" || Number(item.quantity) * Number(item.unit_price) < 0;
+const discountTotal = (items: Item[]) => items.reduce((sum, item) => sum + (isDiscount(item) ? Math.max(0, -Number(item.quantity) * Number(item.unit_price)) : 0), 0);
+function ItemRow({ item }: { item: Item }) {
+  const discount = isDiscount(item);
+  return <tr className={discount ? "document-discount-row" : ""}><td>{discount && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}{item.description}</td><td>{item.quantity}</td><td>{money(discount ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>;
+}
 
 export default function EstimateApprovalPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null); const drawing = useRef(false); const signed = useRef(false);
@@ -34,6 +42,9 @@ export default function EstimateApprovalPage() {
     return result;
   }, [snapshot]);
   const approvedGroups = groups.filter((group) => decisions[group.id] === "approved");
+  const additionalItems = (snapshot?.items ?? []).filter((item) => !item.service_group_id);
+  const estimateDiscount = discountTotal(snapshot?.items ?? []);
+  const selectedDiscount = discountTotal((snapshot?.items ?? []).filter((item) => item.service_group_id ? decisions[item.service_group_id] === "approved" : approvedGroups.length > 0));
   const approvedSubtotal = (snapshot?.items ?? []).filter((item) => item.service_group_id ? decisions[item.service_group_id] === "approved" : approvedGroups.length > 0).reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
   const approvedTaxable = (snapshot?.items ?? []).filter((item) => (item.service_group_id ? decisions[item.service_group_id] === "approved" : approvedGroups.length > 0) && item.taxable).reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
   const approvedTotal = approvedSubtotal + Math.max(0, approvedTaxable) * (Number(snapshot?.taxRate || 0) / 100);
@@ -55,17 +66,22 @@ export default function EstimateApprovalPage() {
   return <main className="approval-shell"><article className="approval-card document-page document-estimate">
     {!snapshot ? <div className="notice">{message}</div> : <>
       <header className="document-header"><div><img className="document-logo" src="/allegiant-auto-care-logo.png" alt="Allegiant Auto Care" />{snapshot.businessAddress && <p>{snapshot.businessAddress}</p>}<p>{[snapshot.businessPhone, snapshot.businessEmail].filter(Boolean).join(" · ")}</p></div><div className="document-title"><h2>Estimate</h2><p className="document-subtitle">Proposed work and estimated pricing</p><strong>RO #{String(snapshot.roNumber).padStart(4, "0")}</strong><span>{snapshot.estimateDate ? new Date(snapshot.estimateDate).toLocaleDateString() : ""}</span></div></header>
-      <section className="document-stage-banner"><div><span className="stage-eyebrow">Proposal</span><strong>Estimated total</strong><small>Choose each service below.</small></div><b>{money(snapshot.total)}</b></section>
+      <section className="document-stage-banner"><div><span className="stage-eyebrow">Proposal</span><strong>Estimated total</strong><small>{estimateDiscount > 0 ? `Includes ${money(estimateDiscount)} in discounts. Choose each service below.` : "Choose each service below."}</small></div><b>{money(snapshot.total)}</b></section>
       <div className="document-info-grid"><section><h3>Customer</h3><strong>{snapshot.customerName}</strong></section><section><h3>Vehicle</h3><strong>{snapshot.vehicle || "—"}</strong><span>VIN: {snapshot.vin || "—"}</span></section><section><h3>Estimate details</h3><span>{groups.length} proposed service{groups.length === 1 ? "" : "s"}</span></section></div>
       {snapshot.customerConcern && <section className="concern-box"><h3>Customer request / proposed work</h3><p>{snapshot.customerConcern}</p></section>}
       <div className="document-section-heading"><h3>Proposed services</h3><span>Approve or decline each job</span></div>
       {groups.map((group) => { const groupTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0); const photos = (snapshot.photos ?? []).filter((photo) => photo.service_group_id === group.id && photo.url); return <section className={`approval-service ${decisions[group.id] || ""}`} key={group.id}>
         <div className="approval-service-heading"><div><h3>{group.title}</h3><strong>{money(groupTotal)}</strong></div><div className="approval-choice"><button type="button" className={decisions[group.id] === "approved" ? "selected approve" : "approve"} onClick={() => setDecisions((current) => ({ ...current, [group.id]: "approved" }))} disabled={authorization.status !== "sent"}>✓ Approve</button><button type="button" className={decisions[group.id] === "declined" ? "selected decline" : "decline"} onClick={() => setDecisions((current) => ({ ...current, [group.id]: "declined" }))} disabled={authorization.status !== "sent"}>✕ Decline</button></div></div>
         {group.recommendation && <p className="approval-recommendation">{group.recommendation}</p>}
-        <table className="document-table"><thead><tr><th>Description</th><th>Qty/Hrs</th><th>Est. Rate/Price</th><th>Amount</th></tr></thead><tbody>{group.items.map((item, index) => <tr key={`${item.description}-${index}`}><td>{item.description}</td><td>{item.quantity}</td><td>{money(item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>)}</tbody></table>
+        <table className="document-table"><thead><tr><th>Description</th><th>Qty/Hrs</th><th>Est. Rate/Price</th><th>Amount</th></tr></thead><tbody>{group.items.map((item, index) => <ItemRow key={`${item.description}-${index}`} item={item} />)}</tbody></table>
         {photos.length > 0 && <div className="estimate-photo-grid">{photos.map((photo, index) => <figure className="estimate-photo" key={`${photo.url}-${index}`}><img src={photo.url!} alt={photo.caption || group.title} />{photo.caption && <figcaption>{photo.caption}</figcaption>}</figure>)}</div>}
       </section>; })}
-      <div className="document-bottom"><div className="document-notes">{authorization.status === "sent" && <strong>{Object.keys(decisions).length} of {groups.length} services selected</strong>}</div><div className="document-totals"><div><span>Estimate subtotal</span><strong>{money(snapshot.subtotal)}</strong></div><div><span>Tax</span><strong>{money(snapshot.tax)}</strong></div><div className="grand-total"><span>Estimated total</span><strong>{money(snapshot.total)}</strong></div><div className="authorized-total"><span>Selected total</span><strong>{money(authorization.approved_total ?? approvedTotal)}</strong></div></div></div>
+      {additionalItems.length > 0 && <section className="approval-service">
+        <h3>Additional charges and discounts</h3>
+        <p>These apply when at least one service is approved.</p>
+        <table className="document-table"><thead><tr><th>Description</th><th>Qty</th><th>Est. Price</th><th>Amount</th></tr></thead><tbody>{additionalItems.map((item, index) => <ItemRow key={index} item={item} />)}</tbody></table>
+      </section>}
+      <div className="document-bottom"><div className="document-notes">{authorization.status === "sent" && <strong>{Object.keys(decisions).length} of {groups.length} services selected</strong>}</div><div className="document-totals">{estimateDiscount > 0 && <><div><span>Subtotal before discounts</span><strong>{money(Number(snapshot.subtotal) + estimateDiscount)}</strong></div><div className="approval-discount-total"><span>Discount applied</span><strong>{money(-estimateDiscount)}</strong></div></>}<div><span>{estimateDiscount > 0 ? "Subtotal after discounts" : "Estimate subtotal"}</span><strong>{money(snapshot.subtotal)}</strong></div><div><span>Tax</span><strong>{money(snapshot.tax)}</strong></div><div className="grand-total"><span>Estimated total</span><strong>{money(snapshot.total)}</strong></div>{selectedDiscount > 0 && <div className="approval-discount-total"><span>Discount included in selected total</span><strong>{money(-selectedDiscount)}</strong></div>}<div className="authorized-total"><span>Selected total</span><strong>{money(authorization.approved_total ?? approvedTotal)}</strong></div></div></div>
       {authorization.status === "sent" ? <section className="document-terms"><strong>Work authorization</strong>{approvedGroups.length > 0 && <><label>Full name<input value={signerName} onChange={(event) => setSignerName(event.target.value)} /></label><label>Signature</label><canvas ref={canvasRef} className="signature-pad" width={900} height={220} onPointerDown={startDrawing} onPointerMove={draw} onPointerUp={() => { drawing.current = false; }} onPointerCancel={() => { drawing.current = false; }} /><button className="button small ghost" type="button" onClick={clearSignature}>Clear signature</button><label className="checkbox-row"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />I authorize Allegiant Auto Care to perform only the services I approved above for the selected total shown.</label></>}<button className="button primary approval-submit" disabled={busy} onClick={() => void respond()}>{busy ? "Submitting…" : approvedGroups.length ? `Submit selections & authorize ${money(approvedTotal)}` : "Submit declined services"}</button></section> : <div className={`notice badge estimate-${authorization.status}`}>Response recorded: {authorization.status.replaceAll("_", " ")}. Authorized total: {money(authorization.approved_total || 0)}.</div>}
       {message && <div className="notice">{message}</div>}
     </>}
