@@ -1495,3 +1495,5 @@ tbody tr:hover { background: #f8fafc; }
   .approval-overview-decisions { grid-template-columns: 1fr; }
   .invoice-summary-grid { grid-template-columns: 1fr; }
 }
+
+.document-totals .approval-discount-total { color: #08683b; background: #e8f7ef; padding: 8px; }
