@@ -1509,15 +1509,32 @@ tbody tr:hover { background: #f8fafc; }
 @media screen and (max-width: 600px) {
   .document-photo-grid { grid-template-columns: 1fr; }
 }
+/* Keep brand/status colors; darken only neutral document details. */
+.document-page { --ink: #000; --muted: #000; --line: #000; color: #000; }
+.document-page.document-repair-order { --document-accent: #000; --document-accent-ink: #000; }
+.document-page .document-header p,
+.document-page .document-subtitle,
+.document-page .document-info-grid span:not(.document-payment),
+.document-page .document-job-heading p,
+.document-page .authorization-declined-line td,
+.document-page .document-stage-banner small,
+.document-page .document-footer,
+.document-page .document-terms,
+.document-page .signature-row,
+.document-page .invoice-authorization-signature small,
+.document-page .invoice-declined-work > p { color: #000 !important; }
+.document-page .document-table th,
+.document-page .document-table td,
+.document-page .estimate-service-card,
+.document-page .estimate-recommendation,
+.document-page .estimate-service-card details,
+.document-page .invoice-authorization-signature img { border-color: #000; }
+.document-page .document-terms { border-right-color: #000; border-bottom-color: #000; border-left-color: #000; }
+.document-page .document-footer { border-top-color: #000; }
+.document-page.document-invoice .document-footer { border-top-color: var(--red); }
+.document-page .document-discount-row td { color: #08683b; border-color: #83c9a3; }
 @media print {
-  .document-page, .document-page * {
-    color: #000 !important;
-    -webkit-text-fill-color: #000 !important;
-    border-color: #000 !important;
-    outline-color: #000 !important;
-    text-shadow: none !important;
-  }
-  .document-page, .document-page :not(img) { background: #fff !important; }
+  .document-page { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .document-page .authorization-declined-line { opacity: 1; }
   .document-photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .document-photo { break-inside: avoid; page-break-inside: avoid; }
