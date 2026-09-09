@@ -6,8 +6,22 @@ export async function finishInspectionPdf(pdf: PDFDocument) {
   const black = rgb(0, 0, 0);
   for (const field of form.getFields()) {
     if (field instanceof PDFTextField) {
+      form.markFieldAsDirty(field.ref);
       field.acroField.setDefaultAppearance("/Helv 8 Tf 0 g");
       for (const widget of field.acroField.getWidgets()) {
+        // Keep the last customer-info field inside the template's outer box.
+        if (field.getName() === "technician") {
+          const rect = widget.getRectangle();
+          const page = pdf.getPages().find((entry) => entry.ref === widget.P());
+          if (!page) throw new Error("Could not locate the technician field on the PDF.");
+          // The original field outline is also painted into the template.
+          page.drawRectangle({ x: rect.x - 1, y: rect.y - 1, width: rect.width + 2,
+            height: rect.height + 2, color: rgb(1, 1, 1) });
+          page.drawLine({ start: { x: rect.x - 1, y: rect.y + 4 },
+            end: { x: rect.x + rect.width + 1, y: rect.y + 4 },
+            color: rgb(0.68, 0.73, 0.8), thickness: 0.75 });
+          widget.setRectangle({ ...rect, y: rect.y + 6, height: rect.height - 6 });
+        }
         const appearance = widget.getOrCreateAppearanceCharacteristics();
         appearance.setBorderColor([0, 0, 0]);
         appearance.setBackgroundColor([1, 1, 1]);
