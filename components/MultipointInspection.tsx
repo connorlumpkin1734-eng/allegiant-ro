@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { PDFDocument, PDFTextField } from "pdf-lib";
+import { finishInspectionPdf } from "@/lib/inspectionPdf";
 import { supabase } from "@/lib/supabase";
 
 type Status = "" | "good" | "monitor" | "service" | "na";
@@ -270,7 +272,6 @@ export function MultipointInspection({
     setExporting(true);
     setMessage("");
     try {
-      const { PDFDocument, PDFTextField, StandardFonts } = await import("pdf-lib");
       const response = await fetch("/multipoint-inspection-template.pdf");
       if (!response.ok) throw new Error("The inspection PDF template could not be loaded.");
       const pdf = await PDFDocument.load(await response.arrayBuffer());
@@ -318,9 +319,7 @@ export function MultipointInspection({
           if (value.status) form.getCheckBox(`${section.key}_${value.status}_${item.id}`).check();
         }
       }
-      const font = await pdf.embedFont(StandardFonts.Helvetica);
-      form.updateFieldAppearances(font);
-      const bytes = await pdf.save();
+      const bytes = await finishInspectionPdf(pdf);
       const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
       const anchor = document.createElement("a");
       anchor.href = url;
