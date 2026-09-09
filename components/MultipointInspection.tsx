@@ -270,11 +270,18 @@ export function MultipointInspection({
     setExporting(true);
     setMessage("");
     try {
-      const { PDFDocument, StandardFonts } = await import("pdf-lib");
+      const { PDFDocument, PDFTextField, StandardFonts } = await import("pdf-lib");
       const response = await fetch("/multipoint-inspection-template.pdf");
       if (!response.ok) throw new Error("The inspection PDF template could not be loaded.");
       const pdf = await PDFDocument.load(await response.arrayBuffer());
       const form = pdf.getForm();
+      // The template caps text fields at 100 characters, while inspection
+      // notes are unrestricted. Preserve the full value in the exported PDF.
+      for (const field of form.getFields()) {
+        if (field instanceof PDFTextField) {
+          field.removeMaxLength();
+        }
+      }
       const date = new Date().toLocaleDateString("en-US");
       const roNumber = String(ro.ro_number).padStart(4, "0");
       const textValues: Record<string, string> = {
