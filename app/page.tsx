@@ -2841,6 +2841,51 @@ function DocumentView({
   onArchive: () => void;
   onDelete: () => void;
 }) {
+  const [documentPhotos, setDocumentPhotos] = useState<EstimatePhoto[]>([]);
+  const [photosLoading, setPhotosLoading] = useState(true);
+  const [photoError, setPhotoError] = useState("");
+  const [printing, setPrinting] = useState(false);
+  const documentRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDocumentPhotos([]);
+    setPhotosLoading(true);
+    setPhotoError("");
+    async function loadDocumentPhotos() {
+      try {
+        const { data, error } = await supabase.from("estimate_photos").select("*")
+          .eq("repair_order_id", ro.id).order("sort_order").order("created_at");
+        if (error) throw error;
+        const photos = await Promise.all(((data ?? []) as EstimatePhoto[]).map(async (photo) => {
+          const result = await supabase.storage.from("estimate-photos").createSignedUrl(photo.storage_path, 3600);
+          if (result.error) throw result.error;
+          return { ...photo, signed_url: result.data?.signedUrl };
+        }));
+        if (!cancelled) setDocumentPhotos(photos);
+      } catch {
+        if (!cancelled) setPhotoError("Photos could not be loaded. Reopen this document to try again before printing.");
+      } finally {
+        if (!cancelled) setPhotosLoading(false);
+      }
+    }
+    void loadDocumentPhotos();
+    return () => { cancelled = true; };
+  }, [ro.id]);
+
+  async function printDocument() {
+    setPrinting(true);
+    try {
+      const images = Array.from(documentRef.current?.querySelectorAll("img") ?? []);
+      await Promise.all(images.map((image) => image.decode()));
+      window.print();
+    } catch {
+      setPhotoError("An image could not be loaded. Reopen this document and try printing again.");
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   const items = ro.line_items ?? [];
   const customer = ro.customers;
   const vehicle = ro.vehicles;
@@ -2914,10 +2959,10 @@ function DocumentView({
             {ro.archived_at ? "Restore" : "Archive"}
           </button>
           <button className="button danger" onClick={onDelete}>Delete permanently</button>
-          <button className="button primary" onClick={() => window.print()}>Print / Save PDF</button>
+          <button className="button primary" disabled={photosLoading || printing || Boolean(photoError)} onClick={() => void printDocument()}>{photosLoading || printing ? "Loading images…" : "Print / Save PDF"}</button>
         </div>
       </div>
-      <article className={`document-page ${className} ${ro.status === "voided" ? "voided-document" : ""}`}>
+      <article ref={documentRef} className={`document-page ${className} ${ro.status === "voided" ? "voided-document" : ""}`}>
         {ro.status === "voided" && <div className="void-watermark">VOID</div>}
 
         <header className="document-header">
@@ -3136,6 +3181,26 @@ function DocumentView({
                     <b>{money(groupTotal)} not charged</b>
                   </div>
                 );
+              })}
+            </div>
+          </section>
+        )}
+
+        {photoError && <p className="message error" role="alert">{photoError}</p>}
+        {documentPhotos.length > 0 && (
+          <section className="document-photos">
+            <h3>Service photos</h3>
+            <div className="document-photo-grid">
+              {documentPhotos.map((photo) => {
+                const service = items.find((item) => item.service_group_id === photo.service_group_id);
+                const declined = hasCustomerResponse && decisions[photo.service_group_id] === "declined";
+                return <figure className="document-photo" key={photo.id}>
+                  <img src={photo.signed_url} alt={photo.caption || service?.service_group_title || "Service photo"} loading="eager" />
+                  <figcaption>
+                    <strong>{service?.service_group_title || "Service photo"}{declined ? " — Declined / not charged" : ""}</strong>
+                    {photo.caption && <span>{photo.caption}</span>}
+                  </figcaption>
+                </figure>;
               })}
             </div>
           </section>
