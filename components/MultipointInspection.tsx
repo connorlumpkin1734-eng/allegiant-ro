@@ -272,7 +272,7 @@ export function MultipointInspection({
     setExporting(true);
     setMessage("");
     try {
-      const response = await fetch("/multipoint-inspection-template.pdf");
+      const response = await fetch("/multipoint-inspection-template.pdf", { cache: "no-store" });
       if (!response.ok) throw new Error("The inspection PDF template could not be loaded.");
       const pdf = await PDFDocument.load(await response.arrayBuffer());
       const form = pdf.getForm();
