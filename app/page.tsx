@@ -82,7 +82,10 @@ type EstimatePhoto = {
   signed_url?: string;
 };
 
+type InvoiceOverrides = Record<string, { note: string; recorded_at: string; recorded_by: string }>;
+
 type RepairOrder = {
+  invoice_overrides?: InvoiceOverrides;
   id: string;
   ro_number: number;
   customer_id: string;
@@ -243,14 +246,15 @@ function hasAuthorizationResponse(
 
 function authorizedLineItems<T extends { service_group_id: string | null }>(
   items: T[],
-  authorization: EstimateAuthorization | null | undefined
+  authorization: EstimateAuthorization | null | undefined,
+  overrides: InvoiceOverrides = {}
 ): T[] {
   if (!hasAuthorizationResponse(authorization)) return items;
   const decisions = authorization.line_decisions ?? {};
-  const hasApprovedService = Object.values(decisions).includes("approved");
+  const hasApprovedService = Object.values(decisions).includes("approved") || items.some((item) => item.service_group_id && overrides[item.service_group_id]);
   return items.filter((item) =>
     item.service_group_id
-      ? decisions[item.service_group_id] === "approved"
+      ? decisions[item.service_group_id] === "approved" || Boolean(overrides[item.service_group_id])
       : hasApprovedService
   );
 }
@@ -269,7 +273,7 @@ function calculateLineItemTotals(
 }
 
 function repairOrderTotal(ro: RepairOrder): number {
-  const items = authorizedLineItems(ro.line_items ?? [], ro.latest_estimate_authorization);
+  const items = authorizedLineItems(ro.line_items ?? [], ro.latest_estimate_authorization, ro.invoice_overrides);
   return calculateLineItemTotals(items, Number(ro.tax_rate)).total;
 }
 
@@ -1348,6 +1352,8 @@ function RepairOrderEditor({
         }
       : blankVehicle;
   });
+  const [invoiceOverrides, setInvoiceOverrides] = useState<InvoiceOverrides>(initialRo?.invoice_overrides ?? {});
+  const [finalEditConfirmed, setFinalEditConfirmed] = useState(false);
   const [status, setStatus] = useState<"open" | "completed" | "voided">(initialRo?.status ?? "open");
   const [mileageIn, setMileageIn] = useState(initialRo?.mileage_in?.toString() ?? "");
   const [mileageOut, setMileageOut] = useState(initialRo?.mileage_out?.toString() ?? "");
@@ -1484,8 +1490,8 @@ function RepairOrderEditor({
     [currentAuthorization]
   );
   const invoiceItems = useMemo(
-    () => authorizedLineItems(items, currentAuthorization),
-    [items, currentAuthorization]
+    () => authorizedLineItems(items, currentAuthorization, invoiceOverrides),
+    [items, currentAuthorization, invoiceOverrides]
   );
   const invoiceTotals = useMemo(
     () => calculateLineItemTotals(invoiceItems, taxRate),
@@ -1578,6 +1584,16 @@ function RepairOrderEditor({
         groupedItem?.internal_notes ?? null
       )];
     });
+  }
+
+  function overrideInvoiceJob(groupId: string) {
+    if (!window.confirm("Override the estimate decision and include this job on the final invoice? Only continue if the customer separately authorized this work. The original signed estimate will be preserved.")) return;
+    const note = window.prompt("Record the additional authorization (this note prints on the invoice; for example: customer approved by text on Sept 19):");
+    if (!note?.trim()) return;
+    setInvoiceOverrides((current) => ({ ...current, [groupId]: {
+      note: note.trim(), recorded_at: new Date().toISOString(), recorded_by: user.id,
+    } }));
+    setMessage("Additional authorization recorded. Save Changes to update the invoice.");
   }
 
   function addServiceJob() {
@@ -1729,6 +1745,10 @@ function RepairOrderEditor({
   }
 
   async function save(previewMode?: DocumentMode) {
+    if ((initialRo?.status === "completed" || initialRo?.paid) && !finalEditConfirmed) {
+      if (!window.confirm("Override this final invoice and save changes? This updates its charges and totals. The original customer estimate approval will remain unchanged.")) return;
+      setFinalEditConfirmed(true);
+    }
     if (!customerForm.name.trim()) {
       setMessage("Customer name is required.");
       return;
@@ -1800,6 +1820,7 @@ function RepairOrderEditor({
         customer_id: customerId,
         vehicle_id: vehicleId,
         document_type: "repair_order" as DocumentType,
+        ...(initialRo?.invoice_overrides !== undefined || Object.keys(invoiceOverrides).length ? { invoice_overrides: invoiceOverrides } : {}),
         status,
         mileage_in: numberOrNull(mileageIn),
         mileage_out: numberOrNull(mileageOut),
@@ -2151,12 +2172,12 @@ function RepairOrderEditor({
             <div className="grand-total"><span>{workspaceTab === "invoice" ? "Billable total" : "Estimate total"}</span><strong>{money(displayedTotals.total)}</strong></div>
           </div>
           {workspaceTab === "invoice" && hasCustomerAuthorizationResponse && (
-            <p className="sidebar-help invoice-authorization-help">Approved services only. Declined recommendations remain documented but are not charged.</p>
+            <p className="sidebar-help invoice-authorization-help">Approved services and jobs with separately recorded authorization are billed. Other declined recommendations are not charged.</p>
           )}
           {workspaceTab === "invoice" && authorizationOverage > 0.01 && (
             <div className="invoice-authorization-warning" role="alert">
               <strong>Invoice exceeds authorization by {money(authorizationOverage)}</strong>
-              <span>Get separate customer approval before billing the additional amount.</span>
+              <span>The original signed amount is unchanged. Record separate authorization for added work before billing it.</span>
             </div>
           )}
           <section className="ro-profit-summary">
@@ -2165,7 +2186,7 @@ function RepairOrderEditor({
             <div><span>Recorded cost</span><strong>{money(profitSummary.cost)}</strong></div>
             <div className={profitSummary.profit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(profitSummary.profit)}</strong></div>
             <div className={profitSummary.margin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{profitSummary.margin.toFixed(1)}%</strong></div>
-            <small>{profitSummary.usesAuthorization ? "Approved services only." : "All currently listed services."} Labor and overhead are not deducted.</small>
+            <small>{profitSummary.usesAuthorization ? "Includes separately authorized jobs." : "All currently listed services."} Labor and overhead are not deducted.</small>
           </section>
         </aside>
       </div>
@@ -2176,7 +2197,7 @@ function RepairOrderEditor({
             <h2>{workspaceTab === "invoice" ? "Invoice service jobs" : "Service jobs"}</h2>
             <p className="muted">
               {workspaceTab === "invoice"
-                ? "Approved jobs are billed. Declined jobs stay visible here and print separately as not authorized / not charged."
+                ? "Add jobs here, then use Include on invoice to record separate customer authorization. Other declined jobs remain uncharged."
                 : `Build each repair as a job. Labor defaults to ${money(settings.default_labor_rate)}/hr and parts to ${settings.default_parts_markup}% markup.`}
             </p>
           </div>
@@ -2206,11 +2227,28 @@ function RepairOrderEditor({
                     <input value={first.service_group_title ?? ""} onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)} />
                   </label>
                   <div className="service-job-total">
-                    {customerDecision && <span className={`authorization-mark ${customerDecision}`}>{customerDecision}</span>}
+                    {invoiceOverrides[group.id] && <span className="authorization-mark approved">Separately authorized</span>}
+                    {customerDecision && <span className={`authorization-mark ${customerDecision}`}>{invoiceOverrides[group.id] ? `Originally ${customerDecision}` : customerDecision}</span>}
                     <span>Job total</span><strong>{money(jobTotal)}</strong>
                   </div>
                   <button className="button small danger" onClick={() => void deleteServiceJob(group.id)}>Delete job</button>
                 </header>
+                {hasCustomerAuthorizationResponse && (
+                  <div className="notice">
+                    {invoiceOverrides[group.id] ? (
+                      <><strong>Separate authorization: </strong>{invoiceOverrides[group.id].note}
+                        <button className="button small ghost" type="button" onClick={() => {
+                          if (!window.confirm("Remove the separate authorization? This job will follow the original estimate decision again.")) return;
+                          setInvoiceOverrides((current) => { const next = { ...current }; delete next[group.id]; return next; });
+                        }}>Remove override</button>
+                      </>
+                    ) : (
+                      <><span>{customerDecision === "approved" ? "Record separate authorization for changes to this job." : "This job is excluded from the invoice until separately authorized."}</span>
+                        <button className="button small secondary" type="button" onClick={() => overrideInvoiceJob(group.id)}>{customerDecision === "approved" ? "Record additional authorization" : "Include on invoice"}</button>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div className="service-job-narratives">
                   <label className="recommendation-story">
                     Recommendation / reason <span className="visibility-tag customer">Estimate + approval</span>
@@ -2896,9 +2934,9 @@ function DocumentView({
   const decisions = authorization?.line_decisions ?? {};
   const hasCustomerResponse = hasAuthorizationResponse(authorization);
   const decisionSummary = authorizationDecisionSummary(authorization);
-  const pricedItems = isEstimate ? items : authorizedLineItems(items, authorization);
+  const pricedItems = isEstimate ? items : authorizedLineItems(items, authorization, ro.invoice_overrides);
   const { subtotal, tax, total } = calculateLineItemTotals(pricedItems, Number(ro.tax_rate));
-  const declinedGroups = isInvoice ? declinedEstimateGroups(authorization) : [];
+  const declinedGroups = isInvoice ? declinedEstimateGroups(authorization).filter((group) => !ro.invoice_overrides?.[group.id]) : [];
   const currentStatusLabel = statusLabel(ro.status);
   const displayedItems = isInvoice && hasCustomerResponse ? pricedItems : items;
   const groupedDocumentItems = (() => {
@@ -3128,13 +3166,15 @@ function DocumentView({
             {groupedDocumentItems.map((group) => {
               const isServiceJob = Boolean(group.title);
               const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-              const decision = isServiceJob && hasCustomerResponse ? decisions[group.id] : undefined;
+              const separateAuthorization = ro.invoice_overrides?.[group.id];
+              const decision = isServiceJob && hasCustomerResponse && !separateAuthorization ? decisions[group.id] : undefined;
               return [
                 isServiceJob && (
                   <tr className={`document-job-heading ${decision ? `authorization-${decision}` : ""}`} key={`${group.id}-heading`}>
                     <td colSpan={4}>
                       <div className="document-job-title"><strong>{group.title}</strong>{decision && <span className={`authorization-mark ${decision}`}>{decision}</span>}</div>
                       {isWorkOrder && group.recommendation && <p><span>Authorized scope:</span> {group.recommendation}</p>}
+                      {isInvoice && separateAuthorization && <p><span>Separately authorized:</span> {separateAuthorization.note}</p>}
                       {isInvoice && group.workPerformed && <p><span>Work performed:</span> {group.workPerformed}</p>}
                     </td>
                     <td><strong>{money(jobTotal)}</strong></td>
@@ -3193,7 +3233,7 @@ function DocumentView({
             <div className="document-photo-grid">
               {documentPhotos.map((photo) => {
                 const service = items.find((item) => item.service_group_id === photo.service_group_id);
-                const declined = hasCustomerResponse && decisions[photo.service_group_id] === "declined";
+                const declined = hasCustomerResponse && decisions[photo.service_group_id] === "declined" && !ro.invoice_overrides?.[photo.service_group_id];
                 return <figure className="document-photo" key={photo.id}>
                   <img src={photo.signed_url} alt={photo.caption || service?.service_group_title || "Service photo"} loading="eager" />
                   <figcaption>
@@ -3247,7 +3287,7 @@ function DocumentView({
             {authorization?.signature_data && (
               <section className="invoice-authorization-signature">
                 <div>
-                  <span>Customer authorization signature</span>
+                  <span>Original estimate authorization signature</span>
                   <strong>{authorization.customer_name || customer?.name || "Customer"}</strong>
                   {authorization.responded_at && <small>Signed {new Date(authorization.responded_at).toLocaleString()}</small>}
                   <small>Authorized amount: {money(Number(authorization.approved_total || 0))}</small>
