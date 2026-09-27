@@ -37,6 +37,7 @@ type StaffMember = {
   auth_user_id: string | null;
   name: string;
   email: string;
+  employee_id: string | null;
   role: StaffRole;
   team_id: string | null;
   can_view_all_work: boolean;
@@ -3034,8 +3035,8 @@ function StaffTeamsManager({ user }: { user: User }) {
   const [newTeamName, setNewTeamName] = useState("");
   const [teamBusy, setTeamBusy] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
-  const [inviteForm, setInviteForm] = useState<{ name: string; email: string; role: StaffRole; teamId: string; canViewAllWork: boolean }>({
-    name: "", email: "", role: "technician", teamId: "", canViewAllWork: false,
+  const [inviteForm, setInviteForm] = useState<{ name: string; email: string; employeeId: string; role: StaffRole; teamId: string; canViewAllWork: boolean }>({
+    name: "", email: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false,
   });
   const [createdCredentials, setCreatedCredentials] = useState<{ email: string; password: string } | null>(null);
 
@@ -3103,6 +3104,7 @@ function StaffTeamsManager({ user }: { user: User }) {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
           name, email, role: inviteForm.role,
+          employeeId: inviteForm.employeeId.trim() || null,
           teamId: inviteForm.teamId || null,
           canViewAllWork: inviteForm.canViewAllWork,
         }),
@@ -3110,7 +3112,7 @@ function StaffTeamsManager({ user }: { user: User }) {
       const body = await response.json() as { error?: string; tempPassword?: string };
       if (!response.ok) throw new Error(body.error || "Could not create the staff account.");
       setCreatedCredentials({ email, password: body.tempPassword || "" });
-      setInviteForm({ name: "", email: "", role: "technician", teamId: "", canViewAllWork: false });
+      setInviteForm({ name: "", email: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false });
       await loadAll();
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Could not create the staff account.");
@@ -3178,12 +3180,23 @@ function StaffTeamsManager({ user }: { user: User }) {
           <div className="table-wrap" style={{ marginBottom: 20 }}>
             <table>
               <thead>
-                <tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Sees</th><th>Active</th><th></th></tr>
+                <tr><th>Name</th><th>ID</th><th>Email</th><th>Role</th><th>Team</th><th>Sees</th><th>Active</th><th></th></tr>
               </thead>
               <tbody>
                 {staff.map((member) => (
                   <tr key={member.id}>
                     <td>{member.name}</td>
+                    <td>
+                      <input
+                        defaultValue={member.employee_id || ""}
+                        placeholder="—"
+                        style={{ width: 90 }}
+                        onBlur={(event) => {
+                          const value = event.target.value.trim() || null;
+                          if (value !== member.employee_id) void updateStaff(member.id, { employee_id: value });
+                        }}
+                      />
+                    </td>
                     <td>{member.email}</td>
                     <td>
                       <select value={member.role} onChange={(event) => void updateStaff(member.id, { role: event.target.value as StaffRole })}>
@@ -3213,7 +3226,7 @@ function StaffTeamsManager({ user }: { user: User }) {
                     </td>
                   </tr>
                 ))}
-                {!staff.length && <tr><td colSpan={7} className="empty-state">No staff added yet.</td></tr>}
+                {!staff.length && <tr><td colSpan={8} className="empty-state">No staff added yet.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -3228,6 +3241,10 @@ function StaffTeamsManager({ user }: { user: User }) {
           <label>
             Email
             <input type="email" value={inviteForm.email} onChange={(event) => setInviteForm({ ...inviteForm, email: event.target.value })} />
+          </label>
+          <label>
+            Employee ID (optional)
+            <input value={inviteForm.employeeId} onChange={(event) => setInviteForm({ ...inviteForm, employeeId: event.target.value })} />
           </label>
           <label>
             Role
