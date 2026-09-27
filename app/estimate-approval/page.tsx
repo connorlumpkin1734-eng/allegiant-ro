@@ -3,7 +3,7 @@ import { PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Decision = "approved" | "declined";
 type Item = { item_type?: string; description: string; quantity: number; unit_price: number; taxable?: boolean; service_group_id?: string | null; service_group_title?: string | null; technician_story?: string | null };
-type Snapshot = { roNumber: number; customerName: string; vehicle: string; vin: string; estimateDate?: string; customerConcern?: string; items: Item[]; photos?: Array<{ service_group_id: string; caption?: string | null; url?: string | null }>; subtotal: number; tax: number; total: number; taxRate?: number; businessName: string; businessAddress?: string; businessPhone: string; businessEmail: string };
+type Snapshot = { roNumber: number; customerName: string; vehicle: string; vin: string; estimateDate?: string; customerConcern?: string; items: Item[]; photos?: Array<{ service_group_id: string; caption?: string | null; url?: string | null }>; subtotal: number; tax: number; total: number; taxRate?: number; businessName: string; businessAddress?: string; businessPhone: string; businessEmail: string; logoUrl?: string | null; primaryColor?: string; accentColor?: string; secondaryColor?: string };
 type Authorization = { status: string; estimate_snapshot: Snapshot; line_decisions?: Record<string, Decision>; approved_total?: number | null; responded_at?: string | null };
 type Group = { id: string; title: string; recommendation: string; items: Item[] };
 const money = (amount: number) => Number(amount || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -31,6 +31,13 @@ export default function EstimateApprovalPage() {
     }).catch((error: Error) => setMessage(error.message));
   }, []);
   const snapshot = authorization?.estimate_snapshot;
+  useEffect(() => {
+    if (!snapshot) return;
+    const root = document.documentElement;
+    if (snapshot.primaryColor) root.style.setProperty("--blue", snapshot.primaryColor);
+    if (snapshot.accentColor) root.style.setProperty("--red", snapshot.accentColor);
+    if (snapshot.secondaryColor) root.style.setProperty("--navy", snapshot.secondaryColor);
+  }, [snapshot]);
   const groups = useMemo(() => {
     const result: Group[] = []; const byId = new Map<string, Group>();
     for (const item of snapshot?.items ?? []) {
@@ -65,7 +72,7 @@ export default function EstimateApprovalPage() {
   }
   return <main className="approval-shell"><article className="approval-card document-page document-estimate">
     {!snapshot ? <div className="notice">{message}</div> : <>
-      <header className="document-header"><div><img className="document-logo" src="/allegiant-auto-care-logo.png" alt="Allegiant Auto Care" />{snapshot.businessAddress && <p>{snapshot.businessAddress}</p>}<p>{[snapshot.businessPhone, snapshot.businessEmail].filter(Boolean).join(" · ")}</p></div><div className="document-title"><h2>Estimate</h2><p className="document-subtitle">Proposed work and estimated pricing</p><strong>RO #{String(snapshot.roNumber).padStart(4, "0")}</strong><span>{snapshot.estimateDate ? new Date(snapshot.estimateDate).toLocaleDateString() : ""}</span></div></header>
+      <header className="document-header"><div>{snapshot.logoUrl ? <img className="document-logo" src={snapshot.logoUrl} alt={snapshot.businessName} /> : <h2 className="document-logo-text">{snapshot.businessName}</h2>}{snapshot.businessAddress && <p>{snapshot.businessAddress}</p>}<p>{[snapshot.businessPhone, snapshot.businessEmail].filter(Boolean).join(" · ")}</p></div><div className="document-title"><h2>Estimate</h2><p className="document-subtitle">Proposed work and estimated pricing</p><strong>RO #{String(snapshot.roNumber).padStart(4, "0")}</strong><span>{snapshot.estimateDate ? new Date(snapshot.estimateDate).toLocaleDateString() : ""}</span></div></header>
       <section className="document-stage-banner"><div><span className="stage-eyebrow">Proposal</span><strong>Estimated total</strong><small>{estimateDiscount > 0 ? `Includes ${money(estimateDiscount)} in discounts. Choose each service below.` : "Choose each service below."}</small></div><b>{money(snapshot.total)}</b></section>
       <div className="document-info-grid"><section><h3>Customer</h3><strong>{snapshot.customerName}</strong></section><section><h3>Vehicle</h3><strong>{snapshot.vehicle || "—"}</strong><span>VIN: {snapshot.vin || "—"}</span></section><section><h3>Estimate details</h3><span>{groups.length} proposed service{groups.length === 1 ? "" : "s"}</span></section></div>
       {snapshot.customerConcern && <section className="concern-box"><h3>Customer request / proposed work</h3><p>{snapshot.customerConcern}</p></section>}

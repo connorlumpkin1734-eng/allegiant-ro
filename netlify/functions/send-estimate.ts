@@ -76,6 +76,11 @@ export default async (request: Request) => {
   const taxable = items.reduce((sum, item) => sum + (item.taxable ? Number(item.quantity) * Number(item.unit_price) : 0), 0);
   const tax = Math.max(0, taxable) * (Number(ro.tax_rate) / 100);
   const total = subtotal + tax;
+  const logoPath = settings.logo_path as string | null | undefined;
+  const logoUrl = logoPath ? `${supabaseUrl}/storage/v1/object/public/shop-branding/${logoPath}` : null;
+  const primaryColor = (settings.primary_color as string) || "#2459a9";
+  const accentColor = (settings.accent_color as string) || "#b5222d";
+  const secondaryColor = (settings.secondary_color as string) || "#10264d";
   const snapshot = {
     roNumber: ro.ro_number,
     customerName: ro.customers?.name || "Customer",
@@ -94,6 +99,10 @@ export default async (request: Request) => {
     businessAddress: settings.business_address || "",
     businessPhone: settings.business_phone || "",
     businessEmail: settings.business_email || "",
+    logoUrl,
+    primaryColor,
+    accentColor,
+    secondaryColor,
   };
 
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
@@ -112,15 +121,18 @@ export default async (request: Request) => {
   if (!insertResponse.ok) return json({ error: `Could not create approval request: ${await insertResponse.text()}` }, 500);
 
   const money = (amount: number) => amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
+  const brandHeader = logoUrl
+    ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(snapshot.businessName)}" style="max-height:48px;max-width:280px;display:block" />`
+    : `<h1 style="margin:0">${escapeHtml(snapshot.businessName)}</h1>`;
   const emailResponse = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       from: fromEmail,
       to: [customerEmail],
-      subject: `Estimate #${String(ro.ro_number).padStart(4, "0")} from Allegiant Auto Care`,
-      text: `Hi ${snapshot.customerName},\n\nYour estimate #${String(ro.ro_number).padStart(4, "0")} for ${snapshot.vehicle} is ready. Review it and approve or decline each service here:\n\n${approvalUrl}\n\nEstimated total: ${money(total)}\n\nAllegiant Auto Care`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden"><div style="padding:24px;border-bottom:5px solid #2459a9"><h1 style="margin:0">Allegiant Auto Care</h1><p style="margin:6px 0 0;color:#64748b">Estimate #${String(ro.ro_number).padStart(4, "0")} · ${escapeHtml(snapshot.vehicle)}</p></div><div style="padding:24px"><p>Hi ${escapeHtml(snapshot.customerName)},</p><p>Your itemized estimate is ready. You can approve or decline each recommended service separately.</p><div style="background:#edf4ff;border-left:6px solid #2459a9;padding:18px;margin:22px 0"><div style="font-size:12px;font-weight:700;text-transform:uppercase">Estimated total</div><div style="font-size:30px;font-weight:800;margin-top:5px">${money(total)}</div></div><table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0"><tr><td bgcolor="#b21f2d" style="border-radius:8px"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#b21f2d;color:#ffffff;text-decoration:none;padding:15px 22px;border-radius:8px;font-weight:700">Review estimate and choose services</a></td></tr></table><p style="color:#64748b;font-size:13px">If the button does not open, tap or copy this secure link:</p><p style="font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-all"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="color:#2459a9">${escapeHtml(approvalUrl)}</a></p><p style="color:#64748b;font-size:13px">The secure estimate includes the full itemization, repair photos, and signature authorization. Additional repairs require separate approval.</p></div></div>`,
+      subject: `Estimate #${String(ro.ro_number).padStart(4, "0")} from ${snapshot.businessName}`,
+      text: `Hi ${snapshot.customerName},\n\nYour estimate #${String(ro.ro_number).padStart(4, "0")} for ${snapshot.vehicle} is ready. Review it and approve or decline each service here:\n\n${approvalUrl}\n\nEstimated total: ${money(total)}\n\n${snapshot.businessName}`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden"><div style="padding:24px;border-bottom:5px solid ${escapeHtml(primaryColor)}">${brandHeader}<p style="margin:6px 0 0;color:#64748b">Estimate #${String(ro.ro_number).padStart(4, "0")} · ${escapeHtml(snapshot.vehicle)}</p></div><div style="padding:24px"><p>Hi ${escapeHtml(snapshot.customerName)},</p><p>Your itemized estimate is ready. You can approve or decline each recommended service separately.</p><div style="background:#edf4ff;border-left:6px solid ${escapeHtml(primaryColor)};padding:18px;margin:22px 0"><div style="font-size:12px;font-weight:700;text-transform:uppercase">Estimated total</div><div style="font-size:30px;font-weight:800;margin-top:5px">${money(total)}</div></div><table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0"><tr><td bgcolor="${escapeHtml(accentColor)}" style="border-radius:8px"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:${escapeHtml(accentColor)};color:#ffffff;text-decoration:none;padding:15px 22px;border-radius:8px;font-weight:700">Review estimate and choose services</a></td></tr></table><p style="color:#64748b;font-size:13px">If the button does not open, tap or copy this secure link:</p><p style="font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-all"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="color:${escapeHtml(primaryColor)}">${escapeHtml(approvalUrl)}</a></p><p style="color:#64748b;font-size:13px">The secure estimate includes the full itemization, repair photos, and signature authorization. Additional repairs require separate approval.</p></div></div>`,
     }),
   });
   if (!emailResponse.ok) {

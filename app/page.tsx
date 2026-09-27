@@ -22,6 +22,10 @@ type Settings = {
   default_parts_markup: number;
   sales_tax_rate: number;
   invoice_footer: string;
+  primary_color: string;
+  accent_color: string;
+  secondary_color: string;
+  logo_path: string | null;
 };
 
 type Customer = {
@@ -187,7 +191,17 @@ const defaultSettings: Settings = {
   sales_tax_rate: 0,
   invoice_footer:
     "Thank you for choosing Allegiant Auto Care. Payment is due upon completion of services. Warranty coverage, when applicable, will be stated on the final invoice. Please retain this document for your records.",
+  primary_color: "#2459a9",
+  accent_color: "#b5222d",
+  secondary_color: "#10264d",
+  logo_path: null,
 };
+
+function logoPublicUrl(logoPath: string | null | undefined) {
+  if (!logoPath) return null;
+  const { data } = supabase.storage.from("shop-branding").getPublicUrl(logoPath);
+  return data.publicUrl;
+}
 
 const blankCustomer: CustomerForm = {
   name: "",
@@ -607,6 +621,13 @@ function RepairOrderApp({ user }: { user: User }) {
   }, []);
 
   useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--blue", settings.primary_color);
+    root.style.setProperty("--red", settings.accent_color);
+    root.style.setProperty("--navy", settings.secondary_color);
+  }, [settings.primary_color, settings.accent_color, settings.secondary_color]);
+
+  useEffect(() => {
     const refreshWhenReturning = () => {
       if (document.visibilityState === "visible" && view !== "editor") void loadData(false);
     };
@@ -915,11 +936,16 @@ function RepairOrderApp({ user }: { user: User }) {
     <div className="app-shell">
       <header className="topbar no-print">
         <button className="brand-button" type="button" onClick={() => setView("dashboard")}>
-          <img
-            className="topbar-logo"
-            src="/allegiant-auto-care-logo.png"
-            alt="Allegiant Auto Care"
-          />
+          {logoPublicUrl(settings.logo_path) ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              className="topbar-logo"
+              src={logoPublicUrl(settings.logo_path) ?? undefined}
+              alt={settings.business_name}
+            />
+          ) : (
+            <span className="topbar-logo-text">{settings.business_name}</span>
+          )}
         </button>
         <nav>
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
@@ -2792,6 +2818,15 @@ function SettingsPanel({
   const [form, setForm] = useState<Settings>(initialSettings);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [logoUploading, setLogoUploading] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--blue", form.primary_color);
+    root.style.setProperty("--red", form.accent_color);
+    root.style.setProperty("--navy", form.secondary_color);
+  }, [form.primary_color, form.accent_color, form.secondary_color]);
 
   async function save() {
     setBusy(true);
@@ -2806,12 +2841,39 @@ function SettingsPanel({
     onSaved();
   }
 
+  async function uploadLogo(file: File) {
+    setLogoUploading(true);
+    setMessage("");
+    const extension = file.name.split(".").pop()?.toLowerCase() || "png";
+    const path = `${user.id}/logo-${Date.now()}.${extension}`;
+    const previousPath = form.logo_path;
+    const { error } = await supabase.storage.from("shop-branding").upload(path, file, { contentType: file.type });
+    if (error) {
+      setMessage(error.message);
+      setLogoUploading(false);
+      return;
+    }
+    if (previousPath) await supabase.storage.from("shop-branding").remove([previousPath]);
+    setForm((current) => ({ ...current, logo_path: path }));
+    setLogoUploading(false);
+  }
+
+  async function removeLogo() {
+    if (!form.logo_path) return;
+    setLogoUploading(true);
+    await supabase.storage.from("shop-branding").remove([form.logo_path]);
+    setForm((current) => ({ ...current, logo_path: null }));
+    setLogoUploading(false);
+  }
+
+  const logoUrl = logoPublicUrl(form.logo_path);
+
   return (
     <section>
       <div className="page-heading">
         <div>
           <h1>Settings</h1>
-          <p>Business information and default pricing.</p>
+          <p>Business information, branding, and default pricing.</p>
         </div>
         <button className="button primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</button>
       </div>
@@ -2849,6 +2911,62 @@ function SettingsPanel({
           <label className="span-two">
             Document footer
             <textarea rows={5} value={form.invoice_footer} onChange={(event) => setForm({ ...form, invoice_footer: event.target.value })} />
+          </label>
+        </div>
+      </div>
+
+      <div className="panel settings-panel">
+        <h2 style={{ marginTop: 0 }}>Branding</h2>
+        <div className="form-grid two">
+          <label>
+            Primary color
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="color" value={form.primary_color} onChange={(event) => setForm({ ...form, primary_color: event.target.value })} style={{ width: 44, height: 36, padding: 2 }} />
+              <input value={form.primary_color} onChange={(event) => setForm({ ...form, primary_color: event.target.value })} style={{ flex: 1 }} />
+            </div>
+          </label>
+          <label>
+            Accent color
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="color" value={form.accent_color} onChange={(event) => setForm({ ...form, accent_color: event.target.value })} style={{ width: 44, height: 36, padding: 2 }} />
+              <input value={form.accent_color} onChange={(event) => setForm({ ...form, accent_color: event.target.value })} style={{ flex: 1 }} />
+            </div>
+          </label>
+          <label>
+            Secondary color
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="color" value={form.secondary_color} onChange={(event) => setForm({ ...form, secondary_color: event.target.value })} style={{ width: 44, height: 36, padding: 2 }} />
+              <input value={form.secondary_color} onChange={(event) => setForm({ ...form, secondary_color: event.target.value })} style={{ flex: 1 }} />
+            </div>
+          </label>
+          <label className="span-two">
+            Logo
+            <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 6 }}>
+              {logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={logoUrl} alt="Shop logo" style={{ maxHeight: 64, maxWidth: 220, objectFit: "contain", background: "#fff", borderRadius: 8, padding: 6, border: "1px solid var(--line)" }} />
+              ) : (
+                <div className="muted" style={{ fontSize: 13 }}>No logo uploaded — documents will show your business name as text.</div>
+              )}
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                style={{ display: "none" }}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void uploadLogo(file);
+                  event.target.value = "";
+                }}
+              />
+              <button type="button" className="button secondary" disabled={logoUploading} onClick={() => logoInputRef.current?.click()}>
+                {logoUploading ? "Working…" : logoUrl ? "Replace logo" : "Upload logo"}
+              </button>
+              {logoUrl && (
+                <button type="button" className="button ghost" disabled={logoUploading} onClick={() => void removeLogo()}>Remove</button>
+              )}
+            </div>
+            <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>PNG, JPG, WEBP, or SVG. Shown on estimates, work orders, invoices, and customer emails.</p>
           </label>
         </div>
       </div>
@@ -3005,7 +3123,12 @@ function DocumentView({
 
         <header className="document-header">
           <div>
-            <img className="document-logo" src="/allegiant-auto-care-logo.png" alt="Allegiant Auto Care" />
+            {logoPublicUrl(settings.logo_path) ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className="document-logo" src={logoPublicUrl(settings.logo_path) ?? undefined} alt={settings.business_name} />
+            ) : (
+              <h2 className="document-logo-text">{settings.business_name}</h2>
+            )}
             {settings.business_address && <p>{settings.business_address}</p>}
             <p>{[settings.business_phone, settings.business_email].filter(Boolean).join(" · ")}</p>
           </div>
