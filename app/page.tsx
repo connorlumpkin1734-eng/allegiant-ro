@@ -26,6 +26,21 @@ type Settings = {
   accent_color: string;
   secondary_color: string;
   logo_path: string | null;
+  team_features_enabled: boolean;
+  techs_can_price: boolean;
+};
+
+type StaffRole = "technician" | "service_advisor";
+type Team = { id: string; name: string };
+type StaffMember = {
+  id: string;
+  auth_user_id: string | null;
+  name: string;
+  email: string;
+  role: StaffRole;
+  team_id: string | null;
+  can_view_all_work: boolean;
+  active: boolean;
 };
 
 type Customer = {
@@ -195,6 +210,8 @@ const defaultSettings: Settings = {
   accent_color: "#b5222d",
   secondary_color: "#10264d",
   logo_path: null,
+  team_features_enabled: false,
+  techs_can_price: true,
 };
 
 function logoPublicUrl(logoPath: string | null | undefined) {
@@ -2970,7 +2987,276 @@ function SettingsPanel({
           </label>
         </div>
       </div>
+
+      <div className="panel settings-panel">
+        <h2 style={{ marginTop: 0 }}>Staff accounts</h2>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={form.team_features_enabled}
+            onChange={(event) => setForm({ ...form, team_features_enabled: event.target.checked })}
+          />
+          <span>
+            <strong>Enable technician &amp; service advisor logins</strong>
+            <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+              Turn this on to invite technicians and service advisors with their own logins and assign them work.
+              Leave it off if you&apos;re running this shop solo — nothing changes for you.
+            </p>
+          </span>
+        </label>
+        {form.team_features_enabled && (
+          <label className="checkbox-row" style={{ marginTop: 14 }}>
+            <input
+              type="checkbox"
+              checked={form.techs_can_price}
+              onChange={(event) => setForm({ ...form, techs_can_price: event.target.checked })}
+            />
+            <span>
+              <strong>Technicians can price the parts they add</strong>
+              <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+                Technicians never see or change the labor rate or parts markup. This only controls whether they can enter a price on parts they log.
+              </p>
+            </span>
+          </label>
+        )}
+      </div>
+
+      {form.team_features_enabled && <StaffTeamsManager user={user} />}
     </section>
+  );
+}
+
+function StaffTeamsManager({ user }: { user: User }) {
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const [newTeamName, setNewTeamName] = useState("");
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteForm, setInviteForm] = useState<{ name: string; email: string; role: StaffRole; teamId: string; canViewAllWork: boolean }>({
+    name: "", email: "", role: "technician", teamId: "", canViewAllWork: false,
+  });
+  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; password: string } | null>(null);
+
+  async function loadAll() {
+    setLoading(true);
+    const [teamsResult, staffResult] = await Promise.all([
+      supabase.from("teams").select("*").order("name"),
+      supabase.from("staff").select("*").order("name"),
+    ]);
+    if (teamsResult.error) setMessage(teamsResult.error.message);
+    else if (staffResult.error) setMessage(staffResult.error.message);
+    setTeams((teamsResult.data ?? []) as Team[]);
+    setStaff((staffResult.data ?? []) as StaffMember[]);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function addTeam() {
+    const name = newTeamName.trim();
+    if (!name) return;
+    setTeamBusy(true);
+    setMessage("");
+    const { error } = await supabase.from("teams").insert({ name, owner_id: user.id });
+    if (error) setMessage(error.message);
+    else setNewTeamName("");
+    await loadAll();
+    setTeamBusy(false);
+  }
+
+  async function deleteTeam(id: string) {
+    setTeamBusy(true);
+    const { error } = await supabase.from("teams").delete().eq("id", id);
+    if (error) setMessage(error.message);
+    await loadAll();
+    setTeamBusy(false);
+  }
+
+  async function updateStaff(id: string, patch: Partial<StaffMember>) {
+    setMessage("");
+    const { error } = await supabase.from("staff").update(patch).eq("id", id);
+    if (error) setMessage(error.message);
+    await loadAll();
+  }
+
+  async function inviteStaff() {
+    const name = inviteForm.name.trim();
+    const email = inviteForm.email.trim();
+    if (!name || !email) {
+      setMessage("Enter a name and email.");
+      return;
+    }
+    setInviteBusy(true);
+    setMessage("");
+    setCreatedCredentials(null);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/invite-staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          name, email, role: inviteForm.role,
+          teamId: inviteForm.teamId || null,
+          canViewAllWork: inviteForm.canViewAllWork,
+        }),
+      });
+      const body = await response.json() as { error?: string; tempPassword?: string };
+      if (!response.ok) throw new Error(body.error || "Could not create the staff account.");
+      setCreatedCredentials({ email, password: body.tempPassword || "" });
+      setInviteForm({ name: "", email: "", role: "technician", teamId: "", canViewAllWork: false });
+      await loadAll();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not create the staff account.");
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+
+  async function removeStaff(id: string) {
+    if (!confirm("Remove this staff member? Their login will be deleted.")) return;
+    setMessage("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/remove-staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ staffId: id }),
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not remove that staff member.");
+      await loadAll();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not remove that staff member.");
+    }
+  }
+
+  return (
+    <>
+      <div className="panel settings-panel">
+        <h2 style={{ marginTop: 0 }}>Teams</h2>
+        <p className="muted" style={{ marginTop: -6, fontSize: 13 }}>Optional. Group technicians together — useful for larger shops, skip it if you don&apos;t need it.</p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+          {teams.map((team) => (
+            <span key={team.id} className="badge neutral" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              {team.name}
+              <button type="button" className="button ghost small" disabled={teamBusy} onClick={() => void deleteTeam(team.id)} style={{ padding: "2px 6px" }}>✕</button>
+            </span>
+          ))}
+          {!teams.length && <span className="muted" style={{ fontSize: 13 }}>No teams yet.</span>}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input placeholder="New team name" value={newTeamName} onChange={(event) => setNewTeamName(event.target.value)} style={{ flex: 1 }} />
+          <button type="button" className="button secondary" disabled={teamBusy || !newTeamName.trim()} onClick={() => void addTeam()}>Add team</button>
+        </div>
+      </div>
+
+      <div className="panel settings-panel">
+        <h2 style={{ marginTop: 0 }}>Staff</h2>
+        {message && <div className="notice">{message}</div>}
+        {createdCredentials && (
+          <div className="notice" style={{ background: "#edf4ff", borderColor: "var(--blue)" }}>
+            <strong>Account created for {createdCredentials.email}</strong>
+            <p style={{ margin: "6px 0" }}>Temporary password (copy this now — it won&apos;t be shown again):</p>
+            <code style={{ fontSize: 16, fontWeight: 700, userSelect: "all" }}>{createdCredentials.password}</code>
+            <p className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>Give this to them so they can log in. They can change their password after signing in.</p>
+            <button type="button" className="button ghost small" style={{ marginTop: 8 }} onClick={() => setCreatedCredentials(null)}>Dismiss</button>
+          </div>
+        )}
+
+        {loading ? (
+          <p className="muted">Loading…</p>
+        ) : (
+          <div className="table-wrap" style={{ marginBottom: 20 }}>
+            <table>
+              <thead>
+                <tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Sees</th><th>Active</th><th></th></tr>
+              </thead>
+              <tbody>
+                {staff.map((member) => (
+                  <tr key={member.id}>
+                    <td>{member.name}</td>
+                    <td>{member.email}</td>
+                    <td>
+                      <select value={member.role} onChange={(event) => void updateStaff(member.id, { role: event.target.value as StaffRole })}>
+                        <option value="technician">Technician</option>
+                        <option value="service_advisor">Service advisor</option>
+                      </select>
+                    </td>
+                    <td>
+                      <select value={member.team_id || ""} onChange={(event) => void updateStaff(member.id, { team_id: event.target.value || null })}>
+                        <option value="">No team</option>
+                        {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <select value={member.can_view_all_work ? "all" : "own"} onChange={(event) => void updateStaff(member.id, { can_view_all_work: event.target.value === "all" })}>
+                        <option value="own">{member.role === "technician" ? "Assigned jobs only" : "Their own ROs only"}</option>
+                        <option value="all">All shop work</option>
+                      </select>
+                    </td>
+                    <td>
+                      <button type="button" className={`button small ${member.active ? "secondary" : "warning"}`} onClick={() => void updateStaff(member.id, { active: !member.active })}>
+                        {member.active ? "Active" : "Inactive"}
+                      </button>
+                    </td>
+                    <td>
+                      <button type="button" className="button small danger" onClick={() => void removeStaff(member.id)}>Remove</button>
+                    </td>
+                  </tr>
+                ))}
+                {!staff.length && <tr><td colSpan={7} className="empty-state">No staff added yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <h3>Add staff</h3>
+        <div className="form-grid two">
+          <label>
+            Name
+            <input value={inviteForm.name} onChange={(event) => setInviteForm({ ...inviteForm, name: event.target.value })} />
+          </label>
+          <label>
+            Email
+            <input type="email" value={inviteForm.email} onChange={(event) => setInviteForm({ ...inviteForm, email: event.target.value })} />
+          </label>
+          <label>
+            Role
+            <select value={inviteForm.role} onChange={(event) => setInviteForm({ ...inviteForm, role: event.target.value as StaffRole })}>
+              <option value="technician">Technician</option>
+              <option value="service_advisor">Service advisor</option>
+            </select>
+          </label>
+          <label>
+            Team (optional)
+            <select value={inviteForm.teamId} onChange={(event) => setInviteForm({ ...inviteForm, teamId: event.target.value })}>
+              <option value="">No team</option>
+              {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+            </select>
+          </label>
+          <label className="checkbox-row span-two">
+            <input
+              type="checkbox"
+              checked={inviteForm.canViewAllWork}
+              onChange={(event) => setInviteForm({ ...inviteForm, canViewAllWork: event.target.checked })}
+            />
+            <span>Can see all shop work (not just their own assigned/created work)</span>
+          </label>
+        </div>
+        <button type="button" className="button primary" disabled={inviteBusy} onClick={() => void inviteStaff()} style={{ marginTop: 12 }}>
+          {inviteBusy ? "Creating…" : "Create staff account"}
+        </button>
+      </div>
+    </>
   );
 }
 
