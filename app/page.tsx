@@ -28,6 +28,11 @@ type Settings = {
   logo_path: string | null;
   team_features_enabled: boolean;
   techs_can_price: boolean;
+  stripe_account_id: string | null;
+  stripe_account_type: "express" | "standard" | null;
+  stripe_onboarding_complete: boolean;
+  stripe_charges_enabled: boolean;
+  stripe_payouts_enabled: boolean;
 };
 
 type StaffRole = "technician" | "service_advisor";
@@ -214,6 +219,11 @@ const defaultSettings: Settings = {
   logo_path: null,
   team_features_enabled: false,
   techs_can_price: true,
+  stripe_account_id: null,
+  stripe_account_type: null,
+  stripe_onboarding_complete: false,
+  stripe_charges_enabled: false,
+  stripe_payouts_enabled: false,
 };
 
 function logoPublicUrl(logoPath: string | null | undefined) {
@@ -659,6 +669,8 @@ function RepairOrderApp({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [stripeOAuthCode, setStripeOAuthCode] = useState<string | null>(null);
+  const [stripeReturnPending, setStripeReturnPending] = useState(false);
 
   async function loadData(showLoading = true) {
     if (showLoading) setLoading(true);
@@ -754,6 +766,26 @@ function RepairOrderApp({ user }: { user: User }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffResolved, isAdminAccess, view]);
+
+  useEffect(() => {
+    // Landing back here after Stripe onboarding (Express account link, or Standard OAuth) —
+    // jump straight to Settings so the Payments panel can pick up where it left off, and strip
+    // the query string so a page refresh doesn't try to redeem the same one-time code twice.
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const stripeOAuth = params.get("stripe_oauth");
+    const stripeReturn = params.get("stripe");
+    if (stripeOAuth && code) {
+      setStripeOAuthCode(code);
+      setView("settings");
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (stripeReturn === "return" || stripeReturn === "refresh") {
+      setStripeReturnPending(true);
+      setView("settings");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -1186,10 +1218,15 @@ function RepairOrderApp({ user }: { user: User }) {
             user={user}
             ownerId={ownerId}
             initialSettings={settings}
+            pendingStripeOAuthCode={stripeOAuthCode}
+            onStripeOAuthCodeHandled={() => setStripeOAuthCode(null)}
+            stripeReturnPending={stripeReturnPending}
+            onStripeReturnHandled={() => setStripeReturnPending(false)}
             onSaved={async () => {
               await loadData();
               setView("dashboard");
             }}
+            onStripeStatusChanged={() => void loadData(false)}
           />
         ) : view === "inspection" && selectedRo ? (
           <MultipointInspection ro={selectedRo} userId={ownerId} onBack={returnFromInspection} />
@@ -3092,16 +3129,210 @@ function CustomerProfile({
   );
 }
 
+function PaymentsPanel({
+  ownerId,
+  settings,
+  pendingStripeOAuthCode,
+  onStripeOAuthCodeHandled,
+  stripeReturnPending,
+  onStripeReturnHandled,
+  onStatusChanged,
+}: {
+  ownerId: string;
+  settings: Settings;
+  pendingStripeOAuthCode: string | null;
+  onStripeOAuthCodeHandled: () => void;
+  stripeReturnPending: boolean;
+  onStripeReturnHandled: () => void;
+  onStatusChanged: () => void;
+}) {
+  const [status, setStatus] = useState({
+    accountId: settings.stripe_account_id,
+    accountType: settings.stripe_account_type,
+    onboardingComplete: settings.stripe_onboarding_complete,
+    chargesEnabled: settings.stripe_charges_enabled,
+    payoutsEnabled: settings.stripe_payouts_enabled,
+  });
+  const [busy, setBusy] = useState<"" | "express" | "standard" | "refresh">("");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setStatus({
+      accountId: settings.stripe_account_id,
+      accountType: settings.stripe_account_type,
+      onboardingComplete: settings.stripe_onboarding_complete,
+      chargesEnabled: settings.stripe_charges_enabled,
+      payoutsEnabled: settings.stripe_payouts_enabled,
+    });
+  }, [settings.stripe_account_id, settings.stripe_account_type, settings.stripe_onboarding_complete, settings.stripe_charges_enabled, settings.stripe_payouts_enabled]);
+
+  async function authHeader() {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (!accessToken) throw new Error("Your session expired. Sign in again.");
+    return { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` };
+  }
+
+  async function connect(accountType: "express" | "standard") {
+    setBusy(accountType);
+    setMessage("");
+    try {
+      const headers = await authHeader();
+      const response = await fetch("/.netlify/functions/stripe-connect-onboard", {
+        method: "POST", headers, body: JSON.stringify({ accountType }),
+      });
+      const body = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !body.url) throw new Error(body.error || "Could not start Stripe onboarding.");
+      window.location.href = body.url;
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not start Stripe onboarding.");
+      setBusy("");
+    }
+  }
+
+  async function refreshStatus() {
+    setBusy("refresh");
+    setMessage("");
+    try {
+      const headers = await authHeader();
+      const response = await fetch("/.netlify/functions/stripe-connect-status", { method: "POST", headers });
+      const body = await response.json() as { connected?: boolean; stripe_onboarding_complete?: boolean; stripe_charges_enabled?: boolean; stripe_payouts_enabled?: boolean; error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not check Stripe status.");
+      if (body.connected) {
+        setStatus((current) => ({
+          ...current,
+          onboardingComplete: Boolean(body.stripe_onboarding_complete),
+          chargesEnabled: Boolean(body.stripe_charges_enabled),
+          payoutsEnabled: Boolean(body.stripe_payouts_enabled),
+        }));
+      }
+      onStatusChanged();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not check Stripe status.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  useEffect(() => {
+    if (stripeReturnPending) {
+      onStripeReturnHandled();
+      void refreshStatus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stripeReturnPending]);
+
+  useEffect(() => {
+    if (!pendingStripeOAuthCode) return;
+    const code = pendingStripeOAuthCode;
+    onStripeOAuthCodeHandled();
+    (async () => {
+      setBusy("standard");
+      setMessage("");
+      try {
+        const headers = await authHeader();
+        const response = await fetch("/.netlify/functions/stripe-connect-oauth-callback", {
+          method: "POST", headers, body: JSON.stringify({ code }),
+        });
+        const body = await response.json() as { connected?: boolean; stripe_charges_enabled?: boolean; stripe_payouts_enabled?: boolean; stripe_onboarding_complete?: boolean; error?: string };
+        if (!response.ok) throw new Error(body.error || "Stripe did not authorize the connection.");
+        setStatus({
+          accountId: "connected",
+          accountType: "standard",
+          onboardingComplete: Boolean(body.stripe_onboarding_complete),
+          chargesEnabled: Boolean(body.stripe_charges_enabled),
+          payoutsEnabled: Boolean(body.stripe_payouts_enabled),
+        });
+        setMessage("Stripe account connected.");
+        onStatusChanged();
+      } catch (caught) {
+        setMessage(caught instanceof Error ? caught.message : "Stripe did not authorize the connection.");
+      } finally {
+        setBusy("");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingStripeOAuthCode]);
+
+  const connected = Boolean(status.accountId);
+  const fullyReady = connected && status.onboardingComplete && status.chargesEnabled;
+
+  return (
+    <div className="panel settings-panel">
+      <h2 style={{ marginTop: 0 }}>Payments</h2>
+      <p className="muted" style={{ marginTop: -6, fontSize: 13 }}>
+        Connect your shop&apos;s own Stripe account so customer card and bank-transfer (ACH) payments go straight to your
+        bank. Money never passes through us — we don&apos;t hold or move your funds.
+      </p>
+      {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}
+
+      {!connected ? (
+        <div style={{ marginTop: 14, display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 260px", border: "1px solid #e7eaf0", borderRadius: 10, padding: 16 }}>
+            <strong>Quick setup</strong>
+            <p className="muted" style={{ fontSize: 13, margin: "6px 0 12px" }}>
+              A few minutes, Stripe-hosted signup. Best if you don&apos;t already use Stripe for anything else.
+            </p>
+            <button type="button" className="button primary" disabled={busy !== ""} onClick={() => void connect("express")}>
+              {busy === "express" ? "Starting…" : "Connect with Stripe"}
+            </button>
+          </div>
+          <div style={{ flex: "1 1 260px", border: "1px solid #e7eaf0", borderRadius: 10, padding: 16 }}>
+            <strong>I already have Stripe</strong>
+            <p className="muted" style={{ fontSize: 13, margin: "6px 0 12px" }}>
+              Log into your existing Stripe account and link it directly — full control stays in your own Stripe dashboard.
+            </p>
+            <button type="button" className="button secondary" disabled={busy !== ""} onClick={() => void connect("standard")}>
+              {busy === "standard" ? "Starting…" : "Connect existing Stripe account"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span className={`button small ${fullyReady ? "primary" : "ghost"}`} style={{ pointerEvents: "none" }}>
+              {fullyReady ? "Connected & ready" : status.onboardingComplete ? "Connected — verification pending" : "Onboarding not finished"}
+            </span>
+            <span className="muted" style={{ fontSize: 13 }}>
+              {status.accountType === "standard" ? "Standard account" : "Express account"} · Charges {status.chargesEnabled ? "enabled" : "disabled"} · Payouts {status.payoutsEnabled ? "enabled" : "disabled"}
+            </span>
+          </div>
+          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {!fullyReady && status.accountType === "express" && (
+              <button type="button" className="button primary" disabled={busy !== ""} onClick={() => void connect("express")}>
+                {busy === "express" ? "Starting…" : "Continue onboarding"}
+              </button>
+            )}
+            <button type="button" className="button secondary" disabled={busy !== ""} onClick={() => void refreshStatus()}>
+              {busy === "refresh" ? "Checking…" : "Refresh status"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsPanel({
   user,
   ownerId,
   initialSettings,
   onSaved,
+  pendingStripeOAuthCode,
+  onStripeOAuthCodeHandled,
+  stripeReturnPending,
+  onStripeReturnHandled,
+  onStripeStatusChanged,
 }: {
   user: User;
   ownerId: string;
   initialSettings: Settings;
   onSaved: () => void;
+  pendingStripeOAuthCode: string | null;
+  onStripeOAuthCodeHandled: () => void;
+  stripeReturnPending: boolean;
+  onStripeReturnHandled: () => void;
+  onStripeStatusChanged: () => void;
 }) {
   const [form, setForm] = useState<Settings>(initialSettings);
   const [busy, setBusy] = useState(false);
@@ -3258,6 +3489,16 @@ function SettingsPanel({
           </label>
         </div>
       </div>
+
+      <PaymentsPanel
+        ownerId={ownerId}
+        settings={initialSettings}
+        pendingStripeOAuthCode={pendingStripeOAuthCode}
+        onStripeOAuthCodeHandled={onStripeOAuthCodeHandled}
+        stripeReturnPending={stripeReturnPending}
+        onStripeReturnHandled={onStripeReturnHandled}
+        onStatusChanged={onStripeStatusChanged}
+      />
 
       <div className="panel settings-panel">
         <h2 style={{ marginTop: 0 }}>Staff accounts</h2>
@@ -3593,7 +3834,33 @@ function DocumentView({
   const [photosLoading, setPhotosLoading] = useState(true);
   const [photoError, setPhotoError] = useState("");
   const [printing, setPrinting] = useState(false);
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [paymentLink, setPaymentLink] = useState("");
+  const [paymentError, setPaymentError] = useState("");
   const documentRef = useRef<HTMLElement>(null);
+
+  async function collectPayment() {
+    setPaymentBusy(true);
+    setPaymentError("");
+    setPaymentLink("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/create-payment-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ repairOrderId: ro.id }),
+      });
+      const body = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !body.url) throw new Error(body.error || "Could not start a payment.");
+      setPaymentLink(body.url);
+    } catch (caught) {
+      setPaymentError(caught instanceof Error ? caught.message : "Could not start a payment.");
+    } finally {
+      setPaymentBusy(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -3707,9 +3974,28 @@ function DocumentView({
             {ro.archived_at ? "Restore" : "Archive"}
           </button>
           <button className="button danger" onClick={onDelete}>Delete permanently</button>
+          {isInvoice && !ro.paid && ro.status !== "voided" && settings.stripe_charges_enabled && (
+            <button className="button success" disabled={paymentBusy} onClick={() => void collectPayment()}>
+              {paymentBusy ? "Starting…" : "Collect payment"}
+            </button>
+          )}
           <button className="button primary" disabled={photosLoading || printing || Boolean(photoError)} onClick={() => void printDocument()}>{photosLoading || printing ? "Loading images…" : "Print / Save PDF"}</button>
         </div>
       </div>
+      {(paymentLink || paymentError) && (
+        <div className={`no-print ${paymentError ? "error-banner" : "notice"}`} style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {paymentError ? (
+            <span>{paymentError}</span>
+          ) : (
+            <>
+              <span>Payment link ready — copy it to the customer, or open it to take payment right now:</span>
+              <input readOnly value={paymentLink} onFocus={(event) => event.target.select()} style={{ flex: "1 1 320px", minWidth: 220 }} />
+              <button type="button" className="button secondary" onClick={() => void navigator.clipboard.writeText(paymentLink)}>Copy link</button>
+              <a className="button primary" href={paymentLink} target="_blank" rel="noopener noreferrer">Open</a>
+            </>
+          )}
+        </div>
+      )}
       <article ref={documentRef} className={`document-page ${className} ${ro.status === "voided" ? "voided-document" : ""}`}>
         {ro.status === "voided" && <div className="void-watermark">VOID</div>}
 
