@@ -539,7 +539,9 @@ tbody tr:hover { background: #f8fafc; }
   display: block;
   width: 360px;
   max-width: 100%;
-  height: auto;
+  height: 110px;
+  object-fit: contain;
+  object-position: left top;
   margin-bottom: 14px;
 }
 
@@ -556,12 +558,14 @@ tbody tr:hover { background: #f8fafc; }
 
   .document-logo {
     width: 280px;
+    height: 90px;
   }
 }
 
 @media print {
   .document-logo {
     width: 300px;
+    height: 90px;
     margin-bottom: 8px;
   }
 }
