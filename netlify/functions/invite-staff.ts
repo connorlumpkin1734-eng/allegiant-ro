@@ -30,7 +30,7 @@ export default async (request: Request) => {
   const owner = await userResponse.json() as { id: string };
 
   const body = await request.json().catch(() => ({})) as {
-    name?: string; email?: string; employeeId?: string | null; role?: string; teamId?: string | null; canViewAllWork?: boolean;
+    name?: string; email?: string; employeeId?: string | null; role?: string; teamId?: string | null; canViewAllWork?: boolean; isAdmin?: boolean;
   };
   const name = (body.name || "").trim();
   const email = (body.email || "").trim().toLowerCase();
@@ -70,6 +70,7 @@ export default async (request: Request) => {
       role,
       team_id: body.teamId || null,
       can_view_all_work: Boolean(body.canViewAllWork),
+      is_admin: Boolean(body.isAdmin),
       active: true,
     }),
   });

@@ -41,6 +41,7 @@ type StaffMember = {
   role: StaffRole;
   team_id: string | null;
   can_view_all_work: boolean;
+  is_admin: boolean;
   active: boolean;
 };
 
@@ -550,8 +551,22 @@ function AuthScreen() {
   );
 }
 
+type CurrentStaff = {
+  id: string;
+  owner_id: string;
+  role: StaffRole;
+  can_view_all_work: boolean;
+  is_admin: boolean;
+};
+
 function RepairOrderApp({ user }: { user: User }) {
   const [view, setView] = useState<View>("dashboard");
+  const [currentStaff, setCurrentStaff] = useState<CurrentStaff | null>(null);
+  const [staffResolved, setStaffResolved] = useState(false);
+  const isOwner = !currentStaff;
+  const isAdminAccess = isOwner || Boolean(currentStaff?.is_admin);
+  const isTechnicianOnly = Boolean(currentStaff) && currentStaff!.role === "technician" && !currentStaff!.is_admin;
+  const ownerId = currentStaff?.owner_id ?? user.id;
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -597,7 +612,7 @@ function RepairOrderApp({ user }: { user: User }) {
     }
 
     let loadedSettings = settingsResult.data as Settings | null;
-    if (!loadedSettings) {
+    if (!loadedSettings && isOwner) {
       const { data, error: insertError } = await supabase
         .from("settings")
         .insert({ ...defaultSettings, owner_id: user.id })
@@ -637,6 +652,32 @@ function RepairOrderApp({ user }: { user: User }) {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from("staff")
+      .select("id, owner_id, role, can_view_all_work, is_admin")
+      .eq("auth_user_id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        setCurrentStaff((data as CurrentStaff | null) ?? null);
+        setStaffResolved(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  useEffect(() => {
+    // A staff login should never land on an owner-only screen — bounce back to the dashboard.
+    if (staffResolved && !isAdminAccess && view === "settings") {
+      setView("dashboard");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffResolved, isAdminAccess, view]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -969,13 +1010,17 @@ function RepairOrderApp({ user }: { user: User }) {
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             Work Orders
           </button>
-          <button onClick={() => startNew()}>New Work Order</button>
-          <button className={view === "customers" || view === "customer_profile" ? "active" : ""} onClick={() => setView("customers")}>
-            Customers
-          </button>
-          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
-            Settings
-          </button>
+          {!isTechnicianOnly && <button onClick={() => startNew()}>New Work Order</button>}
+          {!isTechnicianOnly && (
+            <button className={view === "customers" || view === "customer_profile" ? "active" : ""} onClick={() => setView("customers")}>
+              Customers
+            </button>
+          )}
+          {isAdminAccess && (
+            <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
+              Settings
+            </button>
+          )}
         </nav>
         <button className="button secondary" onClick={() => supabase.auth.signOut()}>
           Sign out
@@ -1007,6 +1052,7 @@ function RepairOrderApp({ user }: { user: User }) {
           <RepairOrderEditor
             key={`${editingRo?.id ?? "new-repair-order"}-${editorVersion}`}
             user={user}
+            ownerId={ownerId}
             settings={settings}
             customers={customers}
             vehicles={vehicles}
@@ -1053,9 +1099,10 @@ function RepairOrderApp({ user }: { user: User }) {
             onArchive={toggleArchiveCustomer}
             onDelete={deleteCustomer}
           />
-        ) : view === "settings" ? (
+        ) : view === "settings" && isAdminAccess ? (
           <SettingsPanel
             user={user}
+            ownerId={ownerId}
             initialSettings={settings}
             onSaved={async () => {
               await loadData();
@@ -1063,7 +1110,7 @@ function RepairOrderApp({ user }: { user: User }) {
             }}
           />
         ) : view === "inspection" && selectedRo ? (
-          <MultipointInspection ro={selectedRo} userId={user.id} onBack={returnFromInspection} />
+          <MultipointInspection ro={selectedRo} userId={ownerId} onBack={returnFromInspection} />
         ) : selectedRo ? (
           <DocumentView
             ro={selectedRo}
@@ -1334,6 +1381,7 @@ function Dashboard({
 
 function RepairOrderEditor({
   user,
+  ownerId,
   settings,
   customers,
   vehicles,
@@ -1346,6 +1394,7 @@ function RepairOrderEditor({
   onSaved,
 }: {
   user: User;
+  ownerId: string;
   settings: Settings;
   customers: Customer[];
   vehicles: Vehicle[];
@@ -1811,7 +1860,7 @@ function RepairOrderEditor({
 
     try {
       const customerPayload = {
-        owner_id: user.id,
+        owner_id: ownerId,
         name: customerForm.name.trim(),
         address_line_1: valueOrNull(customerForm.address_line_1),
         address_line_2: valueOrNull(customerForm.address_line_2),
@@ -1834,7 +1883,7 @@ function RepairOrderEditor({
       }
 
       const vehiclePayload = {
-        owner_id: user.id,
+        owner_id: ownerId,
         customer_id: customerId,
         year: numberOrNull(vehicleForm.year),
         make: valueOrNull(vehicleForm.make),
@@ -1860,7 +1909,7 @@ function RepairOrderEditor({
       }
 
       const roPayload = {
-        owner_id: user.id,
+        owner_id: ownerId,
         customer_id: customerId,
         vehicle_id: vehicleId,
         document_type: "repair_order" as DocumentType,
@@ -1888,7 +1937,7 @@ function RepairOrderEditor({
       }
 
       const linePayload = items.map((item, index) => ({
-        owner_id: user.id,
+        owner_id: ownerId,
         repair_order_id: roId,
         item_type: item.item_type,
         description: item.description.trim(),
@@ -2339,7 +2388,7 @@ function RepairOrderEditor({
                   ))}
                 </div>
                 {initialRo && workspaceTab === "work_order" && (
-                  <JobPhotos user={user} repairOrderId={initialRo.id} serviceGroupId={group.id} />
+                  <JobPhotos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
                 )}
                 <div className="job-add-actions">
                   <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>
@@ -2401,7 +2450,7 @@ async function compressPhoto(file: File): Promise<Blob> {
   ));
 }
 
-function JobPhotos({ user, repairOrderId, serviceGroupId }: { user: User; repairOrderId: string; serviceGroupId: string }) {
+function JobPhotos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string; repairOrderId: string; serviceGroupId: string }) {
   const [photos, setPhotos] = useState<EstimatePhoto[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -2426,11 +2475,11 @@ function JobPhotos({ user, repairOrderId, serviceGroupId }: { user: User; repair
       for (const file of Array.from(files)) {
         if (!file.type.startsWith("image/")) continue;
         const compressed = await compressPhoto(file);
-        const path = `${user.id}/${repairOrderId}/${serviceGroupId}/${crypto.randomUUID()}.jpg`;
+        const path = `${ownerId}/${repairOrderId}/${serviceGroupId}/${crypto.randomUUID()}.jpg`;
         const uploadResult = await supabase.storage.from("estimate-photos").upload(path, compressed, { contentType: "image/jpeg" });
         if (uploadResult.error) throw uploadResult.error;
         const insertResult = await supabase.from("estimate_photos").insert({
-          owner_id: user.id, repair_order_id: repairOrderId, service_group_id: serviceGroupId,
+          owner_id: ownerId, repair_order_id: repairOrderId, service_group_id: serviceGroupId,
           storage_path: path, caption: null, sort_order: photos.length,
         });
         if (insertResult.error) {
@@ -2826,10 +2875,12 @@ function CustomerProfile({
 
 function SettingsPanel({
   user,
+  ownerId,
   initialSettings,
   onSaved,
 }: {
   user: User;
+  ownerId: string;
   initialSettings: Settings;
   onSaved: () => void;
 }) {
@@ -2849,7 +2900,7 @@ function SettingsPanel({
   async function save() {
     setBusy(true);
     setMessage("");
-    const payload = { ...form, owner_id: user.id };
+    const payload = { ...form, owner_id: ownerId };
     const { error } = await supabase.from("settings").upsert(payload, { onConflict: "owner_id" });
     if (error) {
       setMessage(error.message);
@@ -2863,7 +2914,7 @@ function SettingsPanel({
     setLogoUploading(true);
     setMessage("");
     const extension = file.name.split(".").pop()?.toLowerCase() || "png";
-    const path = `${user.id}/logo-${Date.now()}.${extension}`;
+    const path = `${ownerId}/logo-${Date.now()}.${extension}`;
     const previousPath = form.logo_path;
     const { error } = await supabase.storage.from("shop-branding").upload(path, file, { contentType: file.type });
     if (error) {
@@ -3022,12 +3073,12 @@ function SettingsPanel({
         )}
       </div>
 
-      {form.team_features_enabled && <StaffTeamsManager user={user} />}
+      {form.team_features_enabled && <StaffTeamsManager ownerId={ownerId} />}
     </section>
   );
 }
 
-function StaffTeamsManager({ user }: { user: User }) {
+function StaffTeamsManager({ ownerId }: { ownerId: string }) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3035,8 +3086,8 @@ function StaffTeamsManager({ user }: { user: User }) {
   const [newTeamName, setNewTeamName] = useState("");
   const [teamBusy, setTeamBusy] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
-  const [inviteForm, setInviteForm] = useState<{ name: string; email: string; employeeId: string; role: StaffRole; teamId: string; canViewAllWork: boolean }>({
-    name: "", email: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false,
+  const [inviteForm, setInviteForm] = useState<{ name: string; email: string; employeeId: string; role: StaffRole; teamId: string; canViewAllWork: boolean; isAdmin: boolean }>({
+    name: "", email: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false,
   });
   const [createdCredentials, setCreatedCredentials] = useState<{ email: string; password: string } | null>(null);
 
@@ -3063,7 +3114,7 @@ function StaffTeamsManager({ user }: { user: User }) {
     if (!name) return;
     setTeamBusy(true);
     setMessage("");
-    const { error } = await supabase.from("teams").insert({ name, owner_id: user.id });
+    const { error } = await supabase.from("teams").insert({ name, owner_id: ownerId });
     if (error) setMessage(error.message);
     else setNewTeamName("");
     await loadAll();
@@ -3107,12 +3158,13 @@ function StaffTeamsManager({ user }: { user: User }) {
           employeeId: inviteForm.employeeId.trim() || null,
           teamId: inviteForm.teamId || null,
           canViewAllWork: inviteForm.canViewAllWork,
+          isAdmin: inviteForm.isAdmin,
         }),
       });
       const body = await response.json() as { error?: string; tempPassword?: string };
       if (!response.ok) throw new Error(body.error || "Could not create the staff account.");
       setCreatedCredentials({ email, password: body.tempPassword || "" });
-      setInviteForm({ name: "", email: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false });
+      setInviteForm({ name: "", email: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false });
       await loadAll();
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Could not create the staff account.");
@@ -3180,7 +3232,7 @@ function StaffTeamsManager({ user }: { user: User }) {
           <div className="table-wrap" style={{ marginBottom: 20 }}>
             <table>
               <thead>
-                <tr><th>Name</th><th>ID</th><th>Email</th><th>Role</th><th>Team</th><th>Sees</th><th>Active</th><th></th></tr>
+                <tr><th>Name</th><th>ID</th><th>Email</th><th>Role</th><th>Team</th><th>Sees</th><th>Admin</th><th>Active</th><th></th></tr>
               </thead>
               <tbody>
                 {staff.map((member) => (
@@ -3217,6 +3269,16 @@ function StaffTeamsManager({ user }: { user: User }) {
                       </select>
                     </td>
                     <td>
+                      <button
+                        type="button"
+                        className={`button small ${member.is_admin ? "primary" : "ghost"}`}
+                        title="Full admin access: same as the owner — Settings, branding, and staff management."
+                        onClick={() => void updateStaff(member.id, { is_admin: !member.is_admin })}
+                      >
+                        {member.is_admin ? "Master" : "Staff"}
+                      </button>
+                    </td>
+                    <td>
                       <button type="button" className={`button small ${member.active ? "secondary" : "warning"}`} onClick={() => void updateStaff(member.id, { active: !member.active })}>
                         {member.active ? "Active" : "Inactive"}
                       </button>
@@ -3226,7 +3288,7 @@ function StaffTeamsManager({ user }: { user: User }) {
                     </td>
                   </tr>
                 ))}
-                {!staff.length && <tr><td colSpan={8} className="empty-state">No staff added yet.</td></tr>}
+                {!staff.length && <tr><td colSpan={9} className="empty-state">No staff added yet.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -3267,6 +3329,14 @@ function StaffTeamsManager({ user }: { user: User }) {
               onChange={(event) => setInviteForm({ ...inviteForm, canViewAllWork: event.target.checked })}
             />
             <span>Can see all shop work (not just their own assigned/created work)</span>
+          </label>
+          <label className="checkbox-row span-two">
+            <input
+              type="checkbox"
+              checked={inviteForm.isAdmin}
+              onChange={(event) => setInviteForm({ ...inviteForm, isAdmin: event.target.checked })}
+            />
+            <span><strong>Full admin access (master account)</strong> — same as the owner: Settings, branding, and managing other staff. Use sparingly.</span>
           </label>
         </div>
         <button type="button" className="button primary" disabled={inviteBusy} onClick={() => void inviteStaff()} style={{ marginTop: 12 }}>
