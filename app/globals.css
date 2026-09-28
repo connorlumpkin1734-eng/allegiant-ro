@@ -189,6 +189,11 @@ textarea { resize: vertical; }
 .search-input { min-width: 280px; max-width: 620px; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
+/* Table cells auto-shrink to their header width by default, which clips the text inside
+   selects/inputs (e.g. "Service advisor" down to "Ser"). Give form controls in table cells a
+   sane minimum width instead; .table-wrap already scrolls horizontally if it doesn't all fit. */
+td select { min-width: 130px; }
+td input[type="text"], td input:not([type]) { min-width: 70px; }
 th, td { padding: 12px 10px; border-bottom: 1px solid #e7eaf0; text-align: left; vertical-align: middle; }
 th { color: #5a6576; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
 tbody tr:hover { background: #f8fafc; }
