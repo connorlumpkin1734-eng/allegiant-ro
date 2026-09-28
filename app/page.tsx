@@ -551,6 +551,81 @@ function AuthScreen() {
   );
 }
 
+function ChangePasswordModal({ onClose }: { onClose: () => void }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [done, setDone] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setMessage("");
+    if (password.length < 6) {
+      setMessage("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirm) {
+      setMessage("Passwords don't match.");
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    setBusy(false);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setDone(true);
+  }
+
+  return (
+    <div className="vin-scanner-backdrop" role="dialog" aria-modal="true" aria-label="Change password">
+      <div className="vin-scanner-modal" style={{ maxWidth: 420 }}>
+        <h2 style={{ marginTop: 0 }}>Change password</h2>
+        {done ? (
+          <>
+            <p>Your password has been updated.</p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" className="button primary" onClick={onClose}>Done</button>
+            </div>
+          </>
+        ) : (
+          <form onSubmit={submit} className="stack">
+            <label>
+              New password
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                minLength={6}
+                required
+                autoComplete="new-password"
+              />
+            </label>
+            <label>
+              Confirm new password
+              <input
+                type="password"
+                value={confirm}
+                onChange={(event) => setConfirm(event.target.value)}
+                minLength={6}
+                required
+                autoComplete="new-password"
+              />
+            </label>
+            {message && <div className="notice">{message}</div>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancel</button>
+              <button type="submit" className="button primary" disabled={busy}>{busy ? "Saving…" : "Save password"}</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type CurrentStaff = {
   id: string;
   owner_id: string;
@@ -583,6 +658,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const [editorReturnView, setEditorReturnView] = useState<"dashboard" | "customer_profile">("dashboard");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
 
   async function loadData(showLoading = true) {
     if (showLoading) setLoading(true);
@@ -1022,10 +1098,14 @@ function RepairOrderApp({ user }: { user: User }) {
             </button>
           )}
         </nav>
+        <button className="button ghost" onClick={() => setShowPasswordChange(true)}>
+          Change password
+        </button>
         <button className="button secondary" onClick={() => supabase.auth.signOut()}>
           Sign out
         </button>
       </header>
+      {showPasswordChange && <ChangePasswordModal onClose={() => setShowPasswordChange(false)} />}
 
       <main className="main-area">
         {error && <div className="error-banner no-print">{error}</div>}
