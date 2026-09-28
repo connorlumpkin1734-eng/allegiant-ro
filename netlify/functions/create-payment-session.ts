@@ -1,26 +1,55 @@
 // Creates a Stripe Checkout Session on the SHOP's own connected account (not the platform's) for
 // a repair order invoice, then records a `payments` row so the webhook can mark it paid.
 //
-// v1 scope, explicitly: the charged amount is the invoice's current subtotal + tax across ALL
-// line items. It does not yet exclude jobs the customer declined during estimate approval
-// (invoice_overrides / declined-job logic that the printed invoice view applies). For a repair
-// order where nothing was declined this is exactly right; for one with declined work, the shop
-// should double check the amount before sending the payment link. Flagging this rather than
-// silently shipping it as if it were handled.
+// The charged amount mirrors exactly what the printed/previewed invoice shows: jobs the customer
+// declined during estimate approval are excluded unless the shop separately recorded authorization
+// for them (invoice_overrides), same as the authorizedLineItems()/repairOrderTotal() logic in
+// app/page.tsx. Keep this in sync with that logic if it ever changes.
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
 });
 
-type LineItem = { item_type: string; quantity: number; unit_price: number; taxable: boolean };
+type LineItem = { item_type: string; quantity: number; unit_price: number; taxable: boolean; service_group_id: string | null };
+type InvoiceOverrides = Record<string, { note: string; recorded_at: string; recorded_by: string }>;
+type EstimateAuthorization = {
+  status: string;
+  line_decisions: Record<string, "approved" | "declined"> | null;
+};
 type RepairOrderRow = {
   id: string;
   owner_id: string;
   ro_number: number;
   tax_rate: number;
+  invoice_overrides: InvoiceOverrides | null;
   customers: { name: string | null; email: string | null } | null;
   line_items: LineItem[];
 };
+
+// Mirrors hasAuthorizationResponse() in app/page.tsx.
+function hasAuthorizationResponse(authorization: EstimateAuthorization | null | undefined): authorization is EstimateAuthorization {
+  return Boolean(
+    authorization
+      && ["approved", "partially_approved", "declined"].includes(authorization.status)
+      && Object.keys(authorization.line_decisions ?? {}).length > 0
+  );
+}
+
+// Mirrors authorizedLineItems() in app/page.tsx.
+function authorizedLineItems(
+  items: LineItem[],
+  authorization: EstimateAuthorization | null | undefined,
+  overrides: InvoiceOverrides = {}
+): LineItem[] {
+  if (!hasAuthorizationResponse(authorization)) return items;
+  const decisions = authorization.line_decisions ?? {};
+  const hasApprovedService = Object.values(decisions).includes("approved") || items.some((item) => item.service_group_id && overrides[item.service_group_id]);
+  return items.filter((item) =>
+    item.service_group_id
+      ? decisions[item.service_group_id] === "approved" || Boolean(overrides[item.service_group_id])
+      : hasApprovedService
+  );
+}
 
 export default async (request: Request) => {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
@@ -69,14 +98,21 @@ export default async (request: Request) => {
   if (!settings.stripe_charges_enabled) return json({ error: "Stripe onboarding isn't finished yet — finish it in Settings before collecting payment." }, 400);
 
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,customers(name,email),line_items(item_type,quantity,unit_price,taxable)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,invoice_overrides,customers(name,email),line_items(item_type,quantity,unit_price,taxable,service_group_id)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
     { headers: serviceHeaders }
   );
   const roRows = roResponse.ok ? await roResponse.json() as RepairOrderRow[] : [];
   const ro = roRows[0];
   if (!ro) return json({ error: "Repair order not found." }, 404);
 
-  const items = ro.line_items || [];
+  const authorizationResponse = await fetch(
+    `${supabaseUrl}/rest/v1/estimate_authorizations?select=status,line_decisions&repair_order_id=eq.${encodeURIComponent(ro.id)}&order=sent_at.desc&limit=1`,
+    { headers: serviceHeaders }
+  );
+  const authorizationRows = authorizationResponse.ok ? await authorizationResponse.json() as EstimateAuthorization[] : [];
+  const estimateAuthorization = authorizationRows[0] ?? null;
+
+  const items = authorizedLineItems(ro.line_items || [], estimateAuthorization, ro.invoice_overrides ?? {});
   const subtotal = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0);
   const taxableAmount = items.reduce((sum, item) => sum + (item.taxable ? Number(item.quantity) * Number(item.unit_price) : 0), 0);
   const tax = Math.max(0, taxableAmount) * (Number(ro.tax_rate) / 100);
