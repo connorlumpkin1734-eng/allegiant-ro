@@ -1098,7 +1098,7 @@ function RepairOrderApp({ user }: { user: User }) {
             </button>
           )}
         </nav>
-        <button className="button ghost" onClick={() => setShowPasswordChange(true)}>
+        <button className="button secondary" onClick={() => setShowPasswordChange(true)}>
           Change password
         </button>
         <button className="button secondary" onClick={() => supabase.auth.signOut()}>
