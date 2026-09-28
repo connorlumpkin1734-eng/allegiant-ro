@@ -1215,6 +1215,32 @@ tbody tr:hover { background: #f8fafc; }
   margin-bottom: 14px;
 }
 
+.workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.button-row-muted {
+  padding-right: 18px;
+  border-right: 1px solid var(--line);
+}
+
+@media (max-width: 900px) {
+  .button-row-muted {
+    padding-right: 0;
+    border-right: none;
+  }
+}
+
+.button.danger-text {
+  color: #a61b27;
+}
+.button.danger-text:hover {
+  background: #fbe5e7;
+}
+
 /* Multipoint inspection workspace */
 .inspection-shell {
   width: min(1500px, 100%);

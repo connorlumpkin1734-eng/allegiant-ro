@@ -1176,6 +1176,7 @@ function RepairOrderApp({ user }: { user: User }) {
             initialTab={editorTab}
             onInspection={editingRo ? () => openInspection(editingRo.id, "editor") : undefined}
             onCancel={returnFromEditor}
+            onDelete={editingRo && !isTechnicianOnly ? () => deleteRo(editingRo) : undefined}
             onSaved={async (id, tab, previewMode) => {
               setEditorTab(tab);
               await loadData(false);
@@ -1516,6 +1517,7 @@ function RepairOrderEditor({
   onInspection,
   onCancel,
   onSaved,
+  onDelete,
 }: {
   user: User;
   ownerId: string;
@@ -1530,6 +1532,7 @@ function RepairOrderEditor({
   onInspection?: () => void;
   onCancel: () => void;
   onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode) => void;
+  onDelete?: () => void;
 }) {
   const preselectedVehicle = vehicles.find((vehicle) => vehicle.id === initialVehicleId);
   const preselectedCustomerId = initialRo?.customer_id ?? initialCustomerId ?? preselectedVehicle?.customer_id ?? "";
@@ -2127,24 +2130,31 @@ function RepairOrderEditor({
           <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : "New Work Order"}</h1>
           <p>One editable job. The estimate, shop work order, and invoice all use this same set of charges.</p>
         </div>
-        <div className="button-row">
-          <button className="button secondary" onClick={onCancel}>Close</button>
-          {initialRo && workspaceTab === "work_order" && onInspection && (
-            <button className="button primary" onClick={onInspection}>Multipoint Inspection</button>
-          )}
-          {initialRo && workspaceTab === "work_order" && (
-            <>
-              <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Preview Estimate</button>
-              <button className="button ghost" onClick={() => save("work_order")} disabled={busy}>Preview Work Order</button>
-              <button className="button primary" onClick={() => void emailEstimate()} disabled={busy}>Email Estimate</button>
-            </>
-          )}
-          {initialRo && workspaceTab === "invoice" && (
-            <button className="button ghost" onClick={() => save("invoice")} disabled={busy}>Preview Invoice</button>
-          )}
-          <button className="button primary" onClick={() => save()} disabled={busy}>
-            {busy ? "Saving…" : "Save Changes"}
-          </button>
+        <div className="workspace-actions">
+          <div className="button-row button-row-muted">
+            <button className="button ghost" onClick={onCancel}>Close</button>
+            {initialRo && onDelete && (
+              <button className="button ghost danger-text" onClick={onDelete}>Delete RO</button>
+            )}
+          </div>
+          <div className="button-row">
+            {initialRo && workspaceTab === "work_order" && onInspection && (
+              <button className="button secondary" onClick={onInspection}>Multipoint Inspection</button>
+            )}
+            {initialRo && workspaceTab === "work_order" && (
+              <>
+                <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Preview Estimate</button>
+                <button className="button ghost" onClick={() => save("work_order")} disabled={busy}>Preview Work Order</button>
+                <button className="button secondary" onClick={() => void emailEstimate()} disabled={busy}>Email Estimate</button>
+              </>
+            )}
+            {initialRo && workspaceTab === "invoice" && (
+              <button className="button ghost" onClick={() => save("invoice")} disabled={busy}>Preview Invoice</button>
+            )}
+            <button className="button primary" onClick={() => save()} disabled={busy}>
+              {busy ? "Saving…" : "Save Changes"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2903,63 +2913,68 @@ function CustomerDirectory({
           Show archived ({archivedCount})
         </label>
       </div>
-      <div className="customer-grid">
-        {filtered.map((customer) => {
-          const ownedVehicles = vehicles.filter((vehicle) => vehicle.customer_id === customer.id);
-          const roCount = repairOrders.filter((ro) => ro.customer_id === customer.id).length;
-          return (
-            <article
-              className={`panel customer-card clickable-card ${customer.archived_at ? "archived-card" : ""}`}
-              key={customer.id}
-              onClick={() => onOpenCustomer(customer)}
-            >
-              <div className="section-heading">
-                <div>
-                  <h2>{customer.name}</h2>
-                  <p className="muted">{customer.phone || "No phone"}{customer.email ? ` · ${customer.email}` : ""}</p>
-                </div>
-                <div className="badge-row">
-                  <span className="badge neutral">{roCount} WO{roCount === 1 ? "" : "s"}</span>
-                  <span className="badge neutral">{ownedVehicles.length} vehicle{ownedVehicles.length === 1 ? "" : "s"}</span>
-                  {customer.archived_at && <span className="badge archived">Archived</span>}
-                </div>
-              </div>
-              {(customer.address_line_1 || customer.city) && (
-                <p>{[customer.address_line_1, customer.city, customer.state, customer.zip_code].filter(Boolean).join(", ")}</p>
+      <div className="panel">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Contact</th>
+                <th>Address</th>
+                <th>Vehicles</th>
+                <th>WOs</th>
+                <th></th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((customer) => {
+                const ownedVehicles = vehicles.filter((vehicle) => vehicle.customer_id === customer.id);
+                const roCount = repairOrders.filter((ro) => ro.customer_id === customer.id).length;
+                const vehicleSummary = ownedVehicles
+                  .slice(0, 2)
+                  .map((vehicle) => [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") || "Vehicle")
+                  .join(", ");
+                return (
+                  <tr key={customer.id} className={customer.archived_at ? "archived-row" : ""}>
+                    <td>
+                      <button className="table-link" onClick={() => onOpenCustomer(customer)}>{customer.name}</button>
+                      {customer.archived_at && <span className="badge archived" style={{ marginLeft: 8 }}>Archived</span>}
+                    </td>
+                    <td>{[customer.phone, customer.email].filter(Boolean).join(" · ") || "—"}</td>
+                    <td>{[customer.address_line_1, customer.city, customer.state, customer.zip_code].filter(Boolean).join(", ") || "—"}</td>
+                    <td>
+                      {ownedVehicles.length
+                        ? `${vehicleSummary}${ownedVehicles.length > 2 ? ` +${ownedVehicles.length - 2} more` : ""}`
+                        : "No vehicles"}
+                    </td>
+                    <td>{roCount}</td>
+                    <td className="actions-cell">
+                      <button className="button small secondary" onClick={() => onOpenCustomer(customer)}>History</button>
+                      <button className="button small ghost" onClick={() => onArchive(customer)}>
+                        {customer.archived_at ? "Restore" : "Archive"}
+                      </button>
+                    </td>
+                    <td className="actions-cell">
+                      {roCount === 0 ? (
+                        <button className="button small danger" onClick={() => onDelete(customer)}>Delete</button>
+                      ) : (
+                        <span className="history-lock">Has history</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {!filtered.length && (
+                <tr>
+                  <td colSpan={7} className="empty-state">
+                    {showArchived ? "No matching customers." : "No matching active customers."}
+                  </td>
+                </tr>
               )}
-              <div className="vehicle-list">
-                {ownedVehicles.slice(0, 3).map((vehicle) => (
-                  <div key={vehicle.id}>
-                    <strong>{[vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(" ") || "Vehicle"}</strong>
-                    <span>{[vehicle.license_plate, vehicle.vin].filter(Boolean).join(" · ")}</span>
-                  </div>
-                ))}
-                {ownedVehicles.length > 3 && <span className="muted">+ {ownedVehicles.length - 3} more vehicle{ownedVehicles.length - 3 === 1 ? "" : "s"}</span>}
-                {!ownedVehicles.length && <span className="muted">No vehicles saved.</span>}
-              </div>
-              <div className="customer-card-actions" onClick={(event) => event.stopPropagation()}>
-                <button className="button small secondary" onClick={() => onOpenCustomer(customer)}>
-                  View customer history
-                </button>
-                <button className="button small ghost" onClick={() => onArchive(customer)}>
-                  {customer.archived_at ? "Restore customer" : "Archive customer"}
-                </button>
-                {roCount === 0 ? (
-                  <button className="button small danger" onClick={() => onDelete(customer)}>
-                    Permanently delete
-                  </button>
-                ) : (
-                  <span className="history-lock">Has service history — archive only</span>
-                )}
-              </div>
-            </article>
-          );
-        })}
-        {!filtered.length && (
-          <div className="panel empty-state">
-            {showArchived ? "No matching customers." : "No matching active customers."}
-          </div>
-        )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   );
