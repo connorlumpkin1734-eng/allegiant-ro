@@ -1127,12 +1127,14 @@ function RepairOrderApp({ user }: { user: User }) {
             onOpenCustomer={openCustomer}
             onStatusChange={updateRoStatus}
             onPaidChange={updateRoPaidStatus}
+            canCreate={!isTechnicianOnly}
           />
         ) : view === "editor" ? (
           <RepairOrderEditor
             key={`${editingRo?.id ?? "new-repair-order"}-${editorVersion}`}
             user={user}
             ownerId={ownerId}
+            isTechnician={isTechnicianOnly}
             settings={settings}
             customers={customers}
             vehicles={vehicles}
@@ -1222,6 +1224,7 @@ function Dashboard({
   onOpenCustomer,
   onStatusChange,
   onPaidChange,
+  canCreate = true,
 }: {
   repairOrders: RepairOrder[];
   onNew: () => void;
@@ -1230,6 +1233,7 @@ function Dashboard({
   onOpenCustomer: (customer: Customer) => void;
   onStatusChange: (ro: RepairOrder, status: "open" | "completed") => Promise<void>;
   onPaidChange: (ro: RepairOrder, paid: boolean) => Promise<void>;
+  canCreate?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -1295,9 +1299,11 @@ function Dashboard({
           <h1>Work Orders</h1>
           <p>One job record. Print it as an estimate, use it as the shop work order, and issue the final invoice.</p>
         </div>
-        <button className="button primary" onClick={onNew}>
-          + New Work Order
-        </button>
+        {canCreate && (
+          <button className="button primary" onClick={onNew}>
+            + New Work Order
+          </button>
+        )}
       </div>
 
       <div className="summary-grid">
@@ -1462,6 +1468,7 @@ function Dashboard({
 function RepairOrderEditor({
   user,
   ownerId,
+  isTechnician,
   settings,
   customers,
   vehicles,
@@ -1475,6 +1482,7 @@ function RepairOrderEditor({
 }: {
   user: User;
   ownerId: string;
+  isTechnician: boolean;
   settings: Settings;
   customers: Customer[];
   vehicles: Vehicle[];
@@ -1546,6 +1554,13 @@ function RepairOrderEditor({
   const [vinScannerOpen, setVinScannerOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(initialTab);
+  // Technicians can price parts (if the shop allows it) but must never see or edit labor rate,
+  // parts markup/cost, or shop profit figures — and can't restructure the RO (no adding
+  // service jobs/fees/discounts/labor lines, no removing or deleting anything).
+  const hideCostAndMargin = isTechnician;
+  const partPriceEditable = !isTechnician || settings.techs_can_price;
+  const canAddPartLine = !isTechnician || settings.techs_can_price;
+  const canRestructureRo = !isTechnician;
 
   useEffect(() => {
     if (!vinScannerOpen) return;
@@ -2008,15 +2023,25 @@ function RepairOrderEditor({
       if (initialRo) {
         const { error } = await supabase.from("repair_orders").update(roPayload).eq("id", initialRo.id);
         if (error) throw error;
-        const { error: deleteError } = await supabase.from("line_items").delete().eq("repair_order_id", initialRo.id);
-        if (deleteError) throw deleteError;
       } else {
         const { data, error } = await supabase.from("repair_orders").insert(roPayload).select("id").single();
         if (error) throw error;
         roId = data.id as string;
       }
 
+      // Upsert by id (each line already has a stable client-generated uuid, whether it's an
+      // existing DB row or a brand-new one) instead of delete-all-then-reinsert. This keeps ids
+      // stable across saves, and it's required for technician saves specifically: technicians
+      // have no delete permission on line_items, so a blanket delete would silently no-op and
+      // the old rows would get duplicated by the reinsert. Only explicitly removed lines are
+      // deleted below, which technician-driven saves never have (the UI never lets a technician
+      // remove a line), so this never needs a delete grant for them.
+      const existingLineIds = new Set((initialRo?.line_items ?? []).map((entry) => entry.id));
+      const currentLineIds = new Set(items.map((entry) => entry.id));
+      const removedLineIds = [...existingLineIds].filter((id) => !currentLineIds.has(id));
+
       const linePayload = items.map((item, index) => ({
+        id: item.id,
         owner_id: ownerId,
         repair_order_id: roId,
         item_type: item.item_type,
@@ -2034,8 +2059,13 @@ function RepairOrderEditor({
         internal_notes: valueOrNull(item.internal_notes ?? ""),
       }));
 
-      const { error: lineError } = await supabase.from("line_items").insert(linePayload);
+      const { error: lineError } = await supabase.from("line_items").upsert(linePayload, { onConflict: "id" });
       if (lineError) throw lineError;
+
+      if (removedLineIds.length) {
+        const { error: deleteError } = await supabase.from("line_items").delete().in("id", removedLineIds);
+        if (deleteError) throw deleteError;
+      }
 
       setBusy(false);
       onSaved(roId, workspaceTab, previewMode);
@@ -2353,16 +2383,22 @@ function RepairOrderEditor({
               <span>The original signed amount is unchanged. Record separate authorization for added work before billing it.</span>
             </div>
           )}
-          <section className="ro-profit-summary">
-            <div className="ro-profit-title"><strong>Internal RO profit</strong><span>Private</span></div>
-            <div><span>Revenue</span><strong>{money(profitSummary.revenue)}</strong></div>
-            <div><span>Recorded cost</span><strong>{money(profitSummary.cost)}</strong></div>
-            <div className={profitSummary.profit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(profitSummary.profit)}</strong></div>
-            <div className={profitSummary.margin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{profitSummary.margin.toFixed(1)}%</strong></div>
-            <small>{profitSummary.usesAuthorization ? "Includes separately authorized jobs." : "All currently listed services."} Labor and overhead are not deducted.</small>
-          </section>
+          {!hideCostAndMargin && (
+            <section className="ro-profit-summary">
+              <div className="ro-profit-title"><strong>Internal RO profit</strong><span>Private</span></div>
+              <div><span>Revenue</span><strong>{money(profitSummary.revenue)}</strong></div>
+              <div><span>Recorded cost</span><strong>{money(profitSummary.cost)}</strong></div>
+              <div className={profitSummary.profit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(profitSummary.profit)}</strong></div>
+              <div className={profitSummary.margin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{profitSummary.margin.toFixed(1)}%</strong></div>
+              <small>{profitSummary.usesAuthorization ? "Includes separately authorized jobs." : "All currently listed services."} Labor and overhead are not deducted.</small>
+            </section>
+          )}
         </aside>
       </div>
+
+      {canRestructureRo && settings.team_features_enabled && initialRo && (
+        <TechnicianAssignment ownerId={ownerId} repairOrderId={initialRo.id} />
+      )}
 
       <section className="panel line-items-panel">
         <div className="section-heading wrap">
@@ -2374,11 +2410,13 @@ function RepairOrderEditor({
                 : `Build each repair as a job. Labor defaults to ${money(settings.default_labor_rate)}/hr and parts to ${settings.default_parts_markup}% markup.`}
             </p>
           </div>
-          <div className="button-row">
-            <button className="button primary" onClick={addServiceJob}>+ Add Service Job</button>
-            <button className="button secondary" onClick={() => addItem("fee")}>+ Fee</button>
-            <button className="button discount-button" onClick={() => addItem("discount")}>+ Discount</button>
-          </div>
+          {canRestructureRo && (
+            <div className="button-row">
+              <button className="button primary" onClick={addServiceJob}>+ Add Service Job</button>
+              <button className="button secondary" onClick={() => addItem("fee")}>+ Fee</button>
+              <button className="button discount-button" onClick={() => addItem("discount")}>+ Discount</button>
+            </div>
+          )}
         </div>
 
         <div className="service-jobs">
@@ -2404,7 +2442,9 @@ function RepairOrderEditor({
                     {customerDecision && <span className={`authorization-mark ${customerDecision}`}>{invoiceOverrides[group.id] ? `Originally ${customerDecision}` : customerDecision}</span>}
                     <span>Job total</span><strong>{money(jobTotal)}</strong>
                   </div>
-                  <button className="button small danger" onClick={() => void deleteServiceJob(group.id)}>Delete job</button>
+                  {canRestructureRo && (
+                    <button className="button small danger" onClick={() => void deleteServiceJob(group.id)}>Delete job</button>
+                  )}
                 </header>
                 {hasCustomerAuthorizationResponse && (
                   <div className="notice">
@@ -2451,28 +2491,38 @@ function RepairOrderEditor({
                     />
                   </label>
                 </div>
-                <section className="job-profit-panel" aria-label="Internal job profitability">
-                  <div className="job-profit-heading">
-                    <strong>Internal job profit</strong>
-                    <span>Private — never shown on customer documents</span>
-                  </div>
-                  <div><span>Job revenue</span><strong>{money(jobTotal)}</strong></div>
-                  <div><span>Recorded cost</span><strong>{money(jobCost)}</strong></div>
-                  <div className={jobGrossProfit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(jobGrossProfit)}</strong></div>
-                  <div className={jobGrossMargin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{jobGrossMargin.toFixed(1)}%</strong></div>
-                  <small>Uses customer price minus recorded part/sublet costs. Labor and shop overhead are not deducted.</small>
-                </section>
+                {!hideCostAndMargin && (
+                  <section className="job-profit-panel" aria-label="Internal job profitability">
+                    <div className="job-profit-heading">
+                      <strong>Internal job profit</strong>
+                      <span>Private — never shown on customer documents</span>
+                    </div>
+                    <div><span>Job revenue</span><strong>{money(jobTotal)}</strong></div>
+                    <div><span>Recorded cost</span><strong>{money(jobCost)}</strong></div>
+                    <div className={jobGrossProfit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(jobGrossProfit)}</strong></div>
+                    <div className={jobGrossMargin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{jobGrossMargin.toFixed(1)}%</strong></div>
+                    <small>Uses customer price minus recorded part/sublet costs. Labor and shop overhead are not deducted.</small>
+                  </section>
+                )}
                 <div className="job-lines">
                   {group.items.map((item) => (
-                    <ChargeLine key={item.id} item={item} changeItem={changeItem} removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))} />
+                    <ChargeLine
+                      key={item.id}
+                      item={item}
+                      changeItem={changeItem}
+                      removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}
+                      hideCostAndMargin={hideCostAndMargin}
+                      priceEditable={item.item_type === "part" ? partPriceEditable : canRestructureRo}
+                      canRemove={canRestructureRo}
+                    />
                   ))}
                 </div>
                 {initialRo && workspaceTab === "work_order" && (
                   <JobPhotos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
                 )}
                 <div className="job-add-actions">
-                  <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>
-                  <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Associated Part</button>
+                  {canRestructureRo && <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>}
+                  {canAddPartLine && <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Associated Part</button>}
                 </div>
               </article>
             );
@@ -2485,7 +2535,15 @@ function RepairOrderEditor({
               </div>
               <div className="job-lines">
                 {ungroupedItems.map((item) => (
-                  <ChargeLine key={item.id} item={item} changeItem={changeItem} removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))} />
+                  <ChargeLine
+                    key={item.id}
+                    item={item}
+                    changeItem={changeItem}
+                    removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}
+                    hideCostAndMargin={hideCostAndMargin}
+                    priceEditable={canRestructureRo}
+                    canRemove={canRestructureRo}
+                  />
                 ))}
               </div>
             </section>
@@ -2510,6 +2568,72 @@ function RepairOrderEditor({
         )}
         <button className="button primary" onClick={() => save()} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
       </div>
+    </section>
+  );
+}
+
+function TechnicianAssignment({ ownerId, repairOrderId }: { ownerId: string; repairOrderId: string }) {
+  const [technicians, setTechnicians] = useState<StaffMember[]>([]);
+  const [assignedIds, setAssignedIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadAll() {
+    const [staffResult, assignmentsResult] = await Promise.all([
+      supabase.from("staff").select("*").eq("role", "technician").eq("active", true).order("name"),
+      supabase.from("repair_order_technicians").select("staff_id").eq("repair_order_id", repairOrderId),
+    ]);
+    if (staffResult.error) setMessage(staffResult.error.message);
+    if (assignmentsResult.error) setMessage(assignmentsResult.error.message);
+    setTechnicians((staffResult.data ?? []) as StaffMember[]);
+    setAssignedIds(((assignmentsResult.data ?? []) as Array<{ staff_id: string }>).map((row) => row.staff_id));
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repairOrderId]);
+
+  async function toggle(staffId: string, assign: boolean) {
+    setBusy(true);
+    setMessage("");
+    const { error } = assign
+      ? await supabase.from("repair_order_technicians").insert({ owner_id: ownerId, repair_order_id: repairOrderId, staff_id: staffId })
+      : await supabase.from("repair_order_technicians").delete().eq("repair_order_id", repairOrderId).eq("staff_id", staffId);
+    if (error) setMessage(error.message);
+    await loadAll();
+    setBusy(false);
+  }
+
+  return (
+    <section className="panel">
+      <h3 style={{ marginTop: 0 }}>Assigned technicians</h3>
+      <p className="muted" style={{ marginTop: -6, fontSize: 13 }}>Reassign anytime — technicians only see jobs assigned to them here (unless their account is set to see all shop work).</p>
+      {message && <div className="notice">{message}</div>}
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : !technicians.length ? (
+        <p className="muted">No active technicians yet. Add them in Settings → Staff &amp; Teams.</p>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {technicians.map((tech) => {
+            const assigned = assignedIds.includes(tech.id);
+            return (
+              <button
+                key={tech.id}
+                type="button"
+                className={`button small ${assigned ? "primary" : "secondary"}`}
+                disabled={busy}
+                onClick={() => void toggle(tech.id, !assigned)}
+              >
+                {assigned ? "✓ " : "+ "}{tech.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -2616,11 +2740,18 @@ function ChargeLine({
   item,
   changeItem,
   removeItem,
+  hideCostAndMargin = false,
+  priceEditable = true,
+  canRemove = true,
 }: {
   item: LineItem;
   changeItem: (id: string, field: keyof LineItem, rawValue: string | boolean | number) => void;
   removeItem: () => void;
+  hideCostAndMargin?: boolean;
+  priceEditable?: boolean;
+  canRemove?: boolean;
 }) {
+  const showRate = item.item_type !== "labor" || !hideCostAndMargin;
   return (
     <div className={`charge-line ${item.item_type} ${item.item_type === "part" ? "associated-part" : ""}`}>
       <span className="charge-type-label">
@@ -2634,7 +2765,7 @@ function ChargeLine({
         {item.item_type === "labor" ? "Hours" : "Qty"}
         <input type="number" step="0.01" value={item.quantity} onChange={(event) => changeItem(item.id, "quantity", event.target.value)} />
       </label>
-      {item.item_type === "part" && (
+      {item.item_type === "part" && !hideCostAndMargin && (
         <>
           <label>
             Your cost
@@ -2646,24 +2777,32 @@ function ChargeLine({
           </label>
         </>
       )}
-      <label>
-        {item.item_type === "labor" ? "Rate" : item.item_type === "discount" ? "Discount amount" : "Unit price"}
-        <input
-          type="number"
-          step="0.01"
-          value={item.item_type === "discount" ? Math.abs(item.unit_price) : Number(item.unit_price.toFixed(2))}
-          onChange={(event) => changeItem(item.id, "unit_price", event.target.value)}
-        />
-      </label>
+      {showRate ? (
+        <label>
+          {item.item_type === "labor" ? "Rate" : item.item_type === "discount" ? "Discount amount" : "Unit price"}
+          <input
+            type="number"
+            step="0.01"
+            value={item.item_type === "discount" ? Math.abs(item.unit_price) : Number(item.unit_price.toFixed(2))}
+            disabled={!priceEditable}
+            onChange={(event) => changeItem(item.id, "unit_price", event.target.value)}
+          />
+        </label>
+      ) : (
+        <label>
+          Rate
+          <input type="text" value="—" disabled title="Only the owner or an admin can view or change the labor rate." />
+        </label>
+      )}
       <label className="checkbox-row compact">
-        <input type="checkbox" checked={item.taxable} onChange={(event) => changeItem(item.id, "taxable", event.target.checked)} />
+        <input type="checkbox" checked={item.taxable} onChange={(event) => changeItem(item.id, "taxable", event.target.checked)} disabled={!priceEditable} />
         Tax
       </label>
       <div className="line-total">
         <span>{item.item_type === "discount" ? "You save" : "Total"}</span>
-        <strong>{money(item.item_type === "discount" ? Math.abs(item.quantity * item.unit_price) : item.quantity * item.unit_price)}</strong>
+        <strong>{hideCostAndMargin && item.item_type === "labor" ? "—" : money(item.item_type === "discount" ? Math.abs(item.quantity * item.unit_price) : item.quantity * item.unit_price)}</strong>
       </div>
-      <button className="icon-button" title="Remove line" onClick={removeItem}>×</button>
+      {canRemove && <button className="icon-button" title="Remove line" onClick={removeItem}>×</button>}
     </div>
   );
 }
