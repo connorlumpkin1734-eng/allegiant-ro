@@ -1696,6 +1696,35 @@ function RepairOrderEditor({
     }
   }
 
+  async function emailInvoice() {
+    if (!initialRo) return;
+    if (!customerForm.email.trim()) {
+      setMessage("Add the customer's email address before sending the invoice.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again before sending.");
+
+      const response = await fetch("/.netlify/functions/send-invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ repairOrderId: initialRo.id }),
+      });
+      const body = await response.json() as { error?: string; message?: string; payNowIncluded?: boolean };
+      if (!response.ok) throw new Error(body.error || "The invoice could not be emailed.");
+      setMessage(body.message || `Invoice emailed to ${customerForm.email.trim()}.`);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "The invoice could not be emailed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const selectableCustomers = useMemo(
     () => customers.filter((customer) => !customer.archived_at || customer.id === initialRo?.customer_id),
     [customers, initialRo?.customer_id]
@@ -2149,7 +2178,10 @@ function RepairOrderEditor({
               </>
             )}
             {initialRo && workspaceTab === "invoice" && (
-              <button className="button ghost" onClick={() => save("invoice")} disabled={busy}>Preview Invoice</button>
+              <>
+                <button className="button ghost" onClick={() => save("invoice")} disabled={busy}>Preview Invoice</button>
+                <button className="button secondary" onClick={() => void emailInvoice()} disabled={busy}>Email Invoice</button>
+              </>
             )}
             <button className="button primary" onClick={() => save()} disabled={busy}>
               {busy ? "Saving…" : "Save Changes"}
@@ -3852,7 +3884,31 @@ function DocumentView({
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [paymentLink, setPaymentLink] = useState("");
   const [paymentError, setPaymentError] = useState("");
+  const [invoiceEmailBusy, setInvoiceEmailBusy] = useState(false);
+  const [invoiceEmailMessage, setInvoiceEmailMessage] = useState("");
   const documentRef = useRef<HTMLElement>(null);
+
+  async function emailInvoiceNow() {
+    setInvoiceEmailBusy(true);
+    setInvoiceEmailMessage("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/send-invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ repairOrderId: ro.id }),
+      });
+      const body = await response.json() as { message?: string; error?: string };
+      if (!response.ok) throw new Error(body.error || "The invoice could not be emailed.");
+      setInvoiceEmailMessage(body.message || "Invoice emailed.");
+    } catch (caught) {
+      setInvoiceEmailMessage(caught instanceof Error ? caught.message : "The invoice could not be emailed.");
+    } finally {
+      setInvoiceEmailBusy(false);
+    }
+  }
 
   async function collectPayment() {
     setPaymentBusy(true);
@@ -3989,6 +4045,11 @@ function DocumentView({
             {ro.archived_at ? "Restore" : "Archive"}
           </button>
           <button className="button danger" onClick={onDelete}>Delete permanently</button>
+          {isInvoice && ro.status !== "voided" && (
+            <button className="button secondary" disabled={invoiceEmailBusy} onClick={() => void emailInvoiceNow()}>
+              {invoiceEmailBusy ? "Sending…" : "Email Invoice"}
+            </button>
+          )}
           {isInvoice && !ro.paid && ro.status !== "voided" && settings.stripe_charges_enabled && (
             <button className="button success" disabled={paymentBusy} onClick={() => void collectPayment()}>
               {paymentBusy ? "Starting…" : "Collect payment"}
@@ -3997,6 +4058,11 @@ function DocumentView({
           <button className="button primary" disabled={photosLoading || printing || Boolean(photoError)} onClick={() => void printDocument()}>{photosLoading || printing ? "Loading images…" : "Print / Save PDF"}</button>
         </div>
       </div>
+      {invoiceEmailMessage && (
+        <div className={`no-print ${invoiceEmailMessage.toLowerCase().includes("emailed") ? "notice" : "error-banner"}`} style={{ margin: "0 0 16px" }}>
+          <span>{invoiceEmailMessage}</span>
+        </div>
+      )}
       {(paymentLink || paymentError) && (
         <div className={`no-print ${paymentError ? "error-banner" : "notice"}`} style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           {paymentError ? (
