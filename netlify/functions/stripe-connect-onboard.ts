@@ -9,6 +9,14 @@
 // Called both for the first "Connect with Stripe" click and for "Continue onboarding" on an
 // express account (account links expire after a few minutes, so the client should call this
 // fresh each time rather than caching one).
+//
+// Express account creation uses the Accounts v2 API (/v2/core/accounts + /v2/core/account_links)
+// rather than v1 (/v1/accounts + /v1/account_links). This Stripe account has v1 account *creation*
+// disabled by default (Stripe's current default for new Connect platforms) — only v2 creation
+// works. Everything else (OAuth for Standard, reading account status, the account.updated
+// webhook) still works fine against v1-shaped data even for v2-created accounts, per Stripe's
+// docs, so only creation + the onboarding link needed to move to v2 endpoints.
+const STRIPE_API_VERSION = "2026-08-26.dahlia";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
@@ -67,21 +75,26 @@ export default async (request: Request) => {
     return json({ url: authorizeUrl.toString() });
   }
 
-  const stripeHeaders = { Authorization: `Bearer ${stripeSecretKey}`, "Content-Type": "application/x-www-form-urlencoded" };
+  const stripeV2Headers = {
+    Authorization: `Bearer ${stripeSecretKey}`,
+    "Content-Type": "application/json",
+    "Stripe-Version": STRIPE_API_VERSION,
+  };
   let accountId = settings.stripe_account_id;
 
   if (!accountId) {
-    const createParams = new URLSearchParams({
-      type: "express",
-      "capabilities[card_payments][requested]": "true",
-      "capabilities[transfers][requested]": "true",
-      "capabilities[us_bank_account_ach_payments][requested]": "true",
-      "business_type": "company",
+    const createBody = {
+      contact_email: settings.business_email || undefined,
+      display_name: settings.business_name || undefined,
+      identity: { country: "us", entity_type: "company" },
+      configuration: { merchant: { capabilities: { card_payments: { requested: true } } } },
+      // Express-dashboard accounts require the platform (us) to own fees and losses.
+      defaults: { responsibilities: { fees_collector: "application", losses_collector: "application" } },
+      dashboard: "express",
+    };
+    const createResponse = await fetch("https://api.stripe.com/v2/core/accounts", {
+      method: "POST", headers: stripeV2Headers, body: JSON.stringify(createBody),
     });
-    if (settings.business_email) createParams.set("email", settings.business_email);
-    if (settings.business_name) createParams.set("business_profile[name]", settings.business_name);
-
-    const createResponse = await fetch("https://api.stripe.com/v1/accounts", { method: "POST", headers: stripeHeaders, body: createParams });
     const created = await createResponse.json() as { id?: string; error?: { message?: string } };
     if (!createResponse.ok || !created.id) {
       return json({ error: created.error?.message || "Could not create the Stripe account." }, 400);
@@ -96,13 +109,16 @@ export default async (request: Request) => {
 
   const returnUrl = new URL("/?stripe=return", siteUrl).toString();
   const refreshUrl = new URL("/?stripe=refresh", siteUrl).toString();
-  const linkParams = new URLSearchParams({
+  const linkBody = {
     account: accountId,
-    type: "account_onboarding",
-    return_url: returnUrl,
-    refresh_url: refreshUrl,
+    use_case: {
+      type: "account_onboarding",
+      account_onboarding: { configurations: ["merchant"], return_url: returnUrl, refresh_url: refreshUrl },
+    },
+  };
+  const linkResponse = await fetch("https://api.stripe.com/v2/core/account_links", {
+    method: "POST", headers: stripeV2Headers, body: JSON.stringify(linkBody),
   });
-  const linkResponse = await fetch("https://api.stripe.com/v1/account_links", { method: "POST", headers: stripeHeaders, body: linkParams });
   const link = await linkResponse.json() as { url?: string; error?: { message?: string } };
   if (!linkResponse.ok || !link.url) {
     return json({ error: link.error?.message || "Could not start Stripe onboarding." }, 400);
