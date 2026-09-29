@@ -1,10 +1,20 @@
-// Receives Stripe webhook events. Two kinds matter here:
+// Receives Stripe webhook events. Three kinds matter here:
 //  - `account.updated` (platform-level, sent for every connected account): keeps each shop's
 //    stripe_onboarding_complete/charges_enabled/payouts_enabled flags in sync without the owner
 //    needing to click "Refresh status".
-//  - `checkout.session.completed` / `payment_intent.*` (connected-account events, forwarded to
-//    the platform because they were created via the platform's API key with a Stripe-Account
-//    header): mark the matching `payments` row and repair order as paid.
+//  - `checkout.session.completed` (mode "payment", connected-account event forwarded to the
+//    platform because it was created via the platform's API key with a Stripe-Account header):
+//    mark the matching `payments` row and repair order as paid. This is a shop collecting money
+//    from ITS OWN customer.
+//  - `checkout.session.completed` (mode "subscription") / `customer.subscription.updated` /
+//    `customer.subscription.deleted` (platform-account events, no Stripe-Account header): these
+//    are OUR platform billing a shop to use the software at all — see create-subscription-
+//    checkout.ts. Distinguished from the payment-collection events above by `session.mode`.
+//
+// This same webhook endpoint already receives platform-account events (account.updated), so no
+// new endpoint or signing secret is needed for platform billing — just two more event types
+// added to this endpoint's subscription in the Stripe dashboard: customer.subscription.updated
+// and customer.subscription.deleted (checkout.session.completed is already subscribed).
 //
 // Signature verification is done by hand (HMAC-SHA256 over "<timestamp>.<raw body>") rather than
 // the stripe npm package, matching this codebase's pattern of calling Stripe/Supabase over plain
@@ -43,6 +53,16 @@ type StripeEvent = {
   data: { object: Record<string, unknown> };
 };
 
+// Maps Stripe's subscription statuses onto our smaller settings.subscription_status enum
+// (trialing/active/past_due/canceled/exempt). "exempt" is only ever set by us directly (Connor's
+// own shop, or a manual comp via the platform-admin tool) and never overwritten here.
+function mapSubscriptionStatus(stripeStatus: string): "active" | "past_due" | "canceled" | null {
+  if (stripeStatus === "active" || stripeStatus === "trialing") return "active";
+  if (stripeStatus === "past_due" || stripeStatus === "unpaid") return "past_due";
+  if (stripeStatus === "canceled" || stripeStatus === "incomplete_expired") return "canceled";
+  return null; // "incomplete" etc: not yet a real subscription, nothing to sync
+}
+
 export default async (request: Request) => {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
 
@@ -76,7 +96,35 @@ export default async (request: Request) => {
   }
 
   if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
-    const session = event.data.object as { id: string; payment_intent?: string; payment_status?: string; metadata?: Record<string, string> };
+    const session = event.data.object as {
+      id: string;
+      mode?: string;
+      payment_intent?: string;
+      payment_status?: string;
+      customer?: string;
+      subscription?: string;
+      metadata?: Record<string, string>;
+    };
+
+    // Platform billing: a shop just subscribed to use the software (see
+    // create-subscription-checkout.ts). Not a Connect-forwarded event — no Stripe-Account header
+    // was used to create this session, so it always lands here as a plain platform event.
+    if (session.mode === "subscription") {
+      const ownerId = session.metadata?.owner_id;
+      if (ownerId) {
+        await fetch(`${supabaseUrl}/rest/v1/settings?owner_id=eq.${ownerId}`, {
+          method: "PATCH", headers: serviceHeaders,
+          body: JSON.stringify({
+            subscription_status: "active",
+            stripe_customer_id: session.customer || null,
+            stripe_subscription_id: session.subscription || null,
+          }),
+        });
+      }
+      return json({ received: true });
+    }
+
+    // Otherwise: a shop collecting a card/ACH payment from ITS OWN customer via Stripe Connect.
     if (session.payment_status !== "paid") return json({ received: true });
 
     const paymentsResponse = await fetch(`${supabaseUrl}/rest/v1/payments?processor_session_id=eq.${session.id}&select=id,repair_order_id`, { headers: serviceHeaders });
@@ -96,10 +144,38 @@ export default async (request: Request) => {
   }
 
   if (event.type === "checkout.session.expired" || event.type === "checkout.session.async_payment_failed") {
-    const session = event.data.object as { id: string };
+    const session = event.data.object as { id: string; mode?: string };
+    if (session.mode === "subscription") return json({ received: true }); // nothing recorded yet to roll back
     await fetch(`${supabaseUrl}/rest/v1/payments?processor_session_id=eq.${session.id}`, {
       method: "PATCH", headers: serviceHeaders,
       body: JSON.stringify({ status: event.type === "checkout.session.expired" ? "canceled" : "failed" }),
+    });
+    return json({ received: true });
+  }
+
+  // Platform billing subscription lifecycle (renewals, failed-card retries, cancellations). These
+  // are keyed by Stripe customer id since a subscription event doesn't carry our owner_id metadata.
+  if (event.type === "customer.subscription.updated") {
+    const subscription = event.data.object as { id: string; customer: string; status: string; current_period_end?: number };
+    const mapped = mapSubscriptionStatus(subscription.status);
+    if (mapped) {
+      await fetch(`${supabaseUrl}/rest/v1/settings?stripe_customer_id=eq.${subscription.customer}&subscription_status=neq.exempt`, {
+        method: "PATCH", headers: serviceHeaders,
+        body: JSON.stringify({
+          subscription_status: mapped,
+          stripe_subscription_id: subscription.id,
+          subscription_current_period_end: subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString() : null,
+        }),
+      });
+    }
+    return json({ received: true });
+  }
+
+  if (event.type === "customer.subscription.deleted") {
+    const subscription = event.data.object as { customer: string };
+    await fetch(`${supabaseUrl}/rest/v1/settings?stripe_customer_id=eq.${subscription.customer}&subscription_status=neq.exempt`, {
+      method: "PATCH", headers: serviceHeaders,
+      body: JSON.stringify({ subscription_status: "canceled" }),
     });
     return json({ received: true });
   }

@@ -5,7 +5,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { MultipointInspection } from "@/components/MultipointInspection";
 import { supabase } from "@/lib/supabase";
 
-type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection";
+type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection" | "platform_admin";
 type DocumentMode = "estimate" | "work_order" | "invoice";
 type WorkspaceTab = "work_order" | "invoice";
 type DocumentType = "estimate" | "repair_order" | "invoice";
@@ -33,6 +33,14 @@ type Settings = {
   stripe_onboarding_complete: boolean;
   stripe_charges_enabled: boolean;
   stripe_payouts_enabled: boolean;
+  // Platform billing: Connor charging this shop to use the software (separate from the shop's own
+  // Stripe Connect account above, which is for THEIR customers' payments).
+  subscription_status: "trialing" | "active" | "past_due" | "canceled" | "exempt";
+  plan_price_cents: number | null;
+  trial_ro_limit: number;
+  trial_ro_created_count: number;
+  subscription_current_period_end: string | null;
+  is_platform_admin: boolean;
 };
 
 type StaffRole = "technician" | "service_advisor";
@@ -224,6 +232,12 @@ const defaultSettings: Settings = {
   stripe_onboarding_complete: false,
   stripe_charges_enabled: false,
   stripe_payouts_enabled: false,
+  subscription_status: "trialing",
+  plan_price_cents: null,
+  trial_ro_limit: 5,
+  trial_ro_created_count: 0,
+  subscription_current_period_end: null,
+  is_platform_admin: false,
 };
 
 function logoPublicUrl(logoPath: string | null | undefined) {
@@ -687,6 +701,13 @@ function RepairOrderApp({ user }: { user: User }) {
   const isTechnicianOnly = Boolean(currentStaff) && currentStaff!.role === "technician" && !currentStaff!.is_admin;
   const ownerId = currentStaff?.owner_id ?? user.id;
   const [settings, setSettings] = useState<Settings>(defaultSettings);
+  const isPlatformAdmin = isOwner && settings.is_platform_admin;
+  // Mirrors the DB's owner_can_write() RLS check, purely for UX (friendly messaging/disabled
+  // buttons) — the real enforcement lives in Postgres and doesn't depend on this being correct.
+  const canWrite =
+    settings.subscription_status === "active" ||
+    settings.subscription_status === "exempt" ||
+    (settings.subscription_status === "trialing" && settings.trial_ro_created_count < settings.trial_ro_limit);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [repairOrders, setRepairOrders] = useState<RepairOrder[]>([]);
@@ -809,6 +830,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const code = params.get("code");
     const stripeOAuth = params.get("stripe_oauth");
     const stripeReturn = params.get("stripe");
+    const billingReturn = params.get("billing");
     if (stripeOAuth && code) {
       setStripeOAuthCode(code);
       setView("settings");
@@ -817,6 +839,12 @@ function RepairOrderApp({ user }: { user: User }) {
       setStripeReturnPending(true);
       setView("settings");
       window.history.replaceState({}, "", window.location.pathname);
+    } else if (billingReturn === "success" || billingReturn === "canceled") {
+      // The subscription webhook usually beats the redirect back here, but re-load once more in
+      // case it hasn't — the window-focus refresh below would otherwise be the only backstop.
+      setView("settings");
+      window.history.replaceState({}, "", window.location.pathname);
+      window.setTimeout(() => void loadData(false), 1500);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1016,6 +1044,10 @@ function RepairOrderApp({ user }: { user: User }) {
   }
 
   async function toggleArchiveRo(ro: RepairOrder) {
+    if (!canWrite) {
+      setError("This shop's access is read-only right now — go to Settings to resolve billing before archiving work orders.");
+      return;
+    }
     const restoring = Boolean(ro.archived_at);
     if (!restoring && !window.confirm(`Archive RO #${padRo(ro.ro_number)}? It will be hidden from the normal dashboard but can be restored.`)) {
       return;
@@ -1036,6 +1068,10 @@ function RepairOrderApp({ user }: { user: User }) {
   }
 
   async function deleteRo(ro: RepairOrder) {
+    if (!canWrite) {
+      setError("This shop's access is read-only right now — go to Settings to resolve billing before deleting work orders.");
+      return;
+    }
     const confirmed = window.confirm(
       `Permanently delete RO #${padRo(ro.ro_number)}?\n\nThis also deletes its line items and saved inspection and cannot be undone.`
     );
@@ -1058,6 +1094,10 @@ function RepairOrderApp({ user }: { user: User }) {
   }
 
   async function toggleArchiveCustomer(customer: Customer) {
+    if (!canWrite) {
+      setError("This shop's access is read-only right now — go to Settings to resolve billing before archiving customers.");
+      return;
+    }
     const restoring = Boolean(customer.archived_at);
     if (!restoring && !window.confirm(`Archive ${customer.name}? They will be hidden from the normal customer list and new-work-order selector, but their history will remain.`)) {
       return;
@@ -1078,6 +1118,10 @@ function RepairOrderApp({ user }: { user: User }) {
   }
 
   async function deleteCustomer(customer: Customer) {
+    if (!canWrite) {
+      setError("This shop's access is read-only right now — go to Settings to resolve billing before deleting customers.");
+      return;
+    }
     const roCount = repairOrders.filter((ro) => ro.customer_id === customer.id).length;
     if (roCount > 0) {
       setError(`${customer.name} has ${roCount} work order${roCount === 1 ? "" : "s"}. Archive the customer instead, or delete those work orders first.`);
@@ -1163,6 +1207,11 @@ function RepairOrderApp({ user }: { user: User }) {
               Settings
             </button>
           )}
+          {isPlatformAdmin && (
+            <button className={view === "platform_admin" ? "active" : ""} onClick={() => setView("platform_admin")}>
+              Platform Admin
+            </button>
+          )}
         </nav>
         <button className="button secondary" onClick={() => setShowPasswordChange(true)}>
           Change password
@@ -1175,6 +1224,22 @@ function RepairOrderApp({ user }: { user: User }) {
 
       <main className="main-area">
         {error && <div className="error-banner no-print">{error}</div>}
+        {!canWrite && !loading && (
+          <div className="billing-banner no-print">
+            <span>
+              {settings.subscription_status === "trialing"
+                ? `You've used all ${settings.trial_ro_limit} free repair orders. Existing work orders are still viewable, but creating or editing anything is paused until this shop subscribes.`
+                : "This shop's subscription needs attention. Existing work orders are still viewable, but creating or editing anything is paused until it's resolved."}
+            </span>
+            {isOwner ? (
+              <button className="button small primary" onClick={() => setView("settings")}>
+                Go to Billing
+              </button>
+            ) : (
+              <span className="muted" style={{ fontSize: 13 }}>Ask the shop owner to update billing.</span>
+            )}
+          </div>
+        )}
         {loading ? (
           <div className="panel">Loading shop data…</div>
         ) : view === "dashboard" ? (
@@ -1252,6 +1317,7 @@ function RepairOrderApp({ user }: { user: User }) {
           <SettingsPanel
             user={user}
             ownerId={ownerId}
+            isOwner={isOwner}
             initialSettings={settings}
             pendingStripeOAuthCode={stripeOAuthCode}
             onStripeOAuthCodeHandled={() => setStripeOAuthCode(null)}
@@ -1263,6 +1329,8 @@ function RepairOrderApp({ user }: { user: User }) {
             }}
             onStripeStatusChanged={() => void loadData(false)}
           />
+        ) : view === "platform_admin" && isPlatformAdmin ? (
+          <PlatformAdminPanel />
         ) : view === "inspection" && selectedRo ? (
           <MultipointInspection ro={selectedRo} userId={ownerId} onBack={returnFromInspection} />
         ) : selectedRo ? (
@@ -1568,6 +1636,12 @@ function RepairOrderEditor({
   onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode) => void;
   onDelete?: () => void;
 }) {
+  // Mirrors the same check in RepairOrderApp (and the DB's owner_can_write() RLS gate) — settings
+  // is already passed down, so no extra prop is needed here.
+  const canWrite =
+    settings.subscription_status === "active" ||
+    settings.subscription_status === "exempt" ||
+    (settings.subscription_status === "trialing" && settings.trial_ro_created_count < settings.trial_ro_limit);
   const preselectedVehicle = vehicles.find((vehicle) => vehicle.id === initialVehicleId);
   const preselectedCustomerId = initialRo?.customer_id ?? initialCustomerId ?? preselectedVehicle?.customer_id ?? "";
   const preselectedVehicleId = initialRo?.vehicle_id ?? initialVehicleId ?? "";
@@ -2036,6 +2110,14 @@ function RepairOrderEditor({
   }
 
   async function save(previewMode?: DocumentMode) {
+    if (!canWrite) {
+      setMessage(
+        initialRo
+          ? "This shop's access is read-only right now — go to Settings to resolve billing before saving changes."
+          : "You've used all this shop's free repair orders. Go to Settings → Billing to subscribe and keep creating new ones."
+      );
+      return;
+    }
     if ((initialRo?.status === "completed" || initialRo?.paid) && !finalEditConfirmed) {
       if (!window.confirm("Override this final invoice and save changes? This updates its charges and totals. The original customer estimate approval will remain unchanged.")) return;
       setFinalEditConfirmed(true);
@@ -3394,9 +3476,301 @@ function PaymentsPanel({
   );
 }
 
+function BillingPanel({ settings }: { settings: Settings }) {
+  const [busy, setBusy] = useState<"" | "subscribe" | "portal">("");
+  const [message, setMessage] = useState("");
+
+  async function authHeader() {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (!accessToken) throw new Error("Your session expired. Sign in again.");
+    return { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` };
+  }
+
+  async function subscribe() {
+    setBusy("subscribe");
+    setMessage("");
+    try {
+      const headers = await authHeader();
+      const response = await fetch("/.netlify/functions/create-subscription-checkout", { method: "POST", headers });
+      const body = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !body.url) throw new Error(body.error || "Could not start checkout.");
+      window.location.href = body.url;
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not start checkout.");
+      setBusy("");
+    }
+  }
+
+  async function manageBilling() {
+    setBusy("portal");
+    setMessage("");
+    try {
+      const headers = await authHeader();
+      const response = await fetch("/.netlify/functions/create-billing-portal-session", { method: "POST", headers });
+      const body = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !body.url) throw new Error(body.error || "Could not open the billing portal.");
+      window.location.href = body.url;
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not open the billing portal.");
+      setBusy("");
+    }
+  }
+
+  const status = settings.subscription_status;
+  const rosLeft = Math.max(0, settings.trial_ro_limit - settings.trial_ro_created_count);
+  const price = settings.plan_price_cents != null ? `$${(settings.plan_price_cents / 100).toFixed(2)}/mo` : "—";
+
+  return (
+    <div className="panel settings-panel">
+      <h2 style={{ marginTop: 0 }}>Billing</h2>
+      {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}
+
+      {status === "exempt" ? (
+        <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>This shop isn&apos;t billed.</p>
+      ) : status === "trialing" ? (
+        <>
+          <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
+            Free trial — {rosLeft} of {settings.trial_ro_limit} repair order{settings.trial_ro_limit === 1 ? "" : "s"} left.
+            {rosLeft === 0 ? " Subscribe to keep creating new ones." : ` Subscribing costs ${price} once you're ready.`}
+          </p>
+          <button type="button" className="button primary" disabled={busy !== ""} onClick={() => void subscribe()}>
+            {busy === "subscribe" ? "Starting…" : `Subscribe — ${price}`}
+          </button>
+        </>
+      ) : status === "active" ? (
+        <div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span className="button small primary" style={{ pointerEvents: "none" }}>Active</span>
+            <span className="muted" style={{ fontSize: 13 }}>
+              {price}
+              {settings.subscription_current_period_end ? ` · renews ${new Date(settings.subscription_current_period_end).toLocaleDateString()}` : ""}
+            </span>
+          </div>
+          <button type="button" className="button secondary" style={{ marginTop: 12 }} disabled={busy !== ""} onClick={() => void manageBilling()}>
+            {busy === "portal" ? "Opening…" : "Manage billing"}
+          </button>
+        </div>
+      ) : (
+        <div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span className="button small warning" style={{ pointerEvents: "none" }}>
+              {status === "past_due" ? "Payment needs attention" : "Subscription canceled"}
+            </span>
+            <span className="muted" style={{ fontSize: 13 }}>Access is read-only until this is resolved.</span>
+          </div>
+          <button type="button" className="button primary" style={{ marginTop: 12 }} disabled={busy !== ""} onClick={() => void manageBilling()}>
+            {busy === "portal" ? "Opening…" : "Manage billing"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type PlatformTenant = {
+  owner_id: string;
+  business_name: string | null;
+  business_email: string | null;
+  subscription_status: "trialing" | "active" | "past_due" | "canceled" | "exempt";
+  plan_price_cents: number | null;
+  trial_ro_limit: number;
+  trial_ro_created_count: number;
+  is_platform_admin: boolean;
+  subscription_current_period_end: string | null;
+};
+
+// Connor-only: every shop on the platform, with an editable price per shop ("legacy shops keep
+// their original price, new shops get whatever the current default is"). Nothing here goes through
+// RLS — it's all served by platform-admin.ts, which itself checks the caller's own
+// settings.is_platform_admin before doing anything cross-tenant.
+function PlatformAdminPanel() {
+  const [tenants, setTenants] = useState<PlatformTenant[]>([]);
+  const [defaultPriceCents, setDefaultPriceCents] = useState<number | null>(null);
+  const [defaultPriceInput, setDefaultPriceInput] = useState("");
+  const [priceInputs, setPriceInputs] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [busyOwnerId, setBusyOwnerId] = useState("");
+  const [busyDefault, setBusyDefault] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function call(body: Record<string, unknown>) {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (!accessToken) throw new Error("Your session expired. Sign in again.");
+    const response = await fetch("/.netlify/functions/platform-admin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Request failed.");
+    return result;
+  }
+
+  async function load() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const result = await call({ action: "list" }) as { tenants: PlatformTenant[]; defaultPlanPriceCents: number | null };
+      setTenants(result.tenants);
+      setDefaultPriceCents(result.defaultPlanPriceCents);
+      setDefaultPriceInput(result.defaultPlanPriceCents != null ? (result.defaultPlanPriceCents / 100).toFixed(2) : "");
+      setPriceInputs(
+        Object.fromEntries(result.tenants.map((tenant) => [tenant.owner_id, tenant.plan_price_cents != null ? (tenant.plan_price_cents / 100).toFixed(2) : ""]))
+      );
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not load shops.");
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function savePrice(ownerId: string) {
+    const dollars = Number(priceInputs[ownerId]);
+    if (!Number.isFinite(dollars) || dollars < 0) {
+      setMessage("Enter a valid price in dollars.");
+      return;
+    }
+    setBusyOwnerId(ownerId);
+    setMessage("");
+    try {
+      await call({ action: "update_price", ownerId, planPriceCents: Math.round(dollars * 100) });
+      await load();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not update price.");
+    }
+    setBusyOwnerId("");
+  }
+
+  async function saveStatus(ownerId: string, status: PlatformTenant["subscription_status"]) {
+    setBusyOwnerId(ownerId);
+    setMessage("");
+    try {
+      await call({ action: "update_status", ownerId, status });
+      await load();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not update status.");
+    }
+    setBusyOwnerId("");
+  }
+
+  async function saveDefaultPrice() {
+    const dollars = Number(defaultPriceInput);
+    if (!Number.isFinite(dollars) || dollars < 0) {
+      setMessage("Enter a valid price in dollars.");
+      return;
+    }
+    setBusyDefault(true);
+    setMessage("");
+    try {
+      await call({ action: "update_default_price", defaultPlanPriceCents: Math.round(dollars * 100) });
+      await load();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not update the default price.");
+    }
+    setBusyDefault(false);
+  }
+
+  return (
+    <section>
+      <div className="panel">
+        <h2 style={{ marginTop: 0 }}>Platform Admin</h2>
+        <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
+          Every shop on Allegiant RO, and what they&apos;re billed. Changing a shop&apos;s price only affects that shop —
+          existing subscribers never change price unless you edit them here.
+        </p>
+        {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="muted" style={{ fontSize: 13 }}>Default price for new shops ($/mo)</span>
+            <input
+              type="number" min="0" step="0.01" style={{ width: 100 }}
+              value={defaultPriceInput}
+              onChange={(event) => setDefaultPriceInput(event.target.value)}
+            />
+          </label>
+          <button type="button" className="button secondary small" disabled={busyDefault} onClick={() => void saveDefaultPrice()}>
+            {busyDefault ? "Saving…" : "Save"}
+          </button>
+          {defaultPriceCents != null && (
+            <span className="muted" style={{ fontSize: 12 }}>Currently ${(defaultPriceCents / 100).toFixed(2)}/mo</span>
+          )}
+        </div>
+
+        {loading ? (
+          <p className="muted" style={{ marginTop: 16 }}>Loading shops…</p>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: 16 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Shop</th>
+                  <th>Status</th>
+                  <th>Trial usage</th>
+                  <th>Price ($/mo)</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {tenants.map((tenant) => (
+                  <tr key={tenant.owner_id}>
+                    <td>
+                      <strong>{tenant.business_name || "—"}</strong>
+                      {tenant.is_platform_admin && <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>(you)</span>}
+                      <div className="muted" style={{ fontSize: 12 }}>{tenant.business_email || "—"}</div>
+                    </td>
+                    <td>
+                      <select
+                        value={tenant.subscription_status}
+                        disabled={busyOwnerId === tenant.owner_id || tenant.is_platform_admin}
+                        onChange={(event) => void saveStatus(tenant.owner_id, event.target.value as PlatformTenant["subscription_status"])}
+                      >
+                        <option value="trialing">Trialing</option>
+                        <option value="active">Active</option>
+                        <option value="past_due">Past due</option>
+                        <option value="canceled">Canceled</option>
+                        <option value="exempt">Exempt (comped)</option>
+                      </select>
+                    </td>
+                    <td>{tenant.trial_ro_created_count} / {tenant.trial_ro_limit} ROs</td>
+                    <td>
+                      <input
+                        type="number" min="0" step="0.01" style={{ width: 90 }}
+                        value={priceInputs[tenant.owner_id] ?? ""}
+                        disabled={tenant.is_platform_admin}
+                        onChange={(event) => setPriceInputs((current) => ({ ...current, [tenant.owner_id]: event.target.value }))}
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button" className="button small secondary"
+                        disabled={busyOwnerId === tenant.owner_id || tenant.is_platform_admin}
+                        onClick={() => void savePrice(tenant.owner_id)}
+                      >
+                        {busyOwnerId === tenant.owner_id ? "Saving…" : "Save price"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!tenants.length && <tr><td colSpan={5} className="empty-state">No shops yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SettingsPanel({
   user,
   ownerId,
+  isOwner,
   initialSettings,
   onSaved,
   pendingStripeOAuthCode,
@@ -3407,6 +3781,7 @@ function SettingsPanel({
 }: {
   user: User;
   ownerId: string;
+  isOwner: boolean;
   initialSettings: Settings;
   onSaved: () => void;
   pendingStripeOAuthCode: string | null;
@@ -3570,6 +3945,8 @@ function SettingsPanel({
           </label>
         </div>
       </div>
+
+      {isOwner && <BillingPanel settings={initialSettings} />}
 
       <PaymentsPanel
         ownerId={ownerId}
