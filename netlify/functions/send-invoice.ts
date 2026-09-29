@@ -154,7 +154,8 @@ export default async (request: Request) => {
   const tax = Math.max(0, taxableAmount) * (Number(ro.tax_rate) / 100);
   const total = subtotal + tax;
 
-  const roNumberLabel = `#${String(ro.ro_number).padStart(4, "0")}`;
+  const roNumberDigits = String(ro.ro_number).padStart(4, "0");
+  const roNumberLabel = `#${roNumberDigits}`;
   const businessName = (settings.business_name as string) || "Allegiant Auto Care";
   const logoPath = settings.logo_path as string | null | undefined;
   const logoUrl = logoPath ? `${supabaseUrl}/storage/v1/object/public/shop-branding/${logoPath}` : null;
@@ -169,8 +170,9 @@ export default async (request: Request) => {
   if (!ro.paid && total > 0 && stripeSecretKey && stripeAccountId && stripeChargesEnabled) {
     try {
       const amountCents = Math.round(total * 100);
-      const successUrl = new URL(`/?paid=1&ro=${ro.id}`, siteUrl).toString();
-      const cancelUrl = new URL(`/?paid=0&ro=${ro.id}`, siteUrl).toString();
+      const statusParams = `ro_number=${roNumberDigits}&business=${encodeURIComponent(businessName)}`;
+      const successUrl = new URL(`/payment-status?status=success&${statusParams}`, siteUrl).toString();
+      const cancelUrl = new URL(`/payment-status?status=canceled&${statusParams}`, siteUrl).toString();
       const sessionParams = new URLSearchParams({
         mode: "payment",
         "payment_method_types[0]": "card",

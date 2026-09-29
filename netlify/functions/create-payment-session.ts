@@ -120,9 +120,11 @@ export default async (request: Request) => {
   if (total <= 0) return json({ error: "This invoice has nothing to charge." }, 400);
   const amountCents = Math.round(total * 100);
 
-  const roNumberLabel = `#${String(ro.ro_number).padStart(4, "0")}`;
-  const successUrl = new URL(`/?paid=1&ro=${ro.id}`, siteUrl).toString();
-  const cancelUrl = new URL(`/?paid=0&ro=${ro.id}`, siteUrl).toString();
+  const roNumberDigits = String(ro.ro_number).padStart(4, "0");
+  const roNumberLabel = `#${roNumberDigits}`;
+  const statusParams = `ro_number=${roNumberDigits}${settings.business_name ? `&business=${encodeURIComponent(settings.business_name)}` : ""}`;
+  const successUrl = new URL(`/payment-status?status=success&${statusParams}`, siteUrl).toString();
+  const cancelUrl = new URL(`/payment-status?status=canceled&${statusParams}`, siteUrl).toString();
 
   const sessionParams = new URLSearchParams({
     mode: "payment",
