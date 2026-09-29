@@ -4035,27 +4035,31 @@ function DocumentView({
           <button className={mode === "work_order" ? "active" : ""} onClick={() => onModeChange("work_order")}>Work Order</button>
           <button className={mode === "invoice" ? "active" : ""} onClick={() => onModeChange("invoice")}>Invoice</button>
         </div>
-        <div className="button-row">
-          {!ro.archived_at && <button className="button secondary" onClick={onEdit}>Edit Work Order</button>}
-          <button className="button primary" onClick={onInspection}>Multipoint Inspection</button>
-          <button className={`button ${ro.status === "voided" ? "success" : "warning"}`} onClick={onVoid}>
-            {ro.status === "voided" ? "Reopen" : "Void"}
-          </button>
-          <button className="button ghost" onClick={onArchive}>
-            {ro.archived_at ? "Restore" : "Archive"}
-          </button>
-          <button className="button danger" onClick={onDelete}>Delete permanently</button>
-          {isInvoice && ro.status !== "voided" && (
-            <button className="button secondary" disabled={invoiceEmailBusy} onClick={() => void emailInvoiceNow()}>
-              {invoiceEmailBusy ? "Sending…" : "Email Invoice"}
+        <div className="workspace-actions">
+          <div className="button-row button-row-muted">
+            {!ro.archived_at && <button className="button ghost" onClick={onEdit}>Edit Work Order</button>}
+            <button className="button ghost" onClick={onInspection}>Multipoint Inspection</button>
+            <button className="button ghost" onClick={onArchive}>
+              {ro.archived_at ? "Restore" : "Archive"}
             </button>
-          )}
-          {isInvoice && !ro.paid && ro.status !== "voided" && settings.stripe_charges_enabled && (
-            <button className="button success" disabled={paymentBusy} onClick={() => void collectPayment()}>
-              {paymentBusy ? "Starting…" : "Collect payment"}
+            <button className={`button ghost ${ro.status === "voided" ? "" : "warning-text"}`} onClick={onVoid}>
+              {ro.status === "voided" ? "Reopen" : "Void"}
             </button>
-          )}
-          <button className="button primary" disabled={photosLoading || printing || Boolean(photoError)} onClick={() => void printDocument()}>{photosLoading || printing ? "Loading images…" : "Print / Save PDF"}</button>
+            <button className="button ghost danger-text" onClick={onDelete}>Delete permanently</button>
+          </div>
+          <div className="button-row">
+            {isInvoice && ro.status !== "voided" && (
+              <button className="button secondary" disabled={invoiceEmailBusy} onClick={() => void emailInvoiceNow()}>
+                {invoiceEmailBusy ? "Sending…" : "Email Invoice"}
+              </button>
+            )}
+            {isInvoice && !ro.paid && ro.status !== "voided" && settings.stripe_charges_enabled && (
+              <button className="button success" disabled={paymentBusy} onClick={() => void collectPayment()}>
+                {paymentBusy ? "Starting…" : "Collect payment"}
+              </button>
+            )}
+            <button className="button primary" disabled={photosLoading || printing || Boolean(photoError)} onClick={() => void printDocument()}>{photosLoading || printing ? "Loading images…" : "Print / Save PDF"}</button>
+          </div>
         </div>
       </div>
       {invoiceEmailMessage && (

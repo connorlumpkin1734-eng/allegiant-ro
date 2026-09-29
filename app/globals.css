@@ -1241,6 +1241,13 @@ tbody tr:hover { background: #f8fafc; }
   background: #fbe5e7;
 }
 
+.button.warning-text {
+  color: #92400e;
+}
+.button.warning-text:hover {
+  background: #fdf0dc;
+}
+
 /* Multipoint inspection workspace */
 .inspection-shell {
   width: min(1500px, 100%);
