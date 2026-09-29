@@ -485,7 +485,7 @@ export default function HomePage() {
 }
 
 function AuthScreen() {
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -495,6 +495,19 @@ function AuthScreen() {
     event.preventDefault();
     setBusy(true);
     setMessage("");
+
+    if (mode === "forgot") {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      setMessage(
+        error
+          ? error.message
+          : "If that email has an account, a password reset link is on its way. Check your inbox."
+      );
+      setBusy(false);
+      return;
+    }
 
     const result =
       mode === "login"
@@ -530,22 +543,43 @@ function AuthScreen() {
               autoComplete="email"
             />
           </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-              minLength={6}
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-            />
-          </label>
+          {mode !== "forgot" && (
+            <label>
+              Password
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                minLength={6}
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+              />
+            </label>
+          )}
           {message && <div className="notice">{message}</div>}
           <button className="button primary" disabled={busy} type="submit">
-            {busy ? "Working…" : mode === "login" ? "Sign in" : "Create account"}
+            {busy
+              ? "Working…"
+              : mode === "login"
+                ? "Sign in"
+                : mode === "signup"
+                  ? "Create account"
+                  : "Send reset link"}
           </button>
         </form>
+        {mode === "login" && (
+          <button
+            className="button link-button"
+            type="button"
+            onClick={() => {
+              setMode("forgot");
+              setMessage("");
+            }}
+            style={{ marginTop: 4 }}
+          >
+            Forgot password?
+          </button>
+        )}
         <button
           className="button link-button"
           type="button"

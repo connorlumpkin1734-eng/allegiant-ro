@@ -1577,6 +1577,15 @@ tbody tr:hover { background: var(--panel-header); }
 
 .document-totals .approval-discount-total { color: #08683b; background: #e8f7ef; padding: 8px; }
 
+/* Status badges for the customer-facing inspection report (app/inspection-report). This page
+   lives inside .document-page, so these stay explicit light colors — not the app's dark --panel/
+   --line vars, which are themed for the staff-facing .inspection-* workspace instead. */
+.inspection-report-status { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.04em; }
+.inspection-report-status.good { background: #e7f7ef; color: #16794a; }
+.inspection-report-status.monitor { background: #fff3d6; color: #8a5a00; }
+.inspection-report-status.service { background: #fae7e9; color: #981c28; }
+.inspection-report-status.na { background: #edf1f6; color: #5a6576; }
+
 /* Shared estimate, invoice and work-order photos. */
 .document-photos { margin-top: 24px; }
 .document-photo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }

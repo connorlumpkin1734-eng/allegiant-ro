@@ -5,14 +5,14 @@ import { PDFDocument, PDFTextField } from "pdf-lib";
 import { finishInspectionPdf } from "@/lib/inspectionPdf";
 import { supabase } from "@/lib/supabase";
 
-type Status = "" | "good" | "monitor" | "service" | "na";
-type InspectionValue = {
+export type Status = "" | "good" | "monitor" | "service" | "na";
+export type InspectionValue = {
   status: Status;
   measurement1: string;
   measurement2: string;
   notes: string;
 };
-type InspectionData = {
+export type InspectionData = {
   technician: string;
   transmission: "" | "automatic" | "manual";
   page1Notes: string;
@@ -35,19 +35,19 @@ type InspectionRo = {
     plate_state: string | null;
   } | null;
 };
-type InspectionItem = {
+export type InspectionItem = {
   id: string;
   label: string;
   measurement1?: string;
   measurement2?: string;
 };
-type InspectionSection = {
+export type InspectionSection = {
   key: string;
   title: string;
   items: InspectionItem[];
 };
 
-const sections: InspectionSection[] = [
+export const sections: InspectionSection[] = [
   {
     key: "tires",
     title: "Tires & Wheels",
@@ -149,7 +149,7 @@ const sections: InspectionSection[] = [
   },
 ];
 
-const blankValue = (): InspectionValue => ({ status: "good", measurement1: "", measurement2: "", notes: "" });
+export const blankValue = (): InspectionValue => ({ status: "good", measurement1: "", measurement2: "", notes: "" });
 
 function blankInspection(): InspectionData {
   const items: Record<string, InspectionValue> = {};
@@ -159,7 +159,7 @@ function blankInspection(): InspectionData {
   return { technician: "", transmission: "", page1Notes: "", recommendations: "", initials: ["", "", ""], items };
 }
 
-function normalizeInspection(value: unknown): InspectionData {
+export function normalizeInspection(value: unknown): InspectionData {
   const blank = blankInspection();
   if (!value || typeof value !== "object") return blank;
   const candidate = value as Partial<InspectionData>;
@@ -181,7 +181,7 @@ function normalizeInspection(value: unknown): InspectionData {
   };
 }
 
-const statusOptions: { value: Exclude<Status, "">; label: string }[] = [
+export const statusOptions: { value: Exclude<Status, "">; label: string }[] = [
   { value: "good", label: "Good" },
   { value: "monitor", label: "Monitor" },
   { value: "service", label: "Service" },
@@ -201,6 +201,7 @@ export function MultipointInspection({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [sending, setSending] = useState(false);
   const [message, setMessage] = useState("");
   const [savedAt, setSavedAt] = useState("");
   const customer = ro.customers;
@@ -266,6 +267,38 @@ export function MultipointInspection({
       setMessage("Inspection saved to this repair order.");
     }
     setSaving(false);
+    return !error;
+  }
+
+  async function sendToCustomer() {
+    if (!customer?.email) {
+      setMessage("Add the customer's email address on this repair order before sending.");
+      return;
+    }
+    setSending(true);
+    setMessage("");
+    const savedOk = await saveInspection();
+    if (!savedOk) {
+      setSending(false);
+      return;
+    }
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const response = await fetch("/.netlify/functions/send-inspection", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.session?.access_token ?? ""}`,
+        },
+        body: JSON.stringify({ repairOrderId: ro.id }),
+      });
+      const body = await response.json() as { message?: string; error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not send the inspection report.");
+      setMessage(body.message || `Inspection report emailed to ${customer.email}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not send the inspection report.");
+    }
+    setSending(false);
   }
 
   async function exportPdf() {
@@ -349,7 +382,10 @@ export function MultipointInspection({
           <button className="button secondary" onClick={exportPdf} disabled={exporting}>
             {exporting ? "Creating PDF…" : "Export PDF"}
           </button>
-          <button className="button primary" onClick={saveInspection} disabled={saving}>
+          <button className="button secondary" onClick={sendToCustomer} disabled={sending || saving}>
+            {sending ? "Sending…" : "Share with customer"}
+          </button>
+          <button className="button primary" onClick={() => void saveInspection()} disabled={saving}>
             {saving ? "Saving…" : "Save Inspection"}
           </button>
         </div>
@@ -456,7 +492,8 @@ export function MultipointInspection({
       <div className="inspection-bottom-actions">
         <button className="button secondary" onClick={onBack}>Back to RO</button>
         <button className="button secondary" onClick={exportPdf} disabled={exporting}>Export PDF</button>
-        <button className="button primary" onClick={saveInspection} disabled={saving}>{saving ? "Saving…" : "Save Inspection"}</button>
+        <button className="button secondary" onClick={sendToCustomer} disabled={sending || saving}>{sending ? "Sending…" : "Share with customer"}</button>
+        <button className="button primary" onClick={() => void saveInspection()} disabled={saving}>{saving ? "Saving…" : "Save Inspection"}</button>
       </div>
     </section>
   );

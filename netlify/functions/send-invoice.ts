@@ -81,7 +81,6 @@ export default async (request: Request) => {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const resendKey = process.env.RESEND_API_KEY;
   const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-  const fromEmail = "Allegiant Auto Care <invoices@allegiantautocare.com>";
   const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(request.url).origin;
   const missing = [
     ["NEXT_PUBLIC_SUPABASE_URL", supabaseUrl],
@@ -157,6 +156,11 @@ export default async (request: Request) => {
   const roNumberDigits = String(ro.ro_number).padStart(4, "0");
   const roNumberLabel = `#${roNumberDigits}`;
   const businessName = (settings.business_name as string) || "Allegiant Auto Care";
+  // Shared platform sending domain: every shop sends from the same verified address (so we're not
+  // starting sender reputation from zero per tenant), but the display name is the shop's own name,
+  // and Reply-To routes the customer's reply to the shop's real inbox, not this platform mailbox.
+  const fromEmail = `${businessName} <invoices@allegiantautocare.com>`;
+  const replyToEmail = (settings.business_email as string) || undefined;
   const logoPath = settings.logo_path as string | null | undefined;
   const logoUrl = logoPath ? `${supabaseUrl}/storage/v1/object/public/shop-branding/${logoPath}` : null;
   const primaryColor = (settings.primary_color as string) || "#2459a9";
@@ -275,6 +279,7 @@ export default async (request: Request) => {
     body: JSON.stringify({
       from: fromEmail,
       to: [customerEmail],
+      ...(replyToEmail ? { reply_to: replyToEmail } : {}),
       subject: `Invoice ${roNumberLabel} from ${businessName}${ro.paid ? " — Paid" : ""}`,
       text,
       html,

@@ -31,19 +31,17 @@ export default async (request: Request) => {
   const publicKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const resendKey = process.env.RESEND_API_KEY;
-  const fromEmail = "Allegiant Auto Care <estimates@allegiantautocare.com>";
   const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(request.url).origin;
   const missing = [
     ["NEXT_PUBLIC_SUPABASE_URL", supabaseUrl],
     ["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", publicKey],
     ["SUPABASE_SERVICE_ROLE_KEY", serviceKey],
     ["RESEND_API_KEY", resendKey],
-    ["ESTIMATE_FROM_EMAIL", fromEmail],
   ].filter(([, value]) => !value).map(([key]) => key);
   if (missing.length) {
     return json({ error: `Estimate email is missing Netlify variable${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}.` }, 500);
   }
-  if (!supabaseUrl || !publicKey || !serviceKey || !resendKey || !fromEmail) {
+  if (!supabaseUrl || !publicKey || !serviceKey || !resendKey) {
     return json({ error: "Estimate email configuration could not be loaded." }, 500);
   }
 
@@ -105,6 +103,12 @@ export default async (request: Request) => {
     secondaryColor,
   };
 
+  // Shared platform sending domain: every shop sends from the same verified address (so we're not
+  // starting sender reputation from zero per tenant), but the display name is the shop's own name,
+  // and Reply-To routes the customer's reply to the shop's real inbox, not this platform mailbox.
+  const fromEmail = `${snapshot.businessName} <estimates@allegiantautocare.com>`;
+  const replyToEmail = (settings.business_email as string) || undefined;
+
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
   const tokenHash = await hashToken(token);
   const approvalLink = new URL("/estimate-approval/", siteUrl);
@@ -130,6 +134,7 @@ export default async (request: Request) => {
     body: JSON.stringify({
       from: fromEmail,
       to: [customerEmail],
+      ...(replyToEmail ? { reply_to: replyToEmail } : {}),
       subject: `Estimate #${String(ro.ro_number).padStart(4, "0")} from ${snapshot.businessName}`,
       text: `Hi ${snapshot.customerName},\n\nYour estimate #${String(ro.ro_number).padStart(4, "0")} for ${snapshot.vehicle} is ready. Review it and approve or decline each service here:\n\n${approvalUrl}\n\nEstimated total: ${money(total)}\n\n${snapshot.businessName}`,
       html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden"><div style="padding:24px;border-bottom:5px solid ${escapeHtml(primaryColor)}">${brandHeader}<p style="margin:6px 0 0;color:#64748b">Estimate #${String(ro.ro_number).padStart(4, "0")} · ${escapeHtml(snapshot.vehicle)}</p></div><div style="padding:24px"><p>Hi ${escapeHtml(snapshot.customerName)},</p><p>Your itemized estimate is ready. You can approve or decline each recommended service separately.</p><div style="background:#edf4ff;border-left:6px solid ${escapeHtml(primaryColor)};padding:18px;margin:22px 0"><div style="font-size:12px;font-weight:700;text-transform:uppercase">Estimated total</div><div style="font-size:30px;font-weight:800;margin-top:5px">${money(total)}</div></div><table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0"><tr><td bgcolor="${escapeHtml(accentColor)}" style="border-radius:8px"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:${escapeHtml(accentColor)};color:#ffffff;text-decoration:none;padding:15px 22px;border-radius:8px;font-weight:700">Review estimate and choose services</a></td></tr></table><p style="color:#64748b;font-size:13px">If the button does not open, tap or copy this secure link:</p><p style="font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-all"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="color:${escapeHtml(primaryColor)}">${escapeHtml(approvalUrl)}</a></p><p style="color:#64748b;font-size:13px">The secure estimate includes the full itemization, repair photos, and signature authorization. Additional repairs require separate approval.</p></div></div>`,
