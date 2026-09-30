@@ -5,7 +5,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { MultipointInspection } from "@/components/MultipointInspection";
 import { supabase } from "@/lib/supabase";
 
-type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection" | "platform_admin";
+type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection" | "platform_admin" | "reports";
 type DocumentMode = "estimate" | "work_order" | "invoice";
 type WorkspaceTab = "work_order" | "invoice";
 type DocumentType = "estimate" | "repair_order" | "invoice";
@@ -136,6 +136,7 @@ type RepairOrder = {
   created_at: string;
   updated_at: string;
   archived_at: string | null;
+  completed_at: string | null;
   estimate_status?: "not_sent" | "sent" | "approved" | "partially_approved" | "declined";
   estimate_sent_at?: string | null;
   estimate_responded_at?: string | null;
@@ -1203,6 +1204,11 @@ function RepairOrderApp({ user }: { user: User }) {
             </button>
           )}
           {isAdminAccess && (
+            <button className={view === "reports" ? "active" : ""} onClick={() => setView("reports")}>
+              Reports
+            </button>
+          )}
+          {isAdminAccess && (
             <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
               Settings
             </button>
@@ -1313,6 +1319,8 @@ function RepairOrderApp({ user }: { user: User }) {
             onArchive={toggleArchiveCustomer}
             onDelete={deleteCustomer}
           />
+        ) : view === "reports" && isAdminAccess ? (
+          <ReportsPanel repairOrders={repairOrders} />
         ) : view === "settings" && isAdminAccess ? (
           <SettingsPanel
             user={user}
@@ -1352,6 +1360,121 @@ function RepairOrderApp({ user }: { user: User }) {
           />
         ) : null}
       </main>
+    </div>
+  );
+}
+
+type MonthlyReportRow = {
+  monthKey: string;
+  monthLabel: string;
+  jobsCompleted: number;
+  revenue: number;
+  laborRevenue: number;
+  partsProfit: number;
+  outstanding: number;
+};
+
+function monthKeyOf(dateString: string): string {
+  return dateString.slice(0, 7); // "YYYY-MM"
+}
+
+function monthLabelOf(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(year, month - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+function buildMonthlyReport(repairOrders: RepairOrder[]): MonthlyReportRow[] {
+  const rows = new Map<string, MonthlyReportRow>();
+
+  const getRow = (monthKey: string) => {
+    let row = rows.get(monthKey);
+    if (!row) {
+      row = { monthKey, monthLabel: monthLabelOf(monthKey), jobsCompleted: 0, revenue: 0, laborRevenue: 0, partsProfit: 0, outstanding: 0 };
+      rows.set(monthKey, row);
+    }
+    return row;
+  };
+
+  for (const ro of repairOrders) {
+    if (ro.status === "voided") continue;
+
+    // Jobs completed: counted in the month the job was actually finished.
+    if (ro.completed_at) {
+      getRow(monthKeyOf(ro.completed_at)).jobsCompleted += 1;
+    }
+
+    const items = authorizedLineItems(ro.line_items ?? [], ro.latest_estimate_authorization, ro.invoice_overrides);
+
+    // Revenue only counts once the customer has actually paid, attributed to the month they paid.
+    if (ro.paid && ro.paid_at) {
+      const row = getRow(monthKeyOf(ro.paid_at));
+      row.revenue += calculateLineItemTotals(items, Number(ro.tax_rate)).total;
+      row.laborRevenue += items.reduce((sum, item) => (item.item_type === "labor" ? sum + item.quantity * item.unit_price : sum), 0);
+      row.partsProfit += items.reduce(
+        (sum, item) => (item.item_type === "part" ? sum + item.quantity * (item.unit_price - (item.unit_cost ?? 0)) : sum),
+        0
+      );
+    }
+
+    // Outstanding: work that's done but not yet paid — shown against the month it was completed.
+    if (ro.status === "completed" && !ro.paid) {
+      const monthKey = ro.completed_at ? monthKeyOf(ro.completed_at) : "unknown";
+      getRow(monthKey).outstanding += calculateLineItemTotals(items, Number(ro.tax_rate)).total;
+    }
+  }
+
+  return [...rows.values()].sort((a, b) => (a.monthKey < b.monthKey ? 1 : -1));
+}
+
+function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
+  const rows = useMemo(() => buildMonthlyReport(repairOrders), [repairOrders]);
+  const totalOutstanding = rows.reduce((sum, row) => sum + row.outstanding, 0);
+
+  return (
+    <div className="panel">
+      <h2 style={{ marginTop: 0 }}>Reports</h2>
+      <p className="muted" style={{ marginTop: -8, marginBottom: 20 }}>
+        Revenue and parts profit count once an invoice is marked paid, shown in the month it was paid. Jobs completed and
+        outstanding balances are shown in the month a job was marked completed.
+      </p>
+
+      <div className="stat-tiles" style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
+        <div className="panel" style={{ flex: "1 1 200px" }}>
+          <div className="muted">Total outstanding (unpaid, completed work)</div>
+          <div style={{ fontSize: 28, fontWeight: 600 }}>{money(totalOutstanding)}</div>
+        </div>
+      </div>
+
+      {!rows.length ? (
+        <div className="empty-state">No completed or paid work orders yet — reports will fill in as jobs are finished and paid.</div>
+      ) : (
+        <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Jobs completed</th>
+              <th>Revenue (paid)</th>
+              <th>Labor revenue</th>
+              <th>Parts profit (markup)</th>
+              <th>Outstanding</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.monthKey}>
+                <td>{row.monthLabel}</td>
+                <td>{row.jobsCompleted}</td>
+                <td>{money(row.revenue)}</td>
+                <td>{money(row.laborRevenue)}</td>
+                <td>{money(row.partsProfit)}</td>
+                <td>{row.outstanding ? money(row.outstanding) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        </div>
+      )}
     </div>
   );
 }
