@@ -4205,6 +4205,34 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
     name: "", email: "", username: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false,
   });
   const [createdCredentials, setCreatedCredentials] = useState<{ email: string; username: string; password: string } | null>(null);
+  const [usernameStatus, setUsernameStatus] = useState<"idle" | "checking" | "available" | "taken" | "invalid">("idle");
+
+  useEffect(() => {
+    const value = inviteForm.username.trim();
+    if (!value) {
+      setUsernameStatus("idle");
+      return;
+    }
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(value)) {
+      setUsernameStatus("invalid");
+      return;
+    }
+    setUsernameStatus("checking");
+    const handle = setTimeout(async () => {
+      try {
+        const response = await fetch("/.netlify/functions/check-username", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: value }),
+        });
+        const body = await response.json() as { available?: boolean };
+        setUsernameStatus(body.available ? "available" : "taken");
+      } catch {
+        setUsernameStatus("idle");
+      }
+    }, 450);
+    return () => clearTimeout(handle);
+  }, [inviteForm.username]);
 
   async function loadAll() {
     setLoading(true);
@@ -4263,6 +4291,10 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
       setMessage("Username must be 3-20 characters, letters/numbers/underscore only.");
       return;
     }
+    if (usernameStatus === "taken") {
+      setMessage("That username is already taken. Try another.");
+      return;
+    }
     setInviteBusy(true);
     setMessage("");
     setCreatedCredentials(null);
@@ -4285,6 +4317,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
       if (!response.ok) throw new Error(body.error || "Could not create the staff account.");
       setCreatedCredentials({ email, username, password: body.tempPassword || "" });
       setInviteForm({ name: "", email: "", username: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false });
+      setUsernameStatus("idle");
       await loadAll();
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Could not create the staff account.");
@@ -4449,7 +4482,18 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
               onChange={(event) => setInviteForm({ ...inviteForm, username: event.target.value })}
               placeholder="e.g. Bobert12"
               maxLength={20}
+              style={
+                usernameStatus === "taken" || usernameStatus === "invalid"
+                  ? { borderColor: "var(--red, #c0392b)" }
+                  : usernameStatus === "available"
+                    ? { borderColor: "var(--green, #2e7d32)" }
+                    : undefined
+              }
             />
+            {usernameStatus === "checking" && <span className="muted" style={{ fontSize: 12 }}>Checking…</span>}
+            {usernameStatus === "available" && <span style={{ fontSize: 12, color: "var(--green, #2e7d32)" }}>✓ Available</span>}
+            {usernameStatus === "taken" && <span style={{ fontSize: 12, color: "var(--red, #c0392b)" }}>✗ Already taken — try another</span>}
+            {usernameStatus === "invalid" && <span style={{ fontSize: 12, color: "var(--red, #c0392b)" }}>3-20 characters, letters/numbers/underscore only</span>}
           </label>
           <label>
             Employee ID (optional)
@@ -4486,7 +4530,13 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
             <span><strong>Full admin access (master account)</strong> — same as the owner: Settings, branding, and managing other staff. Use sparingly.</span>
           </label>
         </div>
-        <button type="button" className="button primary" disabled={inviteBusy} onClick={() => void inviteStaff()} style={{ marginTop: 12 }}>
+        <button
+          type="button"
+          className="button primary"
+          disabled={inviteBusy || usernameStatus === "taken" || usernameStatus === "invalid" || usernameStatus === "checking"}
+          onClick={() => void inviteStaff()}
+          style={{ marginTop: 12 }}
+        >
           {inviteBusy ? "Creating…" : "Create staff account"}
         </button>
       </div>
