@@ -1,7 +1,8 @@
-// Cross-tenant admin actions for Connor only (the platform operator), not exposed via RLS to keep
-// this out of the regular per-tenant policies entirely. Every call authenticates the caller, then
-// checks THEIR OWN settings.is_platform_admin flag (set once, by migration, on Connor's shop) before
-// doing anything cross-tenant. No other shop can ever see or touch another shop's billing this way.
+// Cross-tenant admin actions for the platform operator's dedicated god-mode account only — not tied
+// to any shop, not exposed via RLS to keep this out of the regular per-tenant policies entirely.
+// Every call authenticates the caller, then checks whether THEIR OWN auth user id is listed in the
+// standalone platform_admins table (never any shop's settings row) before doing anything cross-tenant.
+// No shop owner or staff login, however privileged within their own shop, can ever reach this.
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
@@ -30,9 +31,9 @@ export default async (request: Request) => {
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
 
-  const callerResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=is_platform_admin&owner_id=eq.${user.id}&limit=1`, { headers: serviceHeaders });
-  const callerRows = callerResponse.ok ? await callerResponse.json() as Array<{ is_platform_admin: boolean }> : [];
-  if (!callerRows[0]?.is_platform_admin) return json({ error: "Not authorized." }, 403);
+  const callerResponse = await fetch(`${supabaseUrl}/rest/v1/platform_admins?select=id&id=eq.${user.id}&limit=1`, { headers: serviceHeaders });
+  const callerRows = callerResponse.ok ? await callerResponse.json() as Array<{ id: string }> : [];
+  if (!callerRows.length) return json({ error: "Not authorized." }, 403);
 
   const body = await request.json().catch(() => ({})) as Action;
 

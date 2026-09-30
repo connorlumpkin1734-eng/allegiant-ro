@@ -5,7 +5,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { MultipointInspection } from "@/components/MultipointInspection";
 import { supabase } from "@/lib/supabase";
 
-type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection" | "platform_admin" | "reports";
+type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection" | "reports";
 type DocumentMode = "estimate" | "work_order" | "invoice";
 type WorkspaceTab = "work_order" | "invoice";
 type DocumentType = "estimate" | "repair_order" | "invoice";
@@ -473,6 +473,8 @@ function emptyLine(
 export default function HomePage() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [platformAdminChecked, setPlatformAdminChecked] = useState(false);
+  const [isPlatformAdminAccount, setIsPlatformAdminAccount] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -488,7 +490,32 @@ export default function HomePage() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  if (authLoading) {
+  // A god-mode / platform-operator login is never tied to a shop. Check that FIRST, before any
+  // shop data ever loads, so this kind of account can never end up auto-creating a blank shop
+  // for itself (see RepairOrderApp's loadData) and never sees shop screens at all.
+  useEffect(() => {
+    if (!session) {
+      setPlatformAdminChecked(false);
+      setIsPlatformAdminAccount(false);
+      return;
+    }
+    let cancelled = false;
+    supabase
+      .from("platform_admins")
+      .select("id")
+      .eq("id", session.user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        setIsPlatformAdminAccount(Boolean(data));
+        setPlatformAdminChecked(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  if (authLoading || (session && !platformAdminChecked)) {
     return <div className="center-screen">Loading Allegiant RO…</div>;
   }
 
@@ -496,7 +523,30 @@ export default function HomePage() {
     return <AuthScreen />;
   }
 
+  if (isPlatformAdminAccount) {
+    return <PlatformAdminOnlyApp />;
+  }
+
   return <RepairOrderApp user={session.user} />;
+}
+
+// The entire screen for a god-mode / platform-operator login: no shop chrome, no work orders, no
+// customers — just the cross-tenant admin panel and a way to sign out.
+function PlatformAdminOnlyApp() {
+  return (
+    <div className="app-shell">
+      <header className="topbar no-print">
+        <span className="topbar-logo-text">Platform Admin</span>
+        <nav />
+        <button className="button secondary" onClick={() => supabase.auth.signOut()}>
+          Sign out
+        </button>
+      </header>
+      <main className="main-area">
+        <PlatformAdminPanel />
+      </main>
+    </div>
+  );
 }
 
 function AuthScreen() {
@@ -702,7 +752,6 @@ function RepairOrderApp({ user }: { user: User }) {
   const isTechnicianOnly = Boolean(currentStaff) && currentStaff!.role === "technician" && !currentStaff!.is_admin;
   const ownerId = currentStaff?.owner_id ?? user.id;
   const [settings, setSettings] = useState<Settings>(defaultSettings);
-  const isPlatformAdmin = isOwner && settings.is_platform_admin;
   // Mirrors the DB's owner_can_write() RLS check, purely for UX (friendly messaging/disabled
   // buttons) — the real enforcement lives in Postgres and doesn't depend on this being correct.
   const canWrite =
@@ -1213,11 +1262,6 @@ function RepairOrderApp({ user }: { user: User }) {
               Settings
             </button>
           )}
-          {isPlatformAdmin && (
-            <button className={view === "platform_admin" ? "active" : ""} onClick={() => setView("platform_admin")}>
-              Platform Admin
-            </button>
-          )}
         </nav>
         <button className="button secondary" onClick={() => setShowPasswordChange(true)}>
           Change password
@@ -1337,8 +1381,6 @@ function RepairOrderApp({ user }: { user: User }) {
             }}
             onStripeStatusChanged={() => void loadData(false)}
           />
-        ) : view === "platform_admin" && isPlatformAdmin ? (
-          <PlatformAdminPanel />
         ) : view === "inspection" && selectedRo ? (
           <MultipointInspection ro={selectedRo} userId={ownerId} onBack={returnFromInspection} />
         ) : selectedRo ? (
@@ -3844,13 +3886,12 @@ function PlatformAdminPanel() {
                   <tr key={tenant.owner_id}>
                     <td>
                       <strong>{tenant.business_name || "—"}</strong>
-                      {tenant.is_platform_admin && <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>(you)</span>}
                       <div className="muted" style={{ fontSize: 12 }}>{tenant.business_email || "—"}</div>
                     </td>
                     <td>
                       <select
                         value={tenant.subscription_status}
-                        disabled={busyOwnerId === tenant.owner_id || tenant.is_platform_admin}
+                        disabled={busyOwnerId === tenant.owner_id}
                         onChange={(event) => void saveStatus(tenant.owner_id, event.target.value as PlatformTenant["subscription_status"])}
                       >
                         <option value="trialing">Trialing</option>
@@ -3865,14 +3906,13 @@ function PlatformAdminPanel() {
                       <input
                         type="number" min="0" step="0.01" style={{ width: 90 }}
                         value={priceInputs[tenant.owner_id] ?? ""}
-                        disabled={tenant.is_platform_admin}
                         onChange={(event) => setPriceInputs((current) => ({ ...current, [tenant.owner_id]: event.target.value }))}
                       />
                     </td>
                     <td>
                       <button
                         type="button" className="button small secondary"
-                        disabled={busyOwnerId === tenant.owner_id || tenant.is_platform_admin}
+                        disabled={busyOwnerId === tenant.owner_id}
                         onClick={() => void savePrice(tenant.owner_id)}
                       >
                         {busyOwnerId === tenant.owner_id ? "Saving…" : "Save price"}
