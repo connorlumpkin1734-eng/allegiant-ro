@@ -12,6 +12,8 @@ function generateTempPassword() {
   return out;
 }
 
+const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,20}$/;
+
 export default async (request: Request) => {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
 
@@ -30,13 +32,17 @@ export default async (request: Request) => {
   const owner = await userResponse.json() as { id: string };
 
   const body = await request.json().catch(() => ({})) as {
-    name?: string; email?: string; employeeId?: string | null; role?: string; teamId?: string | null; canViewAllWork?: boolean; isAdmin?: boolean;
+    name?: string; email?: string; username?: string; employeeId?: string | null; role?: string; teamId?: string | null; canViewAllWork?: boolean; isAdmin?: boolean;
   };
   const name = (body.name || "").trim();
   const email = (body.email || "").trim().toLowerCase();
+  const username = (body.username || "").trim();
   const role = body.role;
   if (!name) return json({ error: "Enter a name." }, 400);
-  if (!email || !email.includes("@")) return json({ error: "Enter a valid email address." }, 400);
+  if (!email || !email.includes("@")) return json({ error: "Enter a valid email address (used only for password resets)." }, 400);
+  if (!USERNAME_PATTERN.test(username)) {
+    return json({ error: "Username must be 3-20 characters, letters/numbers/underscore only." }, 400);
+  }
   if (role !== "technician" && role !== "service_advisor") return json({ error: "Choose a role." }, 400);
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
@@ -45,6 +51,16 @@ export default async (request: Request) => {
   const settingsCheck = await fetch(`${supabaseUrl}/rest/v1/settings?select=owner_id&owner_id=eq.${owner.id}&limit=1`, { headers: serviceHeaders });
   const settingsRows = settingsCheck.ok ? await settingsCheck.json() as Array<Record<string, unknown>> : [];
   if (!settingsRows.length) return json({ error: "Only the shop owner can add staff." }, 403);
+
+  // Usernames are unique across the whole platform (the login screen resolves a username to an
+  // email before it knows which shop someone belongs to), so check for a collision up front.
+  const usernameLower = username.toLowerCase();
+  const usernameCheck = await fetch(
+    `${supabaseUrl}/rest/v1/staff?select=id&username_lower=eq.${encodeURIComponent(usernameLower)}&limit=1`,
+    { headers: serviceHeaders }
+  );
+  const usernameRows = usernameCheck.ok ? await usernameCheck.json() as Array<{ id: string }> : [];
+  if (usernameRows.length) return json({ error: "That username is already taken. Try another." }, 400);
 
   const tempPassword = generateTempPassword();
   const createUserResponse = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
@@ -66,6 +82,7 @@ export default async (request: Request) => {
       auth_user_id: createdUser.id,
       name,
       email,
+      username,
       employee_id: body.employeeId || null,
       role,
       team_id: body.teamId || null,
@@ -78,8 +95,15 @@ export default async (request: Request) => {
     // Roll back the auth user so we don't leave an orphaned login with no staff record.
     await fetch(`${supabaseUrl}/auth/v1/admin/users/${createdUser.id}`, { method: "DELETE", headers: serviceHeaders });
     const errorText = await staffInsert.text();
-    const duplicate = /duplicate key|unique constraint/i.test(errorText);
-    return json({ error: duplicate ? "That email is already on your staff list." : `Could not save the staff record: ${errorText}` }, 400);
+    const duplicateUsername = /username_lower/i.test(errorText);
+    const duplicateEmail = /duplicate key|unique constraint/i.test(errorText) && !duplicateUsername;
+    return json({
+      error: duplicateUsername
+        ? "That username is already taken. Try another."
+        : duplicateEmail
+          ? "That email is already on your staff list."
+          : `Could not save the staff record: ${errorText}`,
+    }, 400);
   }
   const [staffRow] = await staffInsert.json() as Array<Record<string, unknown>>;
 

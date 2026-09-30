@@ -50,6 +50,7 @@ type StaffMember = {
   auth_user_id: string | null;
   name: string;
   email: string;
+  username: string | null;
   employee_id: string | null;
   role: StaffRole;
   team_id: string | null;
@@ -551,10 +552,30 @@ function PlatformAdminOnlyApp() {
 
 function AuthScreen() {
   const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState(""); // shop owner's email (signup), or username/email (login, forgot)
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // Staff sign in with a username, not their real email. If what was typed isn't an email address,
+  // look up the real email behind that username so Supabase Auth (which only knows emails) can be used.
+  async function resolveEmail(value: string): Promise<string | null> {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.includes("@")) return trimmed;
+    try {
+      const response = await fetch("/.netlify/functions/resolve-username", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: trimmed }),
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { email?: string };
+      return body.email || null;
+    } catch {
+      return null;
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -562,29 +583,42 @@ function AuthScreen() {
     setMessage("");
 
     if (mode === "forgot") {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      const resolvedEmail = await resolveEmail(identifier);
+      // Same message either way — don't reveal whether a username/email has an account.
+      const genericMessage = "If that account exists, a password reset link is on its way. Check your inbox.";
+      if (!resolvedEmail) {
+        setMessage(genericMessage);
+        setBusy(false);
+        return;
+      }
+      const { error } = await supabase.auth.resetPasswordForEmail(resolvedEmail, {
         redirectTo: `${window.location.origin}/reset-password`,
       });
-      setMessage(
-        error
-          ? error.message
-          : "If that email has an account, a password reset link is on its way. Check your inbox."
-      );
+      setMessage(error ? error.message : genericMessage);
       setBusy(false);
       return;
     }
 
-    const result =
-      mode === "login"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
-
-    if (result.error) {
-      setMessage(result.error.message);
-    } else if (mode === "signup" && !result.data.session) {
-      setMessage("Account created. Check your email to confirm it, then sign in.");
+    if (mode === "signup") {
+      const result = await supabase.auth.signUp({ email: identifier.trim(), password });
+      if (result.error) {
+        setMessage(result.error.message);
+      } else if (!result.data.session) {
+        setMessage("Account created. Check your email to confirm it, then sign in.");
+      }
+      setBusy(false);
+      return;
     }
 
+    // login
+    const resolvedEmail = await resolveEmail(identifier);
+    if (!resolvedEmail) {
+      setMessage("Invalid login credentials.");
+      setBusy(false);
+      return;
+    }
+    const result = await supabase.auth.signInWithPassword({ email: resolvedEmail, password });
+    if (result.error) setMessage(result.error.message);
     setBusy(false);
   }
 
@@ -599,13 +633,13 @@ function AuthScreen() {
         <p className="muted">Work orders, estimates, and invoices.</p>
         <form onSubmit={submit} className="stack">
           <label>
-            Email
+            {mode === "signup" ? "Email" : "Username or email"}
             <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              type={mode === "signup" ? "email" : "text"}
+              value={identifier}
+              onChange={(event) => setIdentifier(event.target.value)}
               required
-              autoComplete="email"
+              autoComplete={mode === "signup" ? "email" : "username"}
             />
           </label>
           {mode !== "forgot" && (
@@ -4167,10 +4201,10 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
   const [newTeamName, setNewTeamName] = useState("");
   const [teamBusy, setTeamBusy] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
-  const [inviteForm, setInviteForm] = useState<{ name: string; email: string; employeeId: string; role: StaffRole; teamId: string; canViewAllWork: boolean; isAdmin: boolean }>({
-    name: "", email: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false,
+  const [inviteForm, setInviteForm] = useState<{ name: string; email: string; username: string; employeeId: string; role: StaffRole; teamId: string; canViewAllWork: boolean; isAdmin: boolean }>({
+    name: "", email: "", username: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false,
   });
-  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; password: string } | null>(null);
+  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; username: string; password: string } | null>(null);
 
   async function loadAll() {
     setLoading(true);
@@ -4220,8 +4254,13 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
   async function inviteStaff() {
     const name = inviteForm.name.trim();
     const email = inviteForm.email.trim();
+    const username = inviteForm.username.trim();
     if (!name || !email) {
       setMessage("Enter a name and email.");
+      return;
+    }
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+      setMessage("Username must be 3-20 characters, letters/numbers/underscore only.");
       return;
     }
     setInviteBusy(true);
@@ -4235,7 +4274,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
-          name, email, role: inviteForm.role,
+          name, email, username, role: inviteForm.role,
           employeeId: inviteForm.employeeId.trim() || null,
           teamId: inviteForm.teamId || null,
           canViewAllWork: inviteForm.canViewAllWork,
@@ -4244,8 +4283,8 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
       });
       const body = await response.json() as { error?: string; tempPassword?: string };
       if (!response.ok) throw new Error(body.error || "Could not create the staff account.");
-      setCreatedCredentials({ email, password: body.tempPassword || "" });
-      setInviteForm({ name: "", email: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false });
+      setCreatedCredentials({ email, username, password: body.tempPassword || "" });
+      setInviteForm({ name: "", email: "", username: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false });
       await loadAll();
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Could not create the staff account.");
@@ -4299,10 +4338,13 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
         {message && <div className="notice">{message}</div>}
         {createdCredentials && (
           <div className="notice" style={{ background: "#edf4ff", borderColor: "var(--blue)" }}>
-            <strong>Account created for {createdCredentials.email}</strong>
-            <p style={{ margin: "6px 0" }}>Temporary password (copy this now — it won&apos;t be shown again):</p>
-            <code style={{ fontSize: 16, fontWeight: 700, userSelect: "all" }}>{createdCredentials.password}</code>
-            <p className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>Give this to them so they can log in. They can change their password after signing in.</p>
+            <strong>Account created for {createdCredentials.username}</strong>
+            <p style={{ margin: "6px 0" }}>They&apos;ll log in with this username and temporary password (copy the password now — it won&apos;t be shown again):</p>
+            <p style={{ margin: "4px 0" }}>Username: <code style={{ fontSize: 16, fontWeight: 700, userSelect: "all" }}>{createdCredentials.username}</code></p>
+            <p style={{ margin: "4px 0" }}>Password: <code style={{ fontSize: 16, fontWeight: 700, userSelect: "all" }}>{createdCredentials.password}</code></p>
+            <p className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
+              Their real email ({createdCredentials.email}) is only used if they need to reset a forgotten password. They can change their password after signing in.
+            </p>
             <button type="button" className="button ghost small" style={{ marginTop: 8 }} onClick={() => setCreatedCredentials(null)}>Dismiss</button>
           </div>
         )}
@@ -4313,12 +4355,27 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
           <div className="table-wrap" style={{ marginBottom: 20 }}>
             <table>
               <thead>
-                <tr><th>Name</th><th>ID</th><th>Email</th><th>Role</th><th>Team</th><th>Sees</th><th>Admin</th><th>Active</th><th></th></tr>
+                <tr><th>Name</th><th>Username</th><th>ID</th><th>Email</th><th>Role</th><th>Team</th><th>Sees</th><th>Admin</th><th>Active</th><th></th></tr>
               </thead>
               <tbody>
                 {staff.map((member) => (
                   <tr key={member.id}>
                     <td>{member.name}</td>
+                    <td>
+                      <input
+                        defaultValue={member.username || ""}
+                        placeholder="—"
+                        style={{ width: 110 }}
+                        onBlur={(event) => {
+                          const value = event.target.value.trim() || null;
+                          if (value && !/^[a-zA-Z0-9_]{3,20}$/.test(value)) {
+                            setMessage("Username must be 3-20 characters, letters/numbers/underscore only.");
+                            return;
+                          }
+                          if (value !== member.username) void updateStaff(member.id, { username: value });
+                        }}
+                      />
+                    </td>
                     <td>
                       <input
                         defaultValue={member.employee_id || ""}
@@ -4369,7 +4426,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
                     </td>
                   </tr>
                 ))}
-                {!staff.length && <tr><td colSpan={9} className="empty-state">No staff added yet.</td></tr>}
+                {!staff.length && <tr><td colSpan={10} className="empty-state">No staff added yet.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -4382,8 +4439,17 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
             <input value={inviteForm.name} onChange={(event) => setInviteForm({ ...inviteForm, name: event.target.value })} />
           </label>
           <label>
-            Email
+            Email <span className="muted" style={{ fontWeight: 400 }}>(for password resets only — not used to log in)</span>
             <input type="email" value={inviteForm.email} onChange={(event) => setInviteForm({ ...inviteForm, email: event.target.value })} />
+          </label>
+          <label>
+            Username <span className="muted" style={{ fontWeight: 400 }}>(what they&apos;ll type to log in)</span>
+            <input
+              value={inviteForm.username}
+              onChange={(event) => setInviteForm({ ...inviteForm, username: event.target.value })}
+              placeholder="e.g. Bobert12"
+              maxLength={20}
+            />
           </label>
           <label>
             Employee ID (optional)
