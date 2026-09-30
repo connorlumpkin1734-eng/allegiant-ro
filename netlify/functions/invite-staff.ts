@@ -3,13 +3,24 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   headers: { "Content-Type": "application/json" },
 });
 
+// Short, easy-to-read-off-a-screen-or-sticky-note temp password: two plain words plus a couple of
+// digits (e.g. "Falcon-Otter47"). It only has to be typed once — the app forces a real password to
+// be set before the account can do anything else — so it trades raw entropy for something an owner
+// can actually hand to ten techs without it being a chore.
+const TEMP_PASSWORD_WORDS = [
+  "Falcon", "Otter", "Maple", "Ranger", "Comet", "Harbor", "Cobalt", "Ember", "Willow", "Granite",
+  "Badger", "Cedar", "Quartz", "Raven", "Summit", "Delta", "Juniper", "Marlin", "Ridge", "Sable",
+  "Tundra", "Pine", "Copper", "Falcon2", "Boulder", "Canyon", "Drift", "Echo", "Fable", "Glacier",
+  "Hazel", "Ironwood", "Jasper", "Kestrel", "Lumen", "Mesa", "Nimbus", "Onyx", "Piston", "Quartzite",
+];
+
 function generateTempPassword() {
-  // Avoids visually ambiguous characters (0/O, 1/l/I) so it's easy to read off a screen and type.
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  let out = "";
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  for (let i = 0; i < bytes.length; i++) out += chars[bytes[i] % chars.length];
-  return out;
+  const bytes = crypto.getRandomValues(new Uint8Array(4));
+  const word1 = TEMP_PASSWORD_WORDS[bytes[0] % TEMP_PASSWORD_WORDS.length];
+  let word2 = TEMP_PASSWORD_WORDS[bytes[1] % TEMP_PASSWORD_WORDS.length];
+  if (word2 === word1) word2 = TEMP_PASSWORD_WORDS[(bytes[1] + 1) % TEMP_PASSWORD_WORDS.length];
+  const digits = String(10 + (bytes[2] ^ bytes[3]) % 90); // 2-digit number, 10-99
+  return `${word1}-${word2}${digits}`;
 }
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,20}$/;
@@ -89,6 +100,7 @@ export default async (request: Request) => {
       can_view_all_work: Boolean(body.canViewAllWork),
       is_admin: Boolean(body.isAdmin),
       active: true,
+      must_change_password: true,
     }),
   });
   if (!staffInsert.ok) {

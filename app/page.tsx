@@ -694,7 +694,15 @@ function AuthScreen() {
   );
 }
 
-function ChangePasswordModal({ onClose }: { onClose: () => void }) {
+function ChangePasswordModal({
+  onClose,
+  forced,
+  onSuccess,
+}: {
+  onClose: () => void;
+  forced?: boolean;
+  onSuccess?: () => Promise<void> | void;
+}) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -714,18 +722,25 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
     }
     setBusy(true);
     const { error } = await supabase.auth.updateUser({ password });
-    setBusy(false);
     if (error) {
+      setBusy(false);
       setMessage(error.message);
       return;
     }
+    if (onSuccess) await onSuccess();
+    setBusy(false);
     setDone(true);
   }
 
   return (
     <div className="vin-scanner-backdrop" role="dialog" aria-modal="true" aria-label="Change password">
       <div className="vin-scanner-modal" style={{ maxWidth: 420 }}>
-        <h2 style={{ marginTop: 0 }}>Change password</h2>
+        <h2 style={{ marginTop: 0 }}>{forced ? "Set your password" : "Change password"}</h2>
+        {forced && !done && (
+          <p className="muted" style={{ marginTop: -6 }}>
+            You&apos;re signing in with a temporary password. Set your own before continuing.
+          </p>
+        )}
         {done ? (
           <>
             <p>Your password has been updated.</p>
@@ -759,7 +774,7 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
             </label>
             {message && <div className="notice">{message}</div>}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancel</button>
+              {!forced && <button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancel</button>}
               <button type="submit" className="button primary" disabled={busy}>{busy ? "Saving…" : "Save password"}</button>
             </div>
           </form>
@@ -775,6 +790,7 @@ type CurrentStaff = {
   role: StaffRole;
   can_view_all_work: boolean;
   is_admin: boolean;
+  must_change_password: boolean;
 };
 
 function RepairOrderApp({ user }: { user: User }) {
@@ -884,13 +900,15 @@ function RepairOrderApp({ user }: { user: User }) {
     let cancelled = false;
     supabase
       .from("staff")
-      .select("id, owner_id, role, can_view_all_work, is_admin")
+      .select("id, owner_id, role, can_view_all_work, is_admin, must_change_password")
       .eq("auth_user_id", user.id)
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return;
-        setCurrentStaff((data as CurrentStaff | null) ?? null);
+        const staffRow = (data as CurrentStaff | null) ?? null;
+        setCurrentStaff(staffRow);
         setStaffResolved(true);
+        if (staffRow?.must_change_password) setShowPasswordChange(true);
       });
     return () => {
       cancelled = true;
@@ -1304,7 +1322,18 @@ function RepairOrderApp({ user }: { user: User }) {
           Sign out
         </button>
       </header>
-      {showPasswordChange && <ChangePasswordModal onClose={() => setShowPasswordChange(false)} />}
+      {showPasswordChange && (
+        <ChangePasswordModal
+          forced={Boolean(currentStaff?.must_change_password)}
+          onClose={() => setShowPasswordChange(false)}
+          onSuccess={async () => {
+            if (currentStaff?.must_change_password) {
+              await supabase.from("staff").update({ must_change_password: false }).eq("id", currentStaff.id);
+              setCurrentStaff({ ...currentStaff, must_change_password: false });
+            }
+          }}
+        />
+      )}
 
       <main className="main-area">
         {error && <div className="error-banner no-print">{error}</div>}
