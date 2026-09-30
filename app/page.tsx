@@ -4233,7 +4233,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
   const [inviteForm, setInviteForm] = useState<{ name: string; email: string; username: string; employeeId: string; role: StaffRole; teamId: string; canViewAllWork: boolean; isAdmin: boolean }>({
     name: "", email: "", username: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false,
   });
-  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; username: string; password: string } | null>(null);
+  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; username: string; password: string; emailSent: boolean } | null>(null);
   const [usernameStatus, setUsernameStatus] = useState<"idle" | "checking" | "available" | "taken" | "invalid">("idle");
 
   useEffect(() => {
@@ -4342,9 +4342,9 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
           isAdmin: inviteForm.isAdmin,
         }),
       });
-      const body = await response.json() as { error?: string; tempPassword?: string };
+      const body = await response.json() as { error?: string; tempPassword?: string; emailSent?: boolean };
       if (!response.ok) throw new Error(body.error || "Could not create the staff account.");
-      setCreatedCredentials({ email, username, password: body.tempPassword || "" });
+      setCreatedCredentials({ email, username, password: body.tempPassword || "", emailSent: Boolean(body.emailSent) });
       setInviteForm({ name: "", email: "", username: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false });
       setUsernameStatus("idle");
       await loadAll();
@@ -4401,7 +4401,11 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
         {createdCredentials && (
           <div className="notice" style={{ background: "#edf4ff", borderColor: "var(--blue)" }}>
             <strong>Account created for {createdCredentials.username}</strong>
-            <p style={{ margin: "6px 0" }}>They&apos;ll log in with this username and temporary password (copy the password now — it won&apos;t be shown again):</p>
+            <p style={{ margin: "6px 0" }}>
+              {createdCredentials.emailSent
+                ? <>Also emailed to {createdCredentials.email}. They&apos;ll log in with this username and temporary password (copy it now, just in case — it won&apos;t be shown again):</>
+                : <>Could not email this to {createdCredentials.email} — copy the password now and hand it to them directly (it won&apos;t be shown again):</>}
+            </p>
             <p style={{ margin: "4px 0" }}>Username: <code style={{ fontSize: 16, fontWeight: 700, userSelect: "all" }}>{createdCredentials.username}</code></p>
             <p style={{ margin: "4px 0" }}>Password: <code style={{ fontSize: 16, fontWeight: 700, userSelect: "all" }}>{createdCredentials.password}</code></p>
             <p className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>

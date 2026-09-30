@@ -3,6 +3,10 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   headers: { "Content-Type": "application/json" },
 });
 
+const escapeHtml = (value: unknown) => String(value ?? "")
+  .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+  .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+
 // Short, easy-to-read-off-a-screen-or-sticky-note temp password: two plain words plus a couple of
 // digits (e.g. "Falcon-Otter47"). It only has to be typed once — the app forces a real password to
 // be set before the account can do anything else — so it trades raw entropy for something an owner
@@ -59,9 +63,14 @@ export default async (request: Request) => {
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
 
   // Owner-only: confirm the caller actually owns a settings row (i.e. isn't a staff account itself).
-  const settingsCheck = await fetch(`${supabaseUrl}/rest/v1/settings?select=owner_id&owner_id=eq.${owner.id}&limit=1`, { headers: serviceHeaders });
-  const settingsRows = settingsCheck.ok ? await settingsCheck.json() as Array<Record<string, unknown>> : [];
+  const settingsCheck = await fetch(
+    `${supabaseUrl}/rest/v1/settings?select=owner_id,business_name,business_email&owner_id=eq.${owner.id}&limit=1`,
+    { headers: serviceHeaders }
+  );
+  const settingsRows = settingsCheck.ok ? await settingsCheck.json() as Array<{ owner_id: string; business_name?: string; business_email?: string }> : [];
   if (!settingsRows.length) return json({ error: "Only the shop owner can add staff." }, 403);
+  const shopSettings = settingsRows[0];
+  const businessName = shopSettings.business_name || "Allegiant Auto Care";
 
   // Usernames are unique across the whole platform (the login screen resolves a username to an
   // email before it knows which shop someone belongs to), so check for a collision up front.
@@ -119,5 +128,33 @@ export default async (request: Request) => {
   }
   const [staffRow] = await staffInsert.json() as Array<Record<string, unknown>>;
 
-  return json({ message: "Staff account created.", tempPassword, staff: staffRow });
+  // Email the login details as a convenience/backup. The owner still sees the password on-screen
+  // right away (the reliable path for "get this person logged in right now") — this just saves a
+  // manual hand-off when it works, and never blocks account creation if it doesn't.
+  let emailSent = false;
+  const resendKey = process.env.RESEND_API_KEY;
+  if (resendKey) {
+    try {
+      const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(request.url).origin;
+      const fromEmail = `${businessName} <notifications@allegiantautocare.com>`;
+      const replyToEmail = shopSettings.business_email || undefined;
+      const emailResponse = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [email],
+          ...(replyToEmail ? { reply_to: replyToEmail } : {}),
+          subject: `Your ${businessName} login`,
+          text: `Hi ${name},\n\n${businessName} set up a login for you.\n\nUsername: ${username}\nTemporary password: ${tempPassword}\n\nSign in here: ${siteUrl}\n\nYou'll be asked to set your own password the first time you sign in.\nThis email address is only used to reset your password if you forget it later.`,
+          html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;color:#102a4c"><h2 style="margin-bottom:4px">${escapeHtml(businessName)}</h2><p>Hi ${escapeHtml(name)}, an account was set up for you.</p><table role="presentation" cellspacing="0" cellpadding="0" style="margin:18px 0;background:#edf4ff;border-radius:8px"><tr><td style="padding:16px 20px"><div style="font-size:12px;text-transform:uppercase;color:#64748b">Username</div><div style="font-size:20px;font-weight:700;margin-bottom:10px">${escapeHtml(username)}</div><div style="font-size:12px;text-transform:uppercase;color:#64748b">Temporary password</div><div style="font-size:20px;font-weight:700">${escapeHtml(tempPassword)}</div></td></tr></table><p><a href="${escapeHtml(siteUrl)}" target="_blank" rel="noopener noreferrer" style="color:#2459a9">Sign in here</a></p><p style="color:#64748b;font-size:13px">You'll be asked to set your own password the first time you sign in. This email address is only used to reset your password if you ever forget it.</p></div>`,
+        }),
+      });
+      emailSent = emailResponse.ok;
+    } catch {
+      emailSent = false;
+    }
+  }
+
+  return json({ message: "Staff account created.", tempPassword, emailSent, staff: staffRow });
 };
