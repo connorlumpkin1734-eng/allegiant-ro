@@ -33,6 +33,9 @@ type Settings = {
   stripe_onboarding_complete: boolean;
   stripe_charges_enabled: boolean;
   stripe_payouts_enabled: boolean;
+  // Manual, no-API payment method: customer pays the shop directly via Zelle, and a staff member
+  // confirms receipt themselves. See request-zelle-payment.ts / confirm-zelle-payment.ts.
+  zelle_recipient: string | null;
   // Platform billing: Connor charging this shop to use the software (separate from the shop's own
   // Stripe Connect account above, which is for THEIR customers' payments).
   subscription_status: "trialing" | "active" | "past_due" | "canceled" | "exempt";
@@ -234,6 +237,7 @@ const defaultSettings: Settings = {
   stripe_onboarding_complete: false,
   stripe_charges_enabled: false,
   stripe_payouts_enabled: false,
+  zelle_recipient: null,
   subscription_status: "trialing",
   plan_price_cents: null,
   trial_ro_limit: 5,
@@ -1516,6 +1520,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onVoid={() => toggleVoid(selectedRo)}
             onArchive={() => toggleArchiveRo(selectedRo)}
             onDelete={() => deleteRo(selectedRo)}
+            onPaid={() => refreshCurrentDocument(selectedRo.id)}
           />
         ) : null}
       </main>
@@ -4217,6 +4222,17 @@ function SettingsPanel({
             <input type="email" value={form.business_email || ""} onChange={(event) => setForm({ ...form, business_email: event.target.value })} />
           </label>
           <label>
+            Zelle phone or email <span className="muted" style={{ fontWeight: 400 }}>(optional)</span>
+            <input
+              value={form.zelle_recipient || ""}
+              placeholder="e.g. (555) 123-4567 or payments@yourshop.com"
+              onChange={(event) => setForm({ ...form, zelle_recipient: event.target.value || null })}
+            />
+            <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
+              Lets customers pay invoices via Zelle as well as card. Payments are confirmed manually — you check your own bank app before marking paid.
+            </span>
+          </label>
+          <label>
             Default labor rate
             <input type="number" step="0.01" value={form.default_labor_rate} onChange={(event) => setForm({ ...form, default_labor_rate: Number(event.target.value) || 0 })} />
           </label>
@@ -4713,6 +4729,7 @@ function DocumentView({
   onVoid,
   onArchive,
   onDelete,
+  onPaid,
 }: {
   ro: RepairOrder;
   settings: Settings;
@@ -4724,6 +4741,7 @@ function DocumentView({
   onVoid: () => void;
   onArchive: () => void;
   onDelete: () => void;
+  onPaid: () => void;
 }) {
   const [documentPhotos, setDocumentPhotos] = useState<EstimatePhoto[]>([]);
   const [photosLoading, setPhotosLoading] = useState(true);
@@ -4732,6 +4750,12 @@ function DocumentView({
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [paymentLink, setPaymentLink] = useState("");
   const [paymentError, setPaymentError] = useState("");
+  const [zelleBusy, setZelleBusy] = useState(false);
+  const [zelleLink, setZelleLink] = useState("");
+  const [zelleError, setZelleError] = useState("");
+  const [pendingZellePayment, setPendingZellePayment] = useState<{ id: string; amount: number; status: string } | null>(null);
+  const [zelleConfirmBusy, setZelleConfirmBusy] = useState(false);
+  const [zelleConfirmNote, setZelleConfirmNote] = useState("");
   const [invoiceEmailBusy, setInvoiceEmailBusy] = useState(false);
   const [invoiceEmailMessage, setInvoiceEmailMessage] = useState("");
   const documentRef = useRef<HTMLElement>(null);
@@ -4780,6 +4804,75 @@ function DocumentView({
       setPaymentBusy(false);
     }
   }
+
+  async function requestZellePayment() {
+    setZelleBusy(true);
+    setZelleError("");
+    setZelleLink("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/request-zelle-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ repairOrderId: ro.id }),
+      });
+      const body = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !body.url) throw new Error(body.error || "Could not create a Zelle payment link.");
+      setZelleLink(body.url);
+    } catch (caught) {
+      setZelleError(caught instanceof Error ? caught.message : "Could not create a Zelle payment link.");
+    } finally {
+      setZelleBusy(false);
+    }
+  }
+
+  async function confirmZellePayment() {
+    if (!pendingZellePayment) return;
+    setZelleConfirmBusy(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/confirm-zelle-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ paymentId: pendingZellePayment.id, note: zelleConfirmNote }),
+      });
+      const body = await response.json() as { message?: string; error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not confirm the payment.");
+      setPendingZellePayment(null);
+      onPaid();
+    } catch (caught) {
+      setZelleError(caught instanceof Error ? caught.message : "Could not confirm the payment.");
+    } finally {
+      setZelleConfirmBusy(false);
+    }
+  }
+
+  // Surface any not-yet-confirmed Zelle payment for this invoice so staff see it the moment they
+  // open it, without having to remember to check. RLS already scopes this to the caller's own shop.
+  useEffect(() => {
+    let cancelled = false;
+    if (!isInvoice) return;
+    supabase
+      .from("payments")
+      .select("id,amount,status")
+      .eq("repair_order_id", ro.id)
+      .eq("processor", "zelle")
+      .in("status", ["pending", "processing"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const row = data?.[0] as { id: string; amount: number; status: string } | undefined;
+        setPendingZellePayment(row ? { id: row.id, amount: Number(row.amount), status: row.status } : null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isInvoice, ro.id, zelleLink]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4901,9 +4994,14 @@ function DocumentView({
                 {invoiceEmailBusy ? "Sending…" : "Email Invoice"}
               </button>
             )}
-            {isInvoice && !ro.paid && ro.status !== "voided" && settings.stripe_charges_enabled && (
+            {isInvoice && !ro.paid && ro.status !== "voided" && settings.stripe_charges_enabled && settings.subscription_status !== "trialing" && (
               <button className="button success" disabled={paymentBusy} onClick={() => void collectPayment()}>
                 {paymentBusy ? "Starting…" : "Collect payment"}
+              </button>
+            )}
+            {isInvoice && !ro.paid && ro.status !== "voided" && settings.zelle_recipient && settings.subscription_status !== "trialing" && (
+              <button className="button secondary" disabled={zelleBusy} onClick={() => void requestZellePayment()}>
+                {zelleBusy ? "Starting…" : "Request Zelle payment"}
               </button>
             )}
             <button className="button primary" disabled={photosLoading || printing || Boolean(photoError)} onClick={() => void printDocument()}>{photosLoading || printing ? "Loading images…" : "Print / Save PDF"}</button>
@@ -4927,6 +5025,40 @@ function DocumentView({
               <a className="button primary" href={paymentLink} target="_blank" rel="noopener noreferrer">Open</a>
             </>
           )}
+        </div>
+      )}
+      {(zelleLink || zelleError) && (
+        <div className={`no-print ${zelleError ? "error-banner" : "notice"}`} style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {zelleError ? (
+            <span>{zelleError}</span>
+          ) : (
+            <>
+              <span>Zelle payment link ready — send it to the customer. <strong>You&apos;ll still need to confirm payment yourself</strong> once it arrives in your bank account.</span>
+              <input readOnly value={zelleLink} onFocus={(event) => event.target.select()} style={{ flex: "1 1 320px", minWidth: 220 }} />
+              <button type="button" className="button secondary" onClick={() => void navigator.clipboard.writeText(zelleLink)}>Copy link</button>
+              <a className="button primary" href={zelleLink} target="_blank" rel="noopener noreferrer">Open</a>
+            </>
+          )}
+        </div>
+      )}
+      {pendingZellePayment && (
+        <div className="no-print notice" style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "#fff7e6", borderColor: "#f0b429" }}>
+          <span>
+            {pendingZellePayment.status === "processing" ? (
+              <>Customer says they sent <strong>{pendingZellePayment.amount.toLocaleString("en-US", { style: "currency", currency: "usd" })}</strong> via Zelle. <strong>Nothing is marked paid until you confirm it below</strong> — check your bank app first.</>
+            ) : (
+              <>A Zelle payment link for <strong>{pendingZellePayment.amount.toLocaleString("en-US", { style: "currency", currency: "usd" })}</strong> is awaiting the customer. You can still confirm it manually below once the money arrives.</>
+            )}
+          </span>
+          <input
+            placeholder="Optional note (e.g. last 4 of transfer)"
+            value={zelleConfirmNote}
+            onChange={(event) => setZelleConfirmNote(event.target.value)}
+            style={{ flex: "1 1 220px", minWidth: 180 }}
+          />
+          <button type="button" className="button success" disabled={zelleConfirmBusy} onClick={() => void confirmZellePayment()}>
+            {zelleConfirmBusy ? "Confirming…" : "Confirm payment received"}
+          </button>
         </div>
       )}
       <article ref={documentRef} className={`document-page ${className} ${ro.status === "voided" ? "voided-document" : ""}`}>

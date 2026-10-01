@@ -92,9 +92,16 @@ export default async (request: Request) => {
     ownerId = staff.owner_id;
   }
 
-  const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=stripe_account_id,stripe_charges_enabled,business_name&owner_id=eq.${ownerId}&limit=1`, { headers: serviceHeaders });
-  const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<{ stripe_account_id: string | null; stripe_charges_enabled: boolean; business_name: string | null }> : [])[0];
-  if (!settings?.stripe_account_id) return json({ error: "Connect Stripe in Settings before collecting payment." }, 400);
+  const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=stripe_account_id,stripe_charges_enabled,business_name,subscription_status&owner_id=eq.${ownerId}&limit=1`, { headers: serviceHeaders });
+  const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<{ stripe_account_id: string | null; stripe_charges_enabled: boolean; business_name: string | null; subscription_status: string }> : [])[0];
+  if (!settings) return json({ error: "Shop settings not found." }, 404);
+  // No customer payment processing during the free trial, full stop — even if a trial shop somehow
+  // finished Stripe Connect onboarding before subscribing. Matches the same rule for Zelle in
+  // request-zelle-payment.ts.
+  if (settings.subscription_status === "trialing") {
+    return json({ error: "Payment processing isn't available during the free trial. Subscribe to accept customer payments." }, 403);
+  }
+  if (!settings.stripe_account_id) return json({ error: "Connect Stripe in Settings before collecting payment." }, 400);
   if (!settings.stripe_charges_enabled) return json({ error: "Stripe onboarding isn't finished yet — finish it in Settings before collecting payment." }, 400);
 
   const roResponse = await fetch(
