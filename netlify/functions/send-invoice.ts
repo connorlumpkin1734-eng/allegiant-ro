@@ -1,14 +1,24 @@
-// Emails a repair order's invoice to the customer. Works whether or not the shop uses Stripe:
+// Emails a repair order's invoice to the customer — fully self-service when the shop has a
+// payment method connected:
 //  - If the shop has connected Stripe and finished onboarding (stripe_charges_enabled), and the
 //    invoice is unpaid, this creates a fresh Stripe Checkout session on the shop's own connected
-//    account and includes a "Pay now" button in the email — same flow as the "Collect payment"
-//    button, just delivered by email instead of a link the shop copies themselves.
-//  - If the shop hasn't connected Stripe (or doesn't want to), the email still sends with the
-//    itemized invoice and balance due, just without a payment button. The shop collects payment
-//    however they normally do and marks the invoice paid in the app.
+//    account and includes a "Pay now" button in the email (card, Apple Pay, Google Pay all ride
+//    on this one link) — same flow as the "Collect payment" button, just delivered by email
+//    instead of a link the shop copies themselves.
+//  - If the shop has a Zelle recipient set in Settings, this also generates a one-time Zelle
+//    claim link (same token/hash pattern as request-zelle-payment.ts) and includes a "Pay via
+//    Zelle" button alongside the Stripe one. Nothing about Zelle is ever auto-confirmed — a human
+//    still has to click "Confirm payment received" in the app after checking the bank account.
+//  - Both are skipped during the free trial (settings.subscription_status === "trialing"), same
+//    rule as create-payment-session.ts and request-zelle-payment.ts — an emailed invoice must not
+//    be able to hand out a live pay link the in-app buttons are themselves blocked from creating.
+//  - If the shop has neither connected, the email still sends with the itemized invoice and
+//    balance due, just without a payment button. The shop collects payment however they normally
+//    do and marks the invoice paid in the app.
 // The charged/shown total mirrors authorizedLineItems()/repairOrderTotal() in app/page.tsx:
 // declined jobs are excluded unless the shop separately recorded authorization for them
-// (invoice_overrides). Keep this in sync with that logic and with create-payment-session.ts.
+// (invoice_overrides). Keep this in sync with that logic and with create-payment-session.ts /
+// request-zelle-payment.ts.
 
 const STRIPE_API_VERSION_HEADER = "application/x-www-form-urlencoded";
 
@@ -20,6 +30,16 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const escapeHtml = (value: unknown) => String(value ?? "")
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+
+async function hashToken(token: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function generateToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 type LineItem = {
   description: string;
@@ -167,11 +187,16 @@ export default async (request: Request) => {
   const accentColor = (settings.accent_color as string) || "#b5222d";
   const stripeAccountId = settings.stripe_account_id as string | null;
   const stripeChargesEnabled = Boolean(settings.stripe_charges_enabled);
+  const zelleRecipient = settings.zelle_recipient as string | null;
+  // No customer payment processing during the free trial, full stop — matches the same rule in
+  // create-payment-session.ts and request-zelle-payment.ts. An emailed invoice must not be able to
+  // hand out a live pay link that the in-app buttons are themselves blocked from creating.
+  const trialBlocked = settings.subscription_status === "trialing";
 
   // Only build a Stripe pay link when the shop actually uses Stripe and there's something owed.
   // Shops that don't connect Stripe still get a clean emailed invoice — just no payment button.
   let payNowUrl: string | null = null;
-  if (!ro.paid && total > 0 && stripeSecretKey && stripeAccountId && stripeChargesEnabled) {
+  if (!ro.paid && total > 0 && !trialBlocked && stripeSecretKey && stripeAccountId && stripeChargesEnabled) {
     try {
       const amountCents = Math.round(total * 100);
       const statusParams = `ro_number=${roNumberDigits}&business=${encodeURIComponent(businessName)}`;
@@ -225,6 +250,37 @@ export default async (request: Request) => {
     }
   }
 
+  // Same idea for Zelle: generate a claim link the customer can use straight from the email,
+  // mirroring request-zelle-payment.ts. Nothing here ever marks the invoice paid — only staff
+  // clicking "Confirm payment received" does that, same as the in-app flow.
+  let zelleUrl: string | null = null;
+  if (!ro.paid && total > 0 && !trialBlocked && zelleRecipient) {
+    try {
+      const token = generateToken();
+      const tokenHash = await hashToken(token);
+      const zellePaymentInsert = await fetch(`${supabaseUrl}/rest/v1/payments`, {
+        method: "POST",
+        headers: { ...serviceHeaders, Prefer: "return=representation" },
+        body: JSON.stringify({
+          owner_id: ownerId,
+          repair_order_id: ro.id,
+          processor: "zelle",
+          amount: total,
+          currency: "usd",
+          status: "pending",
+          token_hash: tokenHash,
+        }),
+      });
+      if (zellePaymentInsert.ok) {
+        zelleUrl = new URL(`/pay-zelle?token=${token}`, siteUrl).toString();
+      }
+      // If recording the Zelle payment fails, fall through and send the invoice without that
+      // link rather than blocking the email entirely — same posture as the Stripe branch above.
+    } catch {
+      zelleUrl = null;
+    }
+  }
+
   const money = (amount: number) => amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
   const vehicle = [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ");
   const customerName = ro.customers?.name || "Customer";
@@ -249,10 +305,20 @@ export default async (request: Request) => {
        </div>`;
 
   const payButton = payNowUrl
-    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0"><tr><td bgcolor="${escapeHtml(accentColor)}" style="border-radius:8px"><a href="${escapeHtml(payNowUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:${escapeHtml(accentColor)};color:#ffffff;text-decoration:none;padding:15px 22px;border-radius:8px;font-weight:700">Pay now</a></td></tr></table>
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0 10px"><tr><td bgcolor="${escapeHtml(accentColor)}" style="border-radius:8px"><a href="${escapeHtml(payNowUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:${escapeHtml(accentColor)};color:#ffffff;text-decoration:none;padding:15px 22px;border-radius:8px;font-weight:700">Pay now (card / Apple Pay / Google Pay)</a></td></tr></table>
        <p style="color:#64748b;font-size:13px">If the button does not open, tap or copy this secure link:</p>
        <p style="font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-all"><a href="${escapeHtml(payNowUrl)}" target="_blank" rel="noopener noreferrer" style="color:${escapeHtml(primaryColor)}">${escapeHtml(payNowUrl)}</a></p>`
-    : (ro.paid ? "" : `<p style="color:#64748b;font-size:13px">Please contact us to arrange payment.</p>`);
+    : "";
+
+  const zelleButton = zelleUrl
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:${payNowUrl ? "4px" : "22px"} 0 10px"><tr><td bgcolor="#ffffff" style="border-radius:8px;border:2px solid ${escapeHtml(primaryColor)}"><a href="${escapeHtml(zelleUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;color:${escapeHtml(primaryColor)};text-decoration:none;padding:13px 22px;border-radius:6px;font-weight:700">Pay via Zelle</a></td></tr></table>
+       <p style="color:#64748b;font-size:13px">If the button does not open, tap or copy this secure link:</p>
+       <p style="font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-all"><a href="${escapeHtml(zelleUrl)}" target="_blank" rel="noopener noreferrer" style="color:${escapeHtml(primaryColor)}">${escapeHtml(zelleUrl)}</a></p>`
+    : "";
+
+  const noPaymentLinkNote = !payNowUrl && !zelleUrl && !ro.paid
+    ? `<p style="color:#64748b;font-size:13px">Please contact us to arrange payment.</p>`
+    : "";
 
   const declinedNote = wasAdjustedForDeclines
     ? `<p style="color:#64748b;font-size:13px">Some recommended services were declined and are not included in this total.</p>`
@@ -265,13 +331,15 @@ export default async (request: Request) => {
       <p>${ro.paid ? "Here's a copy of your paid invoice." : "Your invoice is ready."}</p>
       ${balanceSection}
       ${payButton}
+      ${zelleButton}
+      ${noPaymentLinkNote}
       <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:22px 0;font-size:14px">${itemRows}</table>
       ${declinedNote}
       <p style="color:#64748b;font-size:13px">${escapeHtml(businessName)}${settings.business_phone ? ` · ${escapeHtml(settings.business_phone as string)}` : ""}${settings.business_email ? ` · ${escapeHtml(settings.business_email as string)}` : ""}</p>
     </div>
   </div>`;
 
-  const text = `Hi ${customerName},\n\n${ro.paid ? "Here's a copy of your paid invoice" : "Your invoice is ready"} for ${vehicle} (Invoice ${roNumberLabel}).\n\n${ro.paid ? "Paid" : "Balance due"}: ${money(total)}\n${payNowUrl ? `\nPay now: ${payNowUrl}\n` : ""}\n${businessName}`;
+  const text = `Hi ${customerName},\n\n${ro.paid ? "Here's a copy of your paid invoice" : "Your invoice is ready"} for ${vehicle} (Invoice ${roNumberLabel}).\n\n${ro.paid ? "Paid" : "Balance due"}: ${money(total)}\n${payNowUrl ? `\nPay now (card / Apple Pay / Google Pay): ${payNowUrl}\n` : ""}${zelleUrl ? `\nPay via Zelle: ${zelleUrl}\n` : ""}\n${businessName}`;
 
   const emailResponse = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -289,5 +357,5 @@ export default async (request: Request) => {
     return json({ error: `Resend rejected the email: ${await emailResponse.text()}` }, 502);
   }
 
-  return json({ message: `Invoice emailed to ${customerEmail}.`, payNowIncluded: Boolean(payNowUrl) });
+  return json({ message: `Invoice emailed to ${customerEmail}.`, payNowIncluded: Boolean(payNowUrl), zelleIncluded: Boolean(zelleUrl) });
 };
