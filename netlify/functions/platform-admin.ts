@@ -12,7 +12,8 @@ type Action =
   | { action: "list" }
   | { action: "update_price"; ownerId: string; planPriceCents: number }
   | { action: "update_status"; ownerId: string; status: "trialing" | "active" | "past_due" | "canceled" | "exempt" }
-  | { action: "update_default_price"; defaultPlanPriceCents: number };
+  | { action: "update_default_price"; defaultPlanPriceCents: number }
+  | { action: "traffic" };
 
 export default async (request: Request) => {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
@@ -79,6 +80,16 @@ export default async (request: Request) => {
     });
     if (!response.ok) return json({ error: `Could not update default price: ${await response.text()}` }, 500);
     return json({ message: "Default price for new shops updated." });
+  }
+
+  if (body.action === "traffic") {
+    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/site_visit_stats`, {
+      method: "POST", headers: serviceHeaders, body: JSON.stringify({}),
+    });
+    if (!response.ok) return json({ error: `Could not load traffic: ${await response.text()}` }, 500);
+    const rows = await response.json() as Array<{ total_visits: number; unique_visitors: number; daily: Array<{ date: string; visits: number; uniqueVisitors: number }> }>;
+    const stats = rows[0] || { total_visits: 0, unique_visitors: 0, daily: [] };
+    return json({ totalVisits: stats.total_visits, uniqueVisitors: stats.unique_visitors, daily: stats.daily });
   }
 
   return json({ error: "Unknown action." }, 400);

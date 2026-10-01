@@ -557,6 +557,29 @@ function AuthScreen() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Lightweight, privacy-light visit counter for the god-mode traffic view: a random id generated
+  // and stored in this browser's localStorage (never a name/email/account) so repeat visits from the
+  // same browser can be told apart from new ones. Skipped entirely for a browser already tagged as
+  // belonging to a paying shop (see RepairOrderApp), so those don't inflate "traffic."
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("arc_known_paying_shop") === "1") return;
+      let visitorId = localStorage.getItem("arc_visitor_id");
+      if (!visitorId) {
+        visitorId = crypto.randomUUID();
+        localStorage.setItem("arc_visitor_id", visitorId);
+      }
+      fetch("/.netlify/functions/track-visit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visitorId }),
+      }).catch(() => {});
+    } catch {
+      // localStorage can be unavailable (private browsing, etc.) — just skip tracking silently.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Staff sign in with a username, not their real email. If what was typed isn't an email address,
   // look up the real email behind that username so Supabase Auth (which only knows emails) can be used.
   async function resolveEmail(value: string): Promise<string | null> {
@@ -814,6 +837,19 @@ function RepairOrderApp({ user }: { user: User }) {
     settings.subscription_status === "active" ||
     settings.subscription_status === "exempt" ||
     (settings.subscription_status === "trialing" && settings.trial_ro_created_count < settings.trial_ro_limit);
+
+  // Tag this browser once we know it belongs to a paying shop, so future landing-page visits from it
+  // don't count toward the god-mode traffic counter (that counter is meant to track prospective
+  // traffic, not an existing customer's browser reloading the login screen).
+  useEffect(() => {
+    if (settings.subscription_status !== "active" && settings.subscription_status !== "exempt") return;
+    try {
+      localStorage.setItem("arc_known_paying_shop", "1");
+    } catch {
+      // Ignore — this is purely a nice-to-have for the traffic counter.
+    }
+  }, [settings.subscription_status]);
+
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [repairOrders, setRepairOrders] = useState<RepairOrder[]>([]);
@@ -3827,6 +3863,9 @@ function PlatformAdminPanel() {
   const [busyOwnerId, setBusyOwnerId] = useState("");
   const [busyDefault, setBusyDefault] = useState(false);
   const [message, setMessage] = useState("");
+  const [traffic, setTraffic] = useState<{ totalVisits: number; uniqueVisitors: number; daily: Array<{ date: string; visits: number; uniqueVisitors: number }> } | null>(null);
+  const [trafficLoading, setTrafficLoading] = useState(true);
+  const [trafficMessage, setTrafficMessage] = useState("");
 
   async function call(body: Record<string, unknown>) {
     const { data } = await supabase.auth.getSession();
@@ -3861,6 +3900,22 @@ function PlatformAdminPanel() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  async function loadTraffic() {
+    setTrafficLoading(true);
+    setTrafficMessage("");
+    try {
+      const result = await call({ action: "traffic" }) as { totalVisits: number; uniqueVisitors: number; daily: Array<{ date: string; visits: number; uniqueVisitors: number }> };
+      setTraffic(result);
+    } catch (caught) {
+      setTrafficMessage(caught instanceof Error ? caught.message : "Could not load traffic.");
+    }
+    setTrafficLoading(false);
+  }
+
+  useEffect(() => {
+    void loadTraffic();
   }, []);
 
   async function savePrice(ownerId: string) {
@@ -3994,6 +4049,52 @@ function PlatformAdminPanel() {
             </table>
           </div>
         )}
+      </div>
+
+      <div className="panel" style={{ marginTop: 20 }}>
+        <h2 style={{ marginTop: 0 }}>Site traffic</h2>
+        <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
+          Landing-page visits (the login/signup screen), counted by browser. Browsers that have ever
+          logged into a paying (active or exempt) shop are excluded, so this leans toward prospective
+          traffic rather than your existing customers reloading the login page.
+        </p>
+        {trafficMessage && <div className="notice" style={{ marginTop: 10 }}>{trafficMessage}</div>}
+        {trafficLoading ? (
+          <p className="muted" style={{ marginTop: 16 }}>Loading traffic…</p>
+        ) : traffic ? (
+          <>
+            <div style={{ display: "flex", gap: 16, marginTop: 14, marginBottom: 20, flexWrap: "wrap" }}>
+              <div className="panel" style={{ flex: "1 1 200px" }}>
+                <div className="muted">All-time visits</div>
+                <div style={{ fontSize: 28, fontWeight: 600 }}>{traffic.totalVisits.toLocaleString()}</div>
+              </div>
+              <div className="panel" style={{ flex: "1 1 200px" }}>
+                <div className="muted">All-time unique visitors</div>
+                <div style={{ fontSize: 28, fontWeight: 600 }}>{traffic.uniqueVisitors.toLocaleString()}</div>
+              </div>
+            </div>
+            {!traffic.daily.length ? (
+              <div className="empty-state">No visits recorded in the last 90 days yet.</div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Date</th><th>Visits</th><th>Unique visitors</th></tr>
+                  </thead>
+                  <tbody>
+                    {traffic.daily.map((day) => (
+                      <tr key={day.date}>
+                        <td>{day.date}</td>
+                        <td>{day.visits}</td>
+                        <td>{day.uniqueVisitors}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        ) : null}
       </div>
     </section>
   );
