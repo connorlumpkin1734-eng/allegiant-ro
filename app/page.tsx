@@ -718,7 +718,19 @@ function AuthScreen() {
         >
           {mode === "login" ? "Create account" : "Back to sign in"}
         </button>
+        {mode === "signup" && (
+          <p className="muted" style={{ fontSize: 12, marginTop: 10, textAlign: "center" }}>
+            By creating an account, you agree to our{" "}
+            <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a> and{" "}
+            <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+          </p>
+        )}
       </section>
+      <footer style={{ textAlign: "center", marginTop: 18, fontSize: 12 }}>
+        <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: "#8493a6" }}>Terms</a>
+        {" · "}
+        <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: "#8493a6" }}>Privacy</a>
+      </footer>
     </main>
   );
 }
@@ -4325,6 +4337,12 @@ function SettingsPanel({
       </div>
 
       {form.team_features_enabled && <StaffTeamsManager ownerId={ownerId} />}
+
+      <p className="muted" style={{ textAlign: "center", fontSize: 12, marginTop: 4 }}>
+        <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a>
+        {" · "}
+        <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+      </p>
     </section>
   );
 }
