@@ -10,6 +10,30 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   headers: { "Content-Type": "application/json" },
 });
 
+// Best-effort alert email to Connor when this function throws an uncaught exception — otherwise a
+// bug or an upstream outage (Stripe/Supabase/Resend down) fails silently with nobody finding out
+// until a shop or customer complains. Never lets the alert itself break the real response.
+async function notifyError(functionName: string, error: unknown, request: Request) {
+  try {
+    const resendKey = process.env.RESEND_API_KEY;
+    if (!resendKey) return;
+    const detail = error instanceof Error ? `${error.message}\n\n${error.stack || ""}` : String(error);
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        to: ["connor.lumpkin1734@gmail.com"],
+        subject: `[Allegiant RO] ${functionName} threw an error`,
+        text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
+      }),
+    });
+  } catch {
+    // If Resend itself is down there's nothing more we can do here.
+  }
+}
+
+
 type LineItem = { item_type: string; quantity: number; unit_price: number; taxable: boolean; service_group_id: string | null };
 type InvoiceOverrides = Record<string, { note: string; recorded_at: string; recorded_by: string }>;
 type EstimateAuthorization = {
@@ -51,7 +75,7 @@ function authorizedLineItems(
   );
 }
 
-export default async (request: Request) => {
+async function handler(request: Request): Promise<Response> {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -195,4 +219,13 @@ export default async (request: Request) => {
   }
 
   return json({ url: session.url, amount: total });
+}
+
+export default async (request: Request) => {
+  try {
+    return await handler(request);
+  } catch (error) {
+    await notifyError("create-payment-session", error, request);
+    return json({ error: "Something went wrong. Please try again." }, 500);
+  }
 };
