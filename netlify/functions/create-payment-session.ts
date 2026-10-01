@@ -169,7 +169,23 @@ export default async (request: Request) => {
       status: "pending",
     }),
   });
-  if (!paymentInsert.ok) return json({ error: `Checkout session created but could not be recorded: ${await paymentInsert.text()}` }, 500);
+  if (!paymentInsert.ok) {
+    const insertError = await paymentInsert.text();
+    // The Stripe session exists but we couldn't record it, so the webhook would never be able to
+    // match a completed payment back to this repair order. Expire the session so it can never
+    // actually be paid, rather than leaving a live, untracked payment link floating around —
+    // mirrors the rollback pattern used elsewhere (e.g. invite-staff.ts undoing the auth user it
+    // created when the follow-up staff-row insert fails).
+    try {
+      await fetch(`https://api.stripe.com/v1/checkout/sessions/${session.id}/expire`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${stripeSecretKey}`, "Stripe-Account": settings.stripe_account_id },
+      });
+    } catch {
+      // Best-effort — if this also fails, the session still self-expires on Stripe's side within 24h.
+    }
+    return json({ error: `Could not start checkout — please try again: ${insertError}` }, 500);
+  }
 
   return json({ url: session.url, amount: total });
 };
