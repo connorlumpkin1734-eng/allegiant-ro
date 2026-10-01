@@ -655,6 +655,12 @@ function AuthScreen() {
               />
             </label>
           )}
+          {mode === "signup" && (
+            <p className="muted" style={{ fontSize: 13, marginTop: -4 }}>
+              Try it free — no card required. New shops can create up to 5 repair orders at no cost;
+              subscribing afterward unlocks unlimited repair orders and payment processing.
+            </p>
+          )}
           {message && <div className="notice">{message}</div>}
           <button className="button primary" disabled={busy} type="submit">
             {busy
@@ -687,7 +693,7 @@ function AuthScreen() {
             setMessage("");
           }}
         >
-          {mode === "login" ? "Create the first account" : "Back to sign in"}
+          {mode === "login" ? "Create account" : "Back to sign in"}
         </button>
       </section>
     </main>
@@ -1341,7 +1347,7 @@ function RepairOrderApp({ user }: { user: User }) {
           <div className="billing-banner no-print">
             <span>
               {settings.subscription_status === "trialing"
-                ? `You've used all ${settings.trial_ro_limit} free repair orders. Existing work orders are still viewable, but creating or editing anything is paused until this shop subscribes.`
+                ? `You've exceeded your free trial limit of ${settings.trial_ro_limit} repair orders. Existing work orders are still viewable, but creating or editing anything is paused until this shop subscribes.`
                 : "This shop's subscription needs attention. Existing work orders are still viewable, but creating or editing anything is paused until it's resolved."}
             </span>
             {isOwner ? (
