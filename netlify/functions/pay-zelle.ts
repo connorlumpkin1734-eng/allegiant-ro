@@ -16,6 +16,27 @@ async function hashToken(token: string) {
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function clientIp(request: Request): string {
+  return request.headers.get("x-nf-client-connection-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+}
+
+// Public endpoint, no login required — rate limit by IP so it can't be used to brute-force
+// payment tokens or spam this function. Fails open (allows the request) if the rate limiter
+// itself is unreachable, so an outage there never takes down real payment collection.
+async function checkRateLimit(supabaseUrl: string, serviceKey: string, key: string, windowSeconds: number, maxRequests: number): Promise<boolean> {
+  try {
+    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/check_rate_limit`, {
+      method: "POST",
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_key: key, p_window_seconds: windowSeconds, p_max_requests: maxRequests }),
+    });
+    if (!response.ok) return true;
+    return await response.json() as boolean;
+  } catch {
+    return true;
+  }
+}
+
 type PaymentRow = {
   id: string;
   owner_id: string;
@@ -29,6 +50,15 @@ export default async (request: Request) => {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceKey) return json({ error: "Payments configuration could not be loaded." }, 500);
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
+
+  // GET (viewing the page) is capped generously; POST (claiming "I've sent payment") is tighter
+  // since a legitimate customer only does it once per invoice.
+  const ip = clientIp(request);
+  const rateLimitKey = `pay-zelle:${request.method}:${ip}`;
+  const allowed = request.method === "POST"
+    ? await checkRateLimit(supabaseUrl, serviceKey, rateLimitKey, 600, 10)
+    : await checkRateLimit(supabaseUrl, serviceKey, rateLimitKey, 600, 60);
+  if (!allowed) return json({ error: "Too many requests — please wait a few minutes and try again." }, 429);
 
   const url = new URL(request.url);
   const token = request.method === "GET" ? url.searchParams.get("token") : (await request.json().catch(() => ({})) as { token?: string }).token;

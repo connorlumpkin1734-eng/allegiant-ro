@@ -8,11 +8,42 @@ async function hashToken(token: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function clientIp(request: Request): string {
+  return request.headers.get("x-nf-client-connection-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+}
+
+// Public endpoint, no login required — rate limit by IP so it can't be used to brute-force
+// approval tokens or spam this function. Fails open (allows the request) if the rate limiter
+// itself is unreachable, so an outage there never blocks a real customer approving an estimate.
+async function checkRateLimit(supabaseUrl: string, serviceKey: string, key: string, windowSeconds: number, maxRequests: number): Promise<boolean> {
+  try {
+    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/check_rate_limit`, {
+      method: "POST",
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_key: key, p_window_seconds: windowSeconds, p_max_requests: maxRequests }),
+    });
+    if (!response.ok) return true;
+    return await response.json() as boolean;
+  } catch {
+    return true;
+  }
+}
+
 export default async (request: Request) => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceKey) return json({ error: "Estimate approval is not configured." }, 500);
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
+
+  // GET (viewing the estimate) is capped generously; POST (submitting a decision) is tighter —
+  // a legitimate customer only responds once per estimate.
+  const ip = clientIp(request);
+  const rateLimitKey = `estimate-approval:${request.method}:${ip}`;
+  const allowed = request.method === "POST"
+    ? await checkRateLimit(supabaseUrl, serviceKey, rateLimitKey, 600, 10)
+    : await checkRateLimit(supabaseUrl, serviceKey, rateLimitKey, 600, 60);
+  if (!allowed) return json({ error: "Too many requests — please wait a few minutes and try again." }, 429);
+
   const url = new URL(request.url);
   const body = request.method === "POST" ? await request.json().catch(() => ({})) as { token?: string; decisions?: Record<string, Decision>; signerName?: string; signatureData?: string; consent?: boolean } : {};
   const token = request.method === "GET" ? url.searchParams.get("token") : body.token;
