@@ -41,7 +41,7 @@ export default async (request: Request) => {
   if (body.action === "list") {
     const [tenantsResponse, configResponse] = await Promise.all([
       fetch(
-        `${supabaseUrl}/rest/v1/settings?select=owner_id,business_name,business_email,subscription_status,plan_price_cents,trial_ro_limit,trial_ro_created_count,is_platform_admin,subscription_current_period_end&order=business_name.asc`,
+        `${supabaseUrl}/rest/v1/settings?select=owner_id,business_name,business_email,subscription_status,plan_price_cents,trial_ro_limit,trial_ro_created_count,is_platform_admin,subscription_current_period_end,subscription_past_due_since&order=business_name.asc`,
         { headers: serviceHeaders }
       ),
       fetch(`${supabaseUrl}/rest/v1/platform_config?select=default_plan_price_cents&limit=1`, { headers: serviceHeaders }),
@@ -66,8 +66,15 @@ export default async (request: Request) => {
   if (body.action === "update_status") {
     const validStatuses = ["trialing", "active", "past_due", "canceled", "exempt"];
     if (!body.ownerId || !validStatuses.includes(body.status)) return json({ error: "Missing or invalid shop/status." }, 400);
+    // Keep subscription_past_due_since in sync with a manual override too, same as the webhook
+    // does for a real Stripe failure — otherwise owner_can_write()'s grace-period check (which
+    // requires the timestamp to be set) would lock a manually-flagged shop out immediately instead
+    // of giving it the same 7 days. See migration 20261001_past_due_grace_period.sql.
+    const patch: Record<string, unknown> = { subscription_status: body.status };
+    if (body.status === "past_due") patch.subscription_past_due_since = new Date().toISOString();
+    else patch.subscription_past_due_since = null;
     const response = await fetch(`${supabaseUrl}/rest/v1/settings?owner_id=eq.${body.ownerId}`, {
-      method: "PATCH", headers: serviceHeaders, body: JSON.stringify({ subscription_status: body.status }),
+      method: "PATCH", headers: serviceHeaders, body: JSON.stringify(patch),
     });
     if (!response.ok) return json({ error: `Could not update status: ${await response.text()}` }, 500);
     return json({ message: "Status updated." });

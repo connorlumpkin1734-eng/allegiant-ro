@@ -43,6 +43,10 @@ type Settings = {
   trial_ro_limit: number;
   trial_ro_created_count: number;
   subscription_current_period_end: string | null;
+  // Set the moment Stripe first reports a failed charge; cleared on recovery. Drives the 7-day
+  // read-only grace period — mirrors owner_can_write() in Postgres (see migration
+  // 20261001_past_due_grace_period.sql).
+  subscription_past_due_since: string | null;
   is_platform_admin: boolean;
 };
 
@@ -243,6 +247,7 @@ const defaultSettings: Settings = {
   trial_ro_limit: 5,
   trial_ro_created_count: 0,
   subscription_current_period_end: null,
+  subscription_past_due_since: null,
   is_platform_admin: false,
 };
 
@@ -829,6 +834,32 @@ function ChangePasswordModal({
   );
 }
 
+// Mirrors the DB's owner_can_write() RLS check (see migration
+// 20261001_past_due_grace_period.sql), purely for UX (friendly messaging/disabled buttons) — the
+// real enforcement lives in Postgres and doesn't depend on this being correct. Shared by
+// RepairOrderApp and the work-order editor so the 7-day past_due grace period only has one place
+// to get right on the client.
+function shopCanWrite(settings: Settings): boolean {
+  if (settings.subscription_status === "active" || settings.subscription_status === "exempt") return true;
+  if (settings.subscription_status === "trialing") return settings.trial_ro_created_count < settings.trial_ro_limit;
+  if (settings.subscription_status === "past_due") {
+    return Boolean(
+      settings.subscription_past_due_since
+        && Date.now() - new Date(settings.subscription_past_due_since).getTime() < 7 * 24 * 60 * 60 * 1000
+    );
+  }
+  return false;
+}
+
+// Days left in the past_due grace period (null when not applicable). Rounds up so "a few hours
+// left" still reads as "1 day left" rather than "0 days left".
+function pastDueDaysLeft(settings: Settings): number | null {
+  if (settings.subscription_status !== "past_due" || !settings.subscription_past_due_since) return null;
+  const elapsedMs = Date.now() - new Date(settings.subscription_past_due_since).getTime();
+  const remainingMs = 7 * 24 * 60 * 60 * 1000 - elapsedMs;
+  return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+}
+
 type CurrentStaff = {
   id: string;
   owner_id: string;
@@ -847,12 +878,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const isTechnicianOnly = Boolean(currentStaff) && currentStaff!.role === "technician" && !currentStaff!.is_admin;
   const ownerId = currentStaff?.owner_id ?? user.id;
   const [settings, setSettings] = useState<Settings>(defaultSettings);
-  // Mirrors the DB's owner_can_write() RLS check, purely for UX (friendly messaging/disabled
-  // buttons) — the real enforcement lives in Postgres and doesn't depend on this being correct.
-  const canWrite =
-    settings.subscription_status === "active" ||
-    settings.subscription_status === "exempt" ||
-    (settings.subscription_status === "trialing" && settings.trial_ro_created_count < settings.trial_ro_limit);
+  const canWrite = shopCanWrite(settings);
 
   // Tag this browser once we know it belongs to a paying shop, so future landing-page visits from it
   // don't count toward the god-mode traffic counter (that counter is meant to track prospective
@@ -1395,12 +1421,28 @@ function RepairOrderApp({ user }: { user: User }) {
 
       <main className="main-area">
         {error && <div className="error-banner no-print">{error}</div>}
+        {canWrite && settings.subscription_status === "past_due" && !loading && (
+          <div className="billing-banner no-print" style={{ background: "#fff4e5", borderColor: "#f0b429", color: "#7a4a00" }}>
+            <span>
+              We couldn&apos;t charge this shop&apos;s payment method. {pastDueDaysLeft(settings) ?? 7} day{pastDueDaysLeft(settings) === 1 ? "" : "s"} left to fix it before the account goes read-only — existing work stays viewable, but creating or editing will pause.
+            </span>
+            {isOwner ? (
+              <button className="button small primary" onClick={() => setView("settings")}>
+                Fix billing
+              </button>
+            ) : (
+              <span className="muted" style={{ fontSize: 13 }}>Ask the shop owner to update billing.</span>
+            )}
+          </div>
+        )}
         {!canWrite && !loading && (
           <div className="billing-banner no-print">
             <span>
               {settings.subscription_status === "trialing"
                 ? `You've exceeded your free trial limit of ${settings.trial_ro_limit} repair orders. Existing work orders are still viewable, but creating or editing anything is paused until this shop subscribes.`
-                : "This shop's subscription needs attention. Existing work orders are still viewable, but creating or editing anything is paused until it's resolved."}
+                : settings.subscription_status === "past_due"
+                  ? "This shop's payment method still hasn't been fixed, so the account is now read-only. Existing work orders are still viewable, but creating or editing anything is paused until billing is resolved."
+                  : "This shop's subscription needs attention. Existing work orders are still viewable, but creating or editing anything is paused until it's resolved."}
             </span>
             {isOwner ? (
               <button className="button small primary" onClick={() => setView("settings")}>
@@ -1923,12 +1965,7 @@ function RepairOrderEditor({
   onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode) => void;
   onDelete?: () => void;
 }) {
-  // Mirrors the same check in RepairOrderApp (and the DB's owner_can_write() RLS gate) — settings
-  // is already passed down, so no extra prop is needed here.
-  const canWrite =
-    settings.subscription_status === "active" ||
-    settings.subscription_status === "exempt" ||
-    (settings.subscription_status === "trialing" && settings.trial_ro_created_count < settings.trial_ro_limit);
+  const canWrite = shopCanWrite(settings);
   const preselectedVehicle = vehicles.find((vehicle) => vehicle.id === initialVehicleId);
   const preselectedCustomerId = initialRo?.customer_id ?? initialCustomerId ?? preselectedVehicle?.customer_id ?? "";
   const preselectedVehicleId = initialRo?.vehicle_id ?? initialVehicleId ?? "";
@@ -3844,7 +3881,16 @@ function BillingPanel({ settings }: { settings: Settings }) {
             <span className="button small warning" style={{ pointerEvents: "none" }}>
               {status === "past_due" ? "Payment needs attention" : "Subscription canceled"}
             </span>
-            <span className="muted" style={{ fontSize: 13 }}>Access is read-only until this is resolved.</span>
+            <span className="muted" style={{ fontSize: 13 }}>
+              {status === "past_due"
+                ? (() => {
+                    const daysLeft = pastDueDaysLeft(settings);
+                    return daysLeft !== null && daysLeft > 0
+                      ? `${daysLeft} day${daysLeft === 1 ? "" : "s"} left to fix this before the account goes read-only.`
+                      : "Access is now read-only until this is resolved.";
+                  })()
+                : "Access is read-only until this is resolved."}
+            </span>
           </div>
           <button type="button" className="button primary" style={{ marginTop: 12 }} disabled={busy !== ""} onClick={() => void manageBilling()}>
             {busy === "portal" ? "Opening…" : "Manage billing"}
@@ -3865,6 +3911,7 @@ type PlatformTenant = {
   trial_ro_created_count: number;
   is_platform_admin: boolean;
   subscription_current_period_end: string | null;
+  subscription_past_due_since: string | null;
 };
 
 // Connor-only: every shop on the platform, with an editable price per shop ("legacy shops keep
@@ -4041,6 +4088,15 @@ function PlatformAdminPanel() {
                         <option value="canceled">Canceled</option>
                         <option value="exempt">Exempt (comped)</option>
                       </select>
+                      {tenant.subscription_status === "past_due" && tenant.subscription_past_due_since && (() => {
+                        const elapsedMs = Date.now() - new Date(tenant.subscription_past_due_since).getTime();
+                        const daysLeft = Math.max(0, Math.ceil(7 - elapsedMs / (24 * 60 * 60 * 1000)));
+                        return (
+                          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                            {daysLeft > 0 ? `${daysLeft}d left in grace period` : "Read-only (grace period over)"}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td>{tenant.trial_ro_created_count} / {tenant.trial_ro_limit} ROs</td>
                     <td>
