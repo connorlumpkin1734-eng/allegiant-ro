@@ -8,6 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@netlify/blobs": "latest",
     "@supabase/supabase-js": "2.57.4",
     "next": "16.3.0",
     "pdf-lib": "1.17.1",
