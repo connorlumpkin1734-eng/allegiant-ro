@@ -4851,6 +4851,10 @@ function DocumentView({
     }
   }
 
+  const isEstimate = mode === "estimate";
+  const isWorkOrder = mode === "work_order";
+  const isInvoice = mode === "invoice";
+
   // Surface any not-yet-confirmed Zelle payment for this invoice so staff see it the moment they
   // open it, without having to remember to check. RLS already scopes this to the caller's own shop.
   useEffect(() => {
@@ -4916,9 +4920,6 @@ function DocumentView({
   const items = ro.line_items ?? [];
   const customer = ro.customers;
   const vehicle = ro.vehicles;
-  const isEstimate = mode === "estimate";
-  const isWorkOrder = mode === "work_order";
-  const isInvoice = mode === "invoice";
   const authorization = ro.latest_estimate_authorization;
   const decisions = authorization?.line_decisions ?? {};
   const hasCustomerResponse = hasAuthorizationResponse(authorization);
