@@ -124,6 +124,18 @@ type EstimatePhoto = {
   signed_url?: string;
 };
 
+type EstimateVideo = {
+  id: string;
+  repair_order_id: string;
+  service_group_id: string;
+  storage_key: string;
+  content_type: string | null;
+  caption: string | null;
+  sort_order: number;
+  created_at: string;
+  signed_url?: string;
+};
+
 type InvoiceOverrides = Record<string, { note: string; recorded_at: string; recorded_by: string }>;
 
 type RepairOrder = {
@@ -3037,7 +3049,10 @@ function RepairOrderEditor({
                   ))}
                 </div>
                 {initialRo && workspaceTab === "work_order" && (
-                  <JobPhotos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
+                  <>
+                    <JobPhotos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
+                    <JobVideos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
+                  </>
                 )}
                 <div className="job-add-actions">
                   {canRestructureRo && <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>}
@@ -3248,6 +3263,112 @@ function JobPhotos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
             onChange={(event) => setPhotos((current) => current.map((entry) => entry.id === photo.id ? { ...entry, caption: event.target.value } : entry))}
             onBlur={(event) => void saveCaption(photo, event.target.value)} />
           <button className="button small danger" disabled={busy} onClick={() => void removePhoto(photo)}>Delete photo</button>
+        </article>
+      ))}</div>}
+      {message && <div className="notice">{message}</div>}
+    </section>
+  );
+}
+
+const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // 200MB — generous for a 1-2 minute phone clip, keeps a mis-tap from eating the whole R2 free tier in one upload.
+
+function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string; repairOrderId: string; serviceGroupId: string }) {
+  const [videos, setVideos] = useState<EstimateVideo[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function authHeader() {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (!accessToken) throw new Error("Your session expired. Sign in again.");
+    return { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` };
+  }
+
+  async function loadVideos() {
+    const { data, error } = await supabase.from("estimate_videos").select("*")
+      .eq("repair_order_id", repairOrderId).eq("service_group_id", serviceGroupId).order("sort_order");
+    if (error) { setMessage(error.message); return; }
+    setVideos((data ?? []) as EstimateVideo[]);
+  }
+
+  useEffect(() => { void loadVideos(); }, [repairOrderId, serviceGroupId]);
+
+  async function upload(files: FileList | null) {
+    if (!files?.length) return;
+    setBusy(true); setMessage("");
+    try {
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith("video/")) continue;
+        if (file.size > MAX_VIDEO_BYTES) throw new Error(`${file.name} is larger than 200MB — trim it and try again.`);
+        const headers = await authHeader();
+        const urlResponse = await fetch("/.netlify/functions/create-video-upload-url", {
+          method: "POST", headers, body: JSON.stringify({ repairOrderId, contentType: file.type || "video/mp4" }),
+        });
+        const urlBody = await urlResponse.json() as { uploadUrl?: string; key?: string; contentType?: string; error?: string };
+        if (!urlResponse.ok || !urlBody.uploadUrl || !urlBody.key) throw new Error(urlBody.error || "Could not start the video upload.");
+        const putResponse = await fetch(urlBody.uploadUrl, { method: "PUT", headers: { "Content-Type": urlBody.contentType || file.type }, body: file });
+        if (!putResponse.ok) throw new Error("Uploading the video failed — check your connection and try again.");
+        const insertResult = await supabase.from("estimate_videos").insert({
+          owner_id: ownerId, repair_order_id: repairOrderId, service_group_id: serviceGroupId,
+          storage_key: urlBody.key, content_type: urlBody.contentType || file.type, caption: null, sort_order: videos.length,
+        });
+        if (insertResult.error) throw insertResult.error;
+      }
+      await loadVideos();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Video upload failed.");
+    } finally { setBusy(false); }
+  }
+
+  async function playVideo(video: EstimateVideo) {
+    setMessage("");
+    try {
+      const headers = await authHeader();
+      const response = await fetch("/.netlify/functions/get-video-url", {
+        method: "POST", headers, body: JSON.stringify({ videoId: video.id }),
+      });
+      const body = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !body.url) throw new Error(body.error || "Could not load this video.");
+      window.open(body.url, "_blank", "noopener,noreferrer");
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not load this video.");
+    }
+  }
+
+  async function saveCaption(video: EstimateVideo, caption: string) {
+    setVideos((current) => current.map((entry) => entry.id === video.id ? { ...entry, caption } : entry));
+    const { error } = await supabase.from("estimate_videos").update({ caption: valueOrNull(caption) }).eq("id", video.id);
+    if (error) setMessage(error.message);
+  }
+
+  async function removeVideo(video: EstimateVideo) {
+    if (!window.confirm("Delete this job video? This cannot be undone.")) return;
+    setBusy(true); setMessage("");
+    // Only the database row is deleted here — the R2 object is left in place. Cheap enough at this
+    // scale (storage overage is $0.015/GB) that a periodic cleanup job isn't worth building yet;
+    // revisit if orphaned objects ever become a real cost.
+    const { error } = await supabase.from("estimate_videos").delete().eq("id", video.id);
+    if (error) setMessage(error.message);
+    else setVideos((current) => current.filter((entry) => entry.id !== video.id));
+    setBusy(false);
+  }
+
+  return (
+    <section className="job-photos">
+      <div className="job-photo-heading">
+        <div><strong>Customer estimate videos</strong><small>Saved with this RO and shown under this service job.</small></div>
+        <label className={`button small secondary photo-upload-button ${busy ? "disabled" : ""}`}>
+          {busy ? "Uploading…" : "+ Take or add video"}
+          <input type="file" accept="video/*" capture="environment" multiple disabled={busy} onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} />
+        </label>
+      </div>
+      {videos.length > 0 && <div className="job-photo-grid">{videos.map((video) => (
+        <article className="job-photo-card" key={video.id}>
+          <button type="button" className="button small secondary" onClick={() => void playVideo(video)}>▶ Play video</button>
+          <input placeholder="Add a customer-facing caption…" value={video.caption ?? ""}
+            onChange={(event) => setVideos((current) => current.map((entry) => entry.id === video.id ? { ...entry, caption: event.target.value } : entry))}
+            onBlur={(event) => void saveCaption(video, event.target.value)} />
+          <button className="button small danger" disabled={busy} onClick={() => void removeVideo(video)}>Delete video</button>
         </article>
       ))}</div>}
       {message && <div className="notice">{message}</div>}
