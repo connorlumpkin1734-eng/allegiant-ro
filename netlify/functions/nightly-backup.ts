@@ -136,9 +136,19 @@ async function handler(request: Request): Promise<Response> {
     auth_users: authUsers,
   };
 
+  const rowCountsForMeta = Object.fromEntries(Object.entries(tableData).map(([table, rows]) => [table, rows.length]));
   const store = getStore("backups");
   const dateKey = snapshot.generated_at.slice(0, 10); // YYYY-MM-DD
-  await store.setJSON(`nightly/${dateKey}.json`, snapshot);
+  // Stash a lightweight summary as metadata so platform-admin's list_backups action can show what's
+  // available without downloading every full snapshot just to render a list.
+  await store.setJSON(`nightly/${dateKey}.json`, snapshot, {
+    metadata: {
+      generatedAt: snapshot.generated_at,
+      rowCounts: rowCountsForMeta,
+      authUserCount: authUsers.length,
+      hadPartialFailures: errors.length > 0,
+    },
+  });
 
   // Prune anything past the retention window.
   const { blobs } = await store.list({ prefix: "nightly/" });
