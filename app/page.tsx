@@ -3366,15 +3366,17 @@ function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
         </label>
       </div>
       {videos.length > 0 && <div className="job-photo-grid">{videos.map((video) => (
-        <article className="job-photo-card" key={video.id}>
+        <article className={`job-photo-card ${playing?.id === video.id ? "playing" : ""}`} key={video.id}>
           {playing?.id === video.id ? (
             <>
-              <video src={playing.url} controls autoPlay playsInline style={{ width: "100%", maxHeight: 320, borderRadius: 8, background: "#000" }}
+              <video className="job-video-player" src={playing.url} controls autoPlay playsInline
                 onError={() => setMessage("This video can't be played in this browser (phone clips are sometimes in a format Chrome on Windows can't play). Use the download link below, or try on a phone or Safari.")} />
-              <a className="button small secondary" href={playing.url} target="_blank" rel="noopener noreferrer">Open / download file</a>
+              <a className="button small secondary job-video-link" href={playing.url} target="_blank" rel="noopener noreferrer">Open / download file</a>
             </>
           ) : (
-            <button type="button" className="button small secondary" onClick={() => void playVideo(video)}>▶ Play video</button>
+            <button type="button" className="job-video-poster" onClick={() => void playVideo(video)} aria-label="Play video">
+              <span>▶</span><small>Tap to play</small>
+            </button>
           )}
           <input placeholder="Add a customer-facing caption…" value={video.caption ?? ""}
             onChange={(event) => setVideos((current) => current.map((entry) => entry.id === video.id ? { ...entry, caption: event.target.value } : entry))}

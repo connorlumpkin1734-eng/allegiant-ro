@@ -1,7 +1,22 @@
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 type Decision = "approved" | "declined";
 type SnapshotItem = { quantity: number; unit_price: number; taxable?: boolean; service_group_id?: string | null };
-type Snapshot = { items?: SnapshotItem[]; taxRate?: number; photos?: Array<Record<string, unknown>> };
+type Snapshot = { items?: SnapshotItem[]; taxRate?: number; photos?: Array<Record<string, unknown>>; videos?: Array<Record<string, unknown>> };
+
+function r2Client() {
+  const accountId = process.env.R2_ACCOUNT_ID;
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+  if (!accountId || !accessKeyId || !secretAccessKey) return null;
+  return new S3Client({
+    region: "auto",
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+}
 
 async function hashToken(token: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
@@ -60,6 +75,21 @@ export default async (request: Request) => {
       const signedPath = signed.signedURL || signed.signedUrl;
       return { ...photo, url: signedPath ? `${supabaseUrl}/storage/v1${signedPath}` : null };
     }));
+    if (snapshot?.videos?.length) {
+      const client = r2Client();
+      const bucket = process.env.R2_VIDEOS_BUCKET;
+      // The raw R2 key is deliberately not sent to the customer's browser — only a signed, expiring URL.
+      // Four hours covers a customer who opens the link, leaves the video paused, and comes back.
+      snapshot.videos = await Promise.all(snapshot.videos.map(async (video) => {
+        const { storage_key: storageKey, ...rest } = video;
+        let signedUrl: string | null = null;
+        if (client && bucket && typeof storageKey === "string") {
+          try { signedUrl = await getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: storageKey }), { expiresIn: 14400 }); }
+          catch { signedUrl = null; }
+        }
+        return { ...rest, url: signedUrl };
+      }));
+    }
     return json({ authorization: { ...authorization, estimate_snapshot: snapshot } });
   }
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);

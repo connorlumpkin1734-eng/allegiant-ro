@@ -401,6 +401,22 @@ tbody tr:hover { background: var(--panel-header); }
 .estimate-photo { margin: 0; }
 .estimate-photo img { width: 100%; max-height: 320px; display: block; object-fit: cover; border-radius: 10px; }
 .estimate-photo figcaption { margin-top: 6px; color: #475569; font-size: 13px; }
+/* Job videos: staff-side poster tile + inline player, and the customer-facing estimate video grid. */
+.job-photo-card.playing { grid-column: 1 / -1; }
+.job-video-poster { width: 100%; aspect-ratio: 16 / 9; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 7px; background: linear-gradient(135deg, #10264d, #1d3f77); color: #fff; font-weight: 700; cursor: pointer; }
+.job-video-poster span { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: rgba(255, 255, 255, 0.18); font-size: 20px; padding-left: 3px; }
+.job-video-poster small { font-weight: 500; opacity: 0.8; }
+.job-video-poster:hover span { background: rgba(255, 255, 255, 0.3); }
+.job-video-poster:disabled { cursor: wait; opacity: 0.6; }
+.job-video-player { width: 100%; max-height: 360px; display: block; border-radius: 7px; background: #000; }
+.job-photo-card .job-video-link { display: block; margin-top: 8px; text-align: center; text-decoration: none; }
+.estimate-video-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0 0 14px; }
+.estimate-video { margin: 0; }
+.estimate-video video { width: 100%; max-height: 360px; display: block; border-radius: 10px; background: #000; }
+.estimate-video figcaption { margin-top: 6px; color: #475569; font-size: 13px; }
+.estimate-video-label { margin: 6px 0 8px; color: #475569; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.approval-service .estimate-video-grid { padding: 0 17px 14px; }
+.approval-service .estimate-video-label { padding: 0 17px; }
 .ungrouped-charges {
   overflow: hidden;
   border: 1px solid var(--line);
@@ -461,7 +477,7 @@ tbody tr:hover { background: var(--panel-header); }
   .charge-line { min-width: 1050px; }
   .job-lines { overflow-x: auto; }
 }
-@media (max-width: 600px) { .job-photo-heading { align-items: stretch; flex-direction: column; } .estimate-photo-grid { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .job-photo-heading { align-items: stretch; flex-direction: column; } .estimate-photo-grid { grid-template-columns: 1fr; } .estimate-video-grid { grid-template-columns: 1fr; } }
 
 .customer-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin-top: 16px; }
 .customer-card p { margin-bottom: 12px; }
