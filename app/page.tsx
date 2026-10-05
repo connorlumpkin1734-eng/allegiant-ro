@@ -3276,6 +3276,7 @@ function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
   const [videos, setVideos] = useState<EstimateVideo[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [playing, setPlaying] = useState<{ id: string; url: string } | null>(null);
 
   async function authHeader() {
     const { data } = await supabase.auth.getSession();
@@ -3329,7 +3330,9 @@ function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
       });
       const body = await response.json() as { url?: string; error?: string };
       if (!response.ok || !body.url) throw new Error(body.error || "Could not load this video.");
-      window.open(body.url, "_blank", "noopener,noreferrer");
+      // Play inline rather than window.open: opening a tab after an async fetch gets silently blocked
+      // by pop-up blockers (no error, nothing happens), which is exactly how this first failed.
+      setPlaying({ id: video.id, url: body.url });
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Could not load this video.");
     }
@@ -3364,7 +3367,15 @@ function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
       </div>
       {videos.length > 0 && <div className="job-photo-grid">{videos.map((video) => (
         <article className="job-photo-card" key={video.id}>
-          <button type="button" className="button small secondary" onClick={() => void playVideo(video)}>▶ Play video</button>
+          {playing?.id === video.id ? (
+            <>
+              <video src={playing.url} controls autoPlay playsInline style={{ width: "100%", maxHeight: 320, borderRadius: 8, background: "#000" }}
+                onError={() => setMessage("This video can't be played in this browser (phone clips are sometimes in a format Chrome on Windows can't play). Use the download link below, or try on a phone or Safari.")} />
+              <a className="button small secondary" href={playing.url} target="_blank" rel="noopener noreferrer">Open / download file</a>
+            </>
+          ) : (
+            <button type="button" className="button small secondary" onClick={() => void playVideo(video)}>▶ Play video</button>
+          )}
           <input placeholder="Add a customer-facing caption…" value={video.caption ?? ""}
             onChange={(event) => setVideos((current) => current.map((entry) => entry.id === video.id ? { ...entry, caption: event.target.value } : entry))}
             onBlur={(event) => void saveCaption(video, event.target.value)} />
