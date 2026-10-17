@@ -1829,3 +1829,14 @@ tbody tr:hover { background: var(--panel-header); }
   --document-accent-soft: color-mix(in srgb, var(--red) 9%, #ffffff);
   --document-accent-ink: color-mix(in srgb, var(--red) 72%, #000000);
 }
+
+/* Estimate service cards follow the invoice's job-row look in every non-Standard template:
+   light accent-tinted header, dark text, accent-colored breakdown link. */
+.document-page[class*="tpl-"]:not(.tpl-standard) .estimate-service-card > header {
+  background: var(--document-accent-soft); border-bottom: 2px solid var(--document-accent);
+}
+.document-page[class*="tpl-"]:not(.tpl-standard) .estimate-service-card > header h3,
+.document-page[class*="tpl-"]:not(.tpl-standard) .estimate-service-card > header strong { color: var(--navy); }
+.document-page[class*="tpl-"]:not(.tpl-standard) .estimate-service-card > header span { color: var(--muted); }
+.document-page[class*="tpl-"]:not(.tpl-standard) .estimate-service-card summary { color: var(--document-accent-ink); }
+.document-page[class*="tpl-"]:not(.tpl-standard) .estimate-service-card { border-color: #cbd5e1; }
