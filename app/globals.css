@@ -1821,3 +1821,11 @@ tbody tr:hover { background: var(--panel-header); }
 .document-page.tpl-elegant .estimate-service-card > header,
 .document-page.tpl-elegant .document-job-heading td { background: #f6f7fa; }
 .document-page.tpl-elegant .concern-box { border-left-width: 2px; background: #f6f7fa; }
+
+/* Templates use ONE accent for estimates and invoices so the pair looks like a set. Standard keeps its
+   original per-document colors (blue estimate, red invoice); work orders stay black. */
+.document-page[class*="tpl-"]:not(.tpl-standard):not(.document-repair-order) {
+  --document-accent: var(--red);
+  --document-accent-soft: color-mix(in srgb, var(--red) 9%, #ffffff);
+  --document-accent-ink: color-mix(in srgb, var(--red) 72%, #000000);
+}
