@@ -4507,23 +4507,26 @@ function SettingsPanel({
 
       <div className="panel settings-panel">
         <h2 style={{ marginTop: 0 }}>Branding</h2>
+        <p className="muted" style={{ fontSize: 13, margin: "0 0 14px" }}>
+          Brand colors are what your customers see: estimates, invoices, the approval page, emails and the top bar of this app. They are separate from the Theme menu in the top bar, which only changes how the app looks for each person using it.
+        </p>
         <div className="form-grid two">
           <label>
-            Primary color
+            Primary brand color
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input type="color" value={form.primary_color} onChange={(event) => setForm({ ...form, primary_color: event.target.value })} style={{ width: 44, height: 36, padding: 2 }} />
               <input value={form.primary_color} onChange={(event) => setForm({ ...form, primary_color: event.target.value })} style={{ flex: 1 }} />
             </div>
           </label>
           <label>
-            Accent color
+            Accent brand color
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input type="color" value={form.accent_color} onChange={(event) => setForm({ ...form, accent_color: event.target.value })} style={{ width: 44, height: 36, padding: 2 }} />
               <input value={form.accent_color} onChange={(event) => setForm({ ...form, accent_color: event.target.value })} style={{ flex: 1 }} />
             </div>
           </label>
           <label>
-            Secondary color
+            Secondary brand color (top bar)
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input type="color" value={form.secondary_color} onChange={(event) => setForm({ ...form, secondary_color: event.target.value })} style={{ width: 44, height: 36, padding: 2 }} />
               <input value={form.secondary_color} onChange={(event) => setForm({ ...form, secondary_color: event.target.value })} style={{ flex: 1 }} />
