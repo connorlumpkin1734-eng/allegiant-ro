@@ -1840,3 +1840,8 @@ tbody tr:hover { background: var(--panel-header); }
 .document-page[class*="tpl-"]:not(.tpl-standard) .estimate-service-card > header span { color: var(--muted); }
 .document-page[class*="tpl-"]:not(.tpl-standard) .estimate-service-card summary { color: var(--document-accent-ink); }
 .document-page[class*="tpl-"]:not(.tpl-standard) .estimate-service-card { border-color: #cbd5e1; }
+
+/* Small logos: vertically centered in the logo area; Bold's white plate hugs the logo instead of
+   stretching to the full 360px logo slot. */
+.document-logo { object-position: left center; }
+.document-page.tpl-bold .document-logo { width: auto; height: auto; max-width: 360px; max-height: 110px; object-position: center; }
