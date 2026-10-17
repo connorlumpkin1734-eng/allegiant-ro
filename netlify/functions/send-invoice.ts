@@ -197,6 +197,56 @@ async function handler(request: Request): Promise<Response> {
   const tax = Math.max(0, taxableAmount) * (Number(ro.tax_rate) / 100);
   const total = subtotal + tax;
 
+  // Video clips can't play inside an email, so when this invoice has any (for services that are on
+  // it), save a frozen snapshot behind a token-gated link and add a "Watch your repair videos"
+  // button. Best-effort like the pay links: if anything here fails the invoice still sends.
+  let videosUrl: string | null = null;
+  try {
+    const invoiceGroupIds = new Set(items.map((item) => item.service_group_id).filter((id): id is string => Boolean(id)));
+    const videoResponse = await fetch(
+      `${supabaseUrl}/rest/v1/estimate_videos?select=service_group_id,storage_key,content_type,caption,sort_order&repair_order_id=eq.${encodeURIComponent(ro.id)}&order=sort_order.asc`,
+      { headers: serviceHeaders }
+    );
+    const allVideos = videoResponse.ok ? await videoResponse.json() as Array<{ service_group_id: string; storage_key: string; content_type: string | null; caption: string | null }> : [];
+    const invoiceVideos = allVideos.filter((video) => invoiceGroupIds.has(video.service_group_id));
+    if (invoiceVideos.length > 0) {
+      const groupTitles = new Map(items.filter((item) => item.service_group_id).map((item) => [item.service_group_id as string, item.service_group_title || "Repair video"]));
+      const videoToken = generateToken();
+      const videoTokenHash = await hashToken(videoToken);
+      const shareInsert = await fetch(`${supabaseUrl}/rest/v1/video_share_links`, {
+        method: "POST",
+        headers: serviceHeaders,
+        body: JSON.stringify({
+          owner_id: ownerId,
+          repair_order_id: ro.id,
+          token_hash: videoTokenHash,
+          snapshot: {
+            roNumber: ro.ro_number,
+            customerName: ro.customers?.name || "Customer",
+            vehicle: [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" "),
+            businessName: (settings.business_name as string) || "Allegiant Auto Care",
+            businessAddress: (settings.business_address as string) || "",
+            businessPhone: (settings.business_phone as string) || "",
+            businessEmail: (settings.business_email as string) || "",
+            logoUrl: settings.logo_path ? `${supabaseUrl}/storage/v1/object/public/shop-branding/${settings.logo_path as string}` : null,
+            primaryColor: (settings.primary_color as string) || "#2459a9",
+            accentColor: (settings.accent_color as string) || "#b5222d",
+            secondaryColor: (settings.secondary_color as string) || "#10264d",
+            videos: invoiceVideos.map((video) => ({
+              storage_key: video.storage_key,
+              content_type: video.content_type,
+              caption: video.caption,
+              group_title: groupTitles.get(video.service_group_id) || "Repair video",
+            })),
+          },
+        }),
+      });
+      if (shareInsert.ok) videosUrl = new URL(`/repair-videos/?token=${videoToken}`, siteUrl).toString();
+    }
+  } catch {
+    videosUrl = null;
+  }
+
   const roNumberDigits = String(ro.ro_number).padStart(4, "0");
   const roNumberLabel = `#${roNumberDigits}`;
   const businessName = (settings.business_name as string) || "Allegiant Auto Care";
@@ -348,6 +398,11 @@ async function handler(request: Request): Promise<Response> {
     ? `<p style="color:#64748b;font-size:13px">Some recommended services were declined and are not included in this total.</p>`
     : "";
 
+  const videosButton = videosUrl
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:6px 0 14px"><tr><td bgcolor="#ffffff" style="border-radius:8px;border:2px solid ${escapeHtml(primaryColor)}"><a href="${escapeHtml(videosUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;color:${escapeHtml(primaryColor)};text-decoration:none;padding:13px 22px;border-radius:6px;font-weight:700">Watch your repair videos</a></td></tr></table>
+       <p style="color:#64748b;font-size:13px">Our technician recorded video of the work on your vehicle. If the button does not open, copy this link: <a href="${escapeHtml(videosUrl)}" target="_blank" rel="noopener noreferrer" style="color:${escapeHtml(primaryColor)};overflow-wrap:anywhere;word-break:break-all">${escapeHtml(videosUrl)}</a></p>`
+    : "";
+
   const html = `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden">
     <div style="padding:24px;border-bottom:5px solid ${escapeHtml(primaryColor)}">${brandHeader}<p style="margin:6px 0 0;color:#64748b">Invoice ${roNumberLabel} · ${escapeHtml(vehicle)}</p></div>
     <div style="padding:24px">
@@ -359,11 +414,12 @@ async function handler(request: Request): Promise<Response> {
       ${noPaymentLinkNote}
       <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:22px 0;font-size:14px">${itemRows}</table>
       ${declinedNote}
+      ${videosButton}
       <p style="color:#64748b;font-size:13px">${escapeHtml(businessName)}${settings.business_phone ? ` · ${escapeHtml(settings.business_phone as string)}` : ""}${settings.business_email ? ` · ${escapeHtml(settings.business_email as string)}` : ""}</p>
     </div>
   </div>`;
 
-  const text = `Hi ${customerName},\n\n${ro.paid ? "Here's a copy of your paid invoice" : "Your invoice is ready"} for ${vehicle} (Invoice ${roNumberLabel}).\n\n${ro.paid ? "Paid" : "Balance due"}: ${money(total)}\n${payNowUrl ? `\nPay now (card / Apple Pay / Google Pay): ${payNowUrl}\n` : ""}${zelleUrl ? `\nPay via Zelle: ${zelleUrl}\n` : ""}\n${businessName}`;
+  const text = `Hi ${customerName},\n\n${ro.paid ? "Here's a copy of your paid invoice" : "Your invoice is ready"} for ${vehicle} (Invoice ${roNumberLabel}).\n\n${ro.paid ? "Paid" : "Balance due"}: ${money(total)}\n${payNowUrl ? `\nPay now (card / Apple Pay / Google Pay): ${payNowUrl}\n` : ""}${zelleUrl ? `\nPay via Zelle: ${zelleUrl}\n` : ""}${videosUrl ? `\nWatch your repair videos: ${videosUrl}\n` : ""}\n${businessName}`;
 
   const emailResponse = await fetch("https://api.resend.com/emails", {
     method: "POST",
