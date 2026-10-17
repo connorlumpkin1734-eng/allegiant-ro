@@ -94,6 +94,8 @@ export default async (request: Request) => {
     items,
     photos,
     videos,
+    // The shop's chosen document layout, frozen at send time like everything else in the snapshot.
+    template: (settings.document_template as string) || "standard",
     subtotal,
     tax,
     total,

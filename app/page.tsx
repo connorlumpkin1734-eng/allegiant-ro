@@ -11,6 +11,30 @@ type WorkspaceTab = "work_order" | "invoice";
 type DocumentType = "estimate" | "repair_order" | "invoice";
 type ItemType = "labor" | "part" | "fee" | "discount";
 
+type DocumentTemplate = "standard" | "clean" | "bold" | "classic" | "modern" | "elegant";
+type UiTheme = "midnight" | "light" | "graphite" | "ocean" | "forest" | "sand";
+
+// Layout choices for the shop's customer-facing estimates and invoices. Each maps to a tpl-* CSS class
+// (see "Document templates" at the bottom of globals.css); "standard" is the original look, no class rules.
+const DOCUMENT_TEMPLATES: Array<{ id: DocumentTemplate; name: string; blurb: string }> = [
+  { id: "standard", name: "Standard", blurb: "The original layout: navy table headers and a colored summary banner." },
+  { id: "clean", name: "Clean", blurb: "Minimal and light. Hairline rules, lots of white space." },
+  { id: "bold", name: "Bold", blurb: "Full-width brand header band, solid banner, condensed headings." },
+  { id: "classic", name: "Classic", blurb: "Boxed sections and a ruled grid, like a traditional shop invoice." },
+  { id: "modern", name: "Modern", blurb: "Rounded soft cards and tinted headers." },
+  { id: "elegant", name: "Elegant", blurb: "Serif type with a double rule. Quiet and formal." },
+];
+
+// Color themes for the shop app, chosen per person from the top bar (data-theme on <html>).
+const UI_THEMES: Array<{ id: UiTheme; name: string }> = [
+  { id: "midnight", name: "Midnight (dark)" },
+  { id: "graphite", name: "Graphite (dark)" },
+  { id: "ocean", name: "Ocean (dark)" },
+  { id: "forest", name: "Forest (dark)" },
+  { id: "light", name: "Light" },
+  { id: "sand", name: "Sand (light)" },
+];
+
 type Settings = {
   id?: string;
   owner_id?: string;
@@ -25,6 +49,7 @@ type Settings = {
   primary_color: string;
   accent_color: string;
   secondary_color: string;
+  document_template: DocumentTemplate;
   logo_path: string | null;
   team_features_enabled: boolean;
   techs_can_price: boolean;
@@ -245,6 +270,7 @@ const defaultSettings: Settings = {
   primary_color: "#2459a9",
   accent_color: "#b5222d",
   secondary_color: "#10264d",
+  document_template: "standard",
   logo_path: null,
   team_features_enabled: false,
   techs_can_price: true,
@@ -892,6 +918,37 @@ function RepairOrderApp({ user }: { user: User }) {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const canWrite = shopCanWrite(settings);
 
+  // Color theme: per person. The saved choice is applied before first paint by a script in layout.tsx
+  // (from localStorage); here we keep the picker in sync and load the choice saved to their account,
+  // so it follows them to other devices.
+  const [uiTheme, setUiTheme] = useState<UiTheme>("midnight");
+  function applyUiTheme(next: UiTheme) {
+    setUiTheme(next);
+    document.documentElement.setAttribute("data-theme", next);
+    try {
+      localStorage.setItem("ui-theme", next);
+    } catch {
+      // Private mode / blocked storage: the theme still applies for this session.
+    }
+  }
+  function changeUiTheme(next: UiTheme) {
+    applyUiTheme(next);
+    void supabase.from("user_preferences").upsert({ user_id: user.id, ui_theme: next, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  }
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("ui-theme");
+      if (stored && UI_THEMES.some((theme) => theme.id === stored)) setUiTheme(stored as UiTheme);
+    } catch {
+      // Ignore — falls back to the default theme.
+    }
+    void supabase.from("user_preferences").select("ui_theme").maybeSingle().then(({ data }) => {
+      const saved = data?.ui_theme as UiTheme | undefined;
+      if (saved && UI_THEMES.some((theme) => theme.id === saved)) applyUiTheme(saved);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Tag this browser once we know it belongs to a paying shop, so future landing-page visits from it
   // don't count toward the god-mode traffic counter (that counter is meant to track prospective
   // traffic, not an existing customer's browser reloading the login screen).
@@ -1411,6 +1468,13 @@ function RepairOrderApp({ user }: { user: User }) {
             </button>
           )}
         </nav>
+        <label className="theme-picker">
+          <select aria-label="Color theme" value={uiTheme} onChange={(event) => changeUiTheme(event.target.value as UiTheme)}>
+            {UI_THEMES.map((theme) => (
+              <option key={theme.id} value={theme.id}>{theme.name}</option>
+            ))}
+          </select>
+        </label>
         <button className="button secondary" onClick={() => setShowPasswordChange(true)}>
           Change password
         </button>
@@ -4494,6 +4558,46 @@ function SettingsPanel({
             </div>
             <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>PNG, JPG, WEBP, or SVG. Shown on estimates, work orders, invoices, and customer emails.</p>
           </label>
+          <div className="span-two">
+            <strong>Invoice and estimate style</strong>
+            <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+              The layout your customers see on estimates and invoices. Your logo and colors apply to every style. An estimate keeps the style it was sent with.
+            </p>
+            <div className="template-grid" role="radiogroup" aria-label="Invoice and estimate style">
+              {DOCUMENT_TEMPLATES.map((template) => (
+                <label key={template.id} className={`template-option ${form.document_template === template.id ? "selected" : ""}`}>
+                  <input
+                    type="radio"
+                    name="document_template"
+                    checked={form.document_template === template.id}
+                    onChange={() => setForm({ ...form, document_template: template.id })}
+                  />
+                  <div className="template-preview" aria-hidden="true">
+                    <div className={`document-page document-invoice template-preview-doc tpl-${template.id}`}>
+                      <header className="document-header">
+                        <div><h2 className="document-logo-text">{form.business_name}</h2></div>
+                        <div className="document-title"><h2>Invoice</h2><strong>RO #0021</strong></div>
+                      </header>
+                      <section className="document-stage-banner">
+                        <div><span className="stage-eyebrow">Amount due</span><strong>Payment due</strong></div>
+                        <b>$1,284.00</b>
+                      </section>
+                      <table className="document-table">
+                        <thead><tr><th>Description</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead>
+                        <tbody>
+                          <tr><td>Front brake pads</td><td>1</td><td>$189.00</td><td>$189.00</td></tr>
+                          <tr><td>Brake labor</td><td>2</td><td>$100.00</td><td>$200.00</td></tr>
+                          <tr><td>Rotors (pair)</td><td>1</td><td>$310.00</td><td>$310.00</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <strong>{template.name}</strong>
+                  <small>{template.blurb}</small>
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -5252,7 +5356,7 @@ function DocumentView({
           </button>
         </div>
       )}
-      <article ref={documentRef} className={`document-page ${className} ${ro.status === "voided" ? "voided-document" : ""}`}>
+      <article ref={documentRef} className={`document-page ${className} tpl-${settings.document_template || "standard"} ${ro.status === "voided" ? "voided-document" : ""}`}>
         {ro.status === "voided" && <div className="void-watermark">VOID</div>}
 
         <header className="document-header">

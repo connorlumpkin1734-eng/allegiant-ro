@@ -1660,3 +1660,164 @@ tbody tr:hover { background: var(--panel-header); }
   .document-photo { break-inside: avoid; page-break-inside: avoid; }
   .document-photos > h3 { break-after: avoid; }
 }
+
+/* ==========================================================================
+   APPEARANCE
+   1) Interface themes — per person, chosen from the top bar (data-theme on <html>).
+      "midnight" is the original look and is just the :root values above.
+   2) Document templates — per shop, chosen in Settings → Branding. A tpl-* class on
+      .document-page restyles estimates, invoices and the customer approval page.
+   ========================================================================== */
+
+/* ---- Interface themes ---- */
+[data-theme="light"] {
+  color-scheme: light;
+  --ink: #1b2333; --muted: #5b6578; --line: #d9dfe8;
+  --panel: #ffffff; --panel-header: #f1f4f9; --background: #f5f7fb;
+  --shadow: 0 1px 3px rgba(16, 38, 77, 0.10);
+  --accent: #1d63d8; --accent-strong: #1550b5; --accent-on: #ffffff; --accent-tint: rgba(29, 99, 216, 0.10);
+  --success: #16794a; --success-on: #ffffff; --success-text: #15803d; --success-tint: rgba(21, 128, 61, 0.12);
+  --warn-text: #9a5b00; --warn-tint: rgba(154, 91, 0, 0.12);
+  --danger-text: #c0262f; --danger-tint: rgba(192, 38, 47, 0.10);
+}
+[data-theme="graphite"] {
+  --ink: #ececec; --muted: #9a9a9a; --line: #2e2e2e;
+  --panel: #1b1b1b; --panel-header: #151515; --background: #0e0e0e;
+  --accent: #f5a524; --accent-strong: #d98f12; --accent-on: #241800; --accent-tint: rgba(245, 165, 36, 0.14);
+}
+[data-theme="ocean"] {
+  --ink: #e4ecf8; --muted: #8ea2c0; --line: #223152;
+  --panel: #111c33; --panel-header: #0e1729; --background: #09101f;
+  --accent: #4aa3ff; --accent-strong: #2f8bea; --accent-on: #031528; --accent-tint: rgba(74, 163, 255, 0.15);
+}
+[data-theme="forest"] {
+  --ink: #e5efe8; --muted: #8fa497; --line: #243a2e;
+  --panel: #12201a; --panel-header: #0f1a15; --background: #0a120e;
+  --accent: #3ddc84; --accent-strong: #27c06e; --accent-on: #04210f; --accent-tint: rgba(61, 220, 132, 0.14);
+}
+[data-theme="sand"] {
+  color-scheme: light;
+  --ink: #2a2118; --muted: #6e6253; --line: #e1d6c4;
+  --panel: #fffdf8; --panel-header: #f6efe2; --background: #faf6ee;
+  --shadow: 0 1px 3px rgba(60, 40, 10, 0.10);
+  --accent: #c2410c; --accent-strong: #9a3412; --accent-on: #ffffff; --accent-tint: rgba(194, 65, 12, 0.10);
+  --success: #3f7d20; --success-on: #ffffff; --success-text: #3f7d20; --success-tint: rgba(63, 125, 32, 0.12);
+  --warn-text: #92580a; --warn-tint: rgba(146, 88, 10, 0.12);
+  --danger-text: #b42318; --danger-tint: rgba(180, 35, 24, 0.10);
+}
+
+.theme-picker { display: flex; align-items: center; }
+.theme-picker select {
+  background: rgba(255, 255, 255, 0.10); color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 6px; padding: 7px 10px; font: inherit; font-weight: 700; font-size: 13px; cursor: pointer;
+}
+.theme-picker select option { color: #111827; background: #ffffff; }
+
+/* ---- Document template picker (Settings → Branding) ---- */
+.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-top: 8px; }
+.template-option {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; cursor: pointer;
+  border: 2px solid var(--line); border-radius: 10px; background: var(--panel-header); color: var(--ink);
+}
+.template-option:hover { border-color: var(--muted); }
+.template-option.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+.template-option input { position: absolute; opacity: 0; pointer-events: none; }
+.template-option strong { font-size: 14px; }
+.template-option small { color: var(--muted); line-height: 1.35; }
+.template-preview { height: 190px; overflow: hidden; border-radius: 6px; background: #ffffff; position: relative; }
+.template-preview .document-page.template-preview-doc {
+  min-height: 0; width: 294%; transform: scale(0.34); transform-origin: top left; box-shadow: none; border: 0;
+  pointer-events: none; padding: 48px; --doc-pad: 48px;
+}
+.template-preview .document-info-grid { padding: 14px 0; }
+
+/* ---- Document templates ---- */
+.document-page { --doc-pad: 48px; }
+@media (max-width: 700px) { .document-page { --doc-pad: 24px; } }
+@media print { .document-page { --doc-pad: 0px; } }
+
+/* Clean: white page, hairline rules, light type. */
+.document-page.tpl-clean { font-family: 'DM Sans', var(--font); }
+.document-page.tpl-clean .document-header { border-bottom: 1px solid var(--navy); }
+.document-page.tpl-clean .document-title h2 { font-weight: 300; font-size: 32px; letter-spacing: 0.03em; text-transform: none; }
+.document-page.tpl-clean .document-stage-banner { border: 0; border-top: 1px solid var(--navy); border-bottom: 1px solid #d5dbe5; border-radius: 0; background: transparent; padding: 16px 0; }
+.document-page.tpl-clean .document-table th { background: transparent; color: #475569; border: 0; border-bottom: 2px solid var(--navy); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+.document-page.tpl-clean .document-table td { border-color: #e5e9f0; }
+.document-page.tpl-clean .estimate-service-card { border-radius: 0; border-color: #d5dbe5; }
+.document-page.tpl-clean .estimate-service-card > header,
+.document-page.tpl-clean .document-job-heading td { background: transparent; border-bottom: 2px solid var(--navy); }
+.document-page.tpl-clean .concern-box { border: 0; border-top: 1px solid #d5dbe5; background: transparent; }
+
+/* Bold: full-width brand header band, solid banner, condensed headings. */
+.document-page.tpl-bold { font-family: 'Barlow', var(--font); }
+.document-page.tpl-bold .document-header { margin: calc(var(--doc-pad) * -1) calc(var(--doc-pad) * -1) 22px; padding: 34px var(--doc-pad) 26px; background: var(--navy); border-bottom: 8px solid var(--red); align-items: flex-end; }
+.document-page.tpl-bold .document-header h1,
+.document-page.tpl-bold .document-header h2,
+.document-page.tpl-bold .document-header p,
+.document-page.tpl-bold .document-header strong,
+.document-page.tpl-bold .document-header .document-title > span:not(.badge),
+.document-page.tpl-bold .document-header .document-subtitle { color: #ffffff !important; }
+.document-page.tpl-bold .document-logo { background: #ffffff; padding: 6px 10px; border-radius: 6px; }
+.document-page.tpl-bold .document-title h2 { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 40px; letter-spacing: 0.05em; }
+.document-page.tpl-bold .document-stage-banner { border-left: 0; border-radius: 6px; background: var(--document-accent); }
+.document-page.tpl-bold .document-stage-banner strong,
+.document-page.tpl-bold .document-stage-banner small,
+.document-page.tpl-bold .document-stage-banner > b,
+.document-page.tpl-bold .document-stage-banner .stage-eyebrow { color: #ffffff !important; }
+.document-page.tpl-bold .document-stage-banner > b { font-family: 'Barlow Condensed', sans-serif; font-size: 40px; font-weight: 800; }
+.document-page.tpl-bold .document-table th { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; }
+.document-page.tpl-bold .estimate-service-card { border-radius: 6px; }
+.document-page.tpl-bold .estimate-service-card > header { background: var(--navy); }
+.document-page.tpl-bold .estimate-service-card > header h3,
+.document-page.tpl-bold .estimate-service-card > header strong,
+.document-page.tpl-bold .estimate-service-card > header span { color: #ffffff; }
+.document-page.tpl-bold .grand-total { background: var(--navy); border-top: 0; border-radius: 6px; padding: 12px 14px; }
+.document-page.tpl-bold .grand-total,
+.document-page.tpl-bold .grand-total * { color: #ffffff !important; }
+
+/* Classic: boxed sections, ruled grid, monospaced figures. */
+.document-page.tpl-classic { font-family: 'IBM Plex Sans', var(--font); font-size: 13px; }
+.document-page.tpl-classic .document-header { border: 2px solid var(--navy); padding: 16px 18px; }
+.document-page.tpl-classic .document-title h2 { letter-spacing: 0.2em; }
+.document-page.tpl-classic .document-stage-banner { border: 2px solid var(--navy); border-radius: 0; background: #ffffff; }
+.document-page.tpl-classic .document-info-grid { gap: 0; padding: 14px 0; }
+.document-page.tpl-classic .document-info-grid section { border: 1px solid var(--navy); padding: 10px 12px; margin-left: -1px; }
+.document-page.tpl-classic .document-table th,
+.document-page.tpl-classic .document-table td { border: 1px solid #94a3b8; }
+.document-page.tpl-classic .document-table th { background: var(--navy); letter-spacing: 0.1em; text-transform: uppercase; font-size: 11px; }
+.document-page.tpl-classic .document-table td:nth-child(n+3) { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+.document-page.tpl-classic .estimate-service-card { border: 2px solid var(--navy); border-radius: 0; }
+.document-page.tpl-classic .estimate-service-card > header,
+.document-page.tpl-classic .document-job-heading td { background: #e5eaf3; }
+.document-page.tpl-classic .document-bottom .document-totals,
+.document-page.tpl-classic .totals-box { border: 2px solid var(--navy); padding: 6px 12px; }
+.document-page.tpl-classic .concern-box { border: 1px solid var(--navy); border-left-width: 1px; background: #ffffff; }
+
+/* Modern: rounded soft cards and tinted chips. */
+.document-page.tpl-modern { font-family: 'DM Sans', var(--font); }
+.document-page.tpl-modern .document-header { border-bottom: 0; padding-bottom: 8px; }
+.document-page.tpl-modern .document-title h2 { font-size: 30px; font-weight: 700; }
+.document-page.tpl-modern .document-stage-banner { border-left: 0; border-radius: 16px; padding: 22px 24px; }
+.document-page.tpl-modern .document-info-grid section { background: #f4f6fa; border-radius: 12px; padding: 14px 16px; }
+.document-page.tpl-modern .document-info-grid { gap: 14px; }
+.document-page.tpl-modern .document-table { border-collapse: separate; border-spacing: 0; }
+.document-page.tpl-modern .document-table th { background: var(--document-accent-soft); color: var(--document-accent-ink); border: 0; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.document-page.tpl-modern .document-table th:first-child { border-radius: 8px 0 0 8px; }
+.document-page.tpl-modern .document-table th:last-child { border-radius: 0 8px 8px 0; }
+.document-page.tpl-modern .document-table td { border: 0; border-bottom: 1px solid #edf0f5; }
+.document-page.tpl-modern .estimate-service-card { border: 0; border-radius: 16px; box-shadow: 0 2px 12px rgba(16, 38, 77, 0.10); }
+.document-page.tpl-modern .estimate-service-card > header { background: var(--document-accent-soft); }
+.document-page.tpl-modern .concern-box { border: 0; border-radius: 12px; }
+.document-page.tpl-modern .grand-total { border-top: 0; background: var(--document-accent-soft); border-radius: 12px; padding: 12px 14px; }
+
+/* Elegant: serif type, double rule, restrained. */
+.document-page.tpl-elegant { font-family: 'Source Serif 4', Georgia, serif; }
+.document-page.tpl-elegant .document-header { border-bottom: 3px double var(--navy); }
+.document-page.tpl-elegant .document-title h2 { font-weight: 600; font-style: italic; font-size: 34px; letter-spacing: 0; text-transform: none; }
+.document-page.tpl-elegant .document-stage-banner { border: 0; border-top: 1px solid var(--navy); border-bottom: 1px solid var(--navy); border-radius: 0; background: transparent; padding: 14px 0; }
+.document-page.tpl-elegant .document-table th { background: transparent; color: var(--navy); border: 0; border-top: 1px solid var(--navy); border-bottom: 1px solid var(--navy); letter-spacing: 0.06em; font-variant: small-caps; font-size: 13px; }
+.document-page.tpl-elegant .document-table td { border-color: #e2e6ee; }
+.document-page.tpl-elegant .estimate-service-card { border-radius: 2px; border-color: #b8c0cf; }
+.document-page.tpl-elegant .estimate-service-card > header,
+.document-page.tpl-elegant .document-job-heading td { background: #f6f7fa; }
+.document-page.tpl-elegant .concern-box { border-left-width: 2px; background: #f6f7fa; }
