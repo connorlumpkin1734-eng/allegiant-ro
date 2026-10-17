@@ -5495,9 +5495,9 @@ function DocumentView({
                   <details className="estimate-breakdown" open>
                     <summary>Parts and labor breakdown</summary>
                     <table className="document-table">
-                      <thead><tr><th>Description</th><th>Qty/Hrs</th><th>Est. Rate/Price</th><th>Amount</th></tr></thead>
+                      <thead><tr><th>Description</th><th>Type</th><th>Qty/Hrs</th><th>Est. Rate/Price</th><th>Amount</th></tr></thead>
                       <tbody>{group.items.map((item) => (
-                        <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : undefined}><td>{item.description}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
+                        <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : undefined}><td>{item.description}</td><td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
                       ))}</tbody>
                     </table>
                   </details>
@@ -5508,9 +5508,9 @@ function DocumentView({
               <section className="estimate-service-card additional-charges">
                 <header><div><span>Estimate details</span><h3>Additional charges and discounts</h3></div></header>
                 <table className="document-table">
-                  <thead><tr><th>Description</th><th>Qty</th><th>Rate/Price</th><th>Amount</th></tr></thead>
+                  <thead><tr><th>Description</th><th>Type</th><th>Qty/Hrs</th><th>Rate/Price</th><th>Amount</th></tr></thead>
                   <tbody>{groupedDocumentItems.filter((group) => !group.title).flatMap((group) => group.items).map((item) => (
-                    <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : undefined}><td>{item.description}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
+                    <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : undefined}><td>{item.description}</td><td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
                   ))}</tbody>
                 </table>
               </section>
