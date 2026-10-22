@@ -1741,12 +1741,12 @@ function buildReport(repairOrders: RepairOrder[], period: ReportPeriod, feeByRo:
 }
 
 function downloadReportCsv(rows: ReportRow[], period: ReportPeriod) {
-  const header = [period === "week" ? "Week" : "Month", "Jobs completed", "Sales (before tax)", "Taxable sales", "Sales tax collected", "Total collected", "Processing fees", "Net deposited", "Labor", "Parts sales", "Parts cost", "Gross profit", "Outstanding"];
+  const header = [period === "week" ? "Week" : "Month", "Jobs completed", "Sales (before tax)", "Taxable sales", "Sales tax collected", "Total collected", "Processing fees", "Net deposited", "Labor", "Parts sales", "Parts cost", "Parts profit", "Parts margin %", "Gross profit", "Outstanding"];
   const cell = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
   const num = (n: number) => n.toFixed(2);
   const lines = [header.map(cell).join(",")];
   for (const r of rows) {
-    lines.push([r.label, r.jobsCompleted, num(r.sales), num(r.taxableSales), num(r.taxCollected), num(r.collected), num(r.fees), num(r.netDeposited), num(r.laborRevenue), num(r.partsSales), num(r.partsCost), num(r.grossProfit), num(r.outstanding)].map(cell).join(","));
+    lines.push([r.label, r.jobsCompleted, num(r.sales), num(r.taxableSales), num(r.taxCollected), num(r.collected), num(r.fees), num(r.netDeposited), num(r.laborRevenue), num(r.partsSales), num(r.partsCost), num(r.partsSales - r.partsCost), r.partsSales ? ((r.partsSales - r.partsCost) / r.partsSales * 100).toFixed(1) : "", num(r.grossProfit), num(r.outstanding)].map(cell).join(","));
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -1838,6 +1838,8 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
               <th>Labor</th>
               <th>Parts sales</th>
               <th>Parts cost</th>
+              <th>Parts profit</th>
+              <th>Parts margin</th>
               <th>Gross profit</th>
               <th>Outstanding</th>
             </tr>
@@ -1856,6 +1858,8 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
                 <td>{money(row.laborRevenue)}</td>
                 <td>{money(row.partsSales)}</td>
                 <td>{money(row.partsCost)}</td>
+                <td>{money(row.partsSales - row.partsCost)}</td>
+                <td>{row.partsSales ? `${(((row.partsSales - row.partsCost) / row.partsSales) * 100).toFixed(1)}%` : "—"}</td>
                 <td>{money(row.grossProfit)}</td>
                 <td>{row.outstanding ? money(row.outstanding) : "—"}</td>
               </tr>
