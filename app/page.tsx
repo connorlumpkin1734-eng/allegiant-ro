@@ -1759,7 +1759,7 @@ function downloadReportCsv(rows: ReportRow[], period: ReportPeriod) {
 
 function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
   const [period, setPeriod] = useState<ReportPeriod>("month");
-  const [detail, setDetail] = useState(false);
+  const [detail, setDetail] = useState(true);
   const [showAll, setShowAll] = useState(false);
   const [feeByRo, setFeeByRo] = useState<Map<string, number>>(new Map());
   useEffect(() => {
