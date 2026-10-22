@@ -1646,33 +1646,58 @@ function RepairOrderApp({ user }: { user: User }) {
   );
 }
 
-type MonthlyReportRow = {
-  monthKey: string;
-  monthLabel: string;
+type ReportPeriod = "week" | "month";
+
+type ReportRow = {
+  key: string;
+  label: string;
   jobsCompleted: number;
-  revenue: number;
+  sales: number; // pre-tax
+  taxableSales: number;
+  taxCollected: number;
+  collected: number; // sales + tax, i.e. what the customers actually paid
   laborRevenue: number;
-  partsProfit: number;
+  partsSales: number;
+  partsCost: number;
+  grossProfit: number; // pre-tax sales minus recorded parts cost (same definition as the RO profit panel)
   outstanding: number;
 };
 
-function monthKeyOf(dateString: string): string {
-  return dateString.slice(0, 7); // "YYYY-MM"
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+// Local calendar date (YYYY-MM-DD). Timestamps are converted to the viewer's local day so a late-evening
+// payment is not pushed into the next day/month by UTC.
+function localDateKey(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value.slice(0, 10);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
-function monthLabelOf(monthKey: string): string {
-  const [year, month] = monthKey.split("-").map(Number);
-  return new Date(year, month - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+function periodOf(value: string, period: ReportPeriod): { key: string; label: string } {
+  const dateKey = localDateKey(value);
+  const [y, m, d] = dateKey.split("-").map(Number);
+  if (!y || !m || !d) return { key: "unknown", label: "Date unknown" };
+  if (period === "month") {
+    return { key: dateKey.slice(0, 7), label: new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" }) };
+  }
+  const day = new Date(y, m - 1, d);
+  day.setDate(day.getDate() - ((day.getDay() + 6) % 7)); // back to Monday
+  const end = new Date(day);
+  end.setDate(end.getDate() + 6);
+  const fmt = (x: Date, withYear: boolean) => x.toLocaleDateString("en-US", withYear ? { month: "short", day: "numeric", year: "numeric" } : { month: "short", day: "numeric" });
+  return { key: `${day.getFullYear()}-${pad2(day.getMonth() + 1)}-${pad2(day.getDate())}`, label: `${fmt(day, false)} – ${fmt(end, true)}` };
 }
 
-function buildMonthlyReport(repairOrders: RepairOrder[]): MonthlyReportRow[] {
-  const rows = new Map<string, MonthlyReportRow>();
+function buildReport(repairOrders: RepairOrder[], period: ReportPeriod): ReportRow[] {
+  const rows = new Map<string, ReportRow>();
 
-  const getRow = (monthKey: string) => {
-    let row = rows.get(monthKey);
+  const getRow = (value: string) => {
+    const { key, label } = periodOf(value, period);
+    let row = rows.get(key);
     if (!row) {
-      row = { monthKey, monthLabel: monthLabelOf(monthKey), jobsCompleted: 0, revenue: 0, laborRevenue: 0, partsProfit: 0, outstanding: 0 };
-      rows.set(monthKey, row);
+      row = { key, label, jobsCompleted: 0, sales: 0, taxableSales: 0, taxCollected: 0, collected: 0, laborRevenue: 0, partsSales: 0, partsCost: 0, grossProfit: 0, outstanding: 0 };
+      rows.set(key, row);
     }
     return row;
   };
@@ -1680,47 +1705,90 @@ function buildMonthlyReport(repairOrders: RepairOrder[]): MonthlyReportRow[] {
   for (const ro of repairOrders) {
     if (ro.status === "voided") continue;
 
-    // Jobs completed: counted in the month the job was actually finished.
-    if (ro.completed_at) {
-      getRow(monthKeyOf(ro.completed_at)).jobsCompleted += 1;
-    }
+    // Jobs completed: counted in the period the job was actually finished.
+    if (ro.completed_at) getRow(ro.completed_at).jobsCompleted += 1;
 
     const items = authorizedLineItems(ro.line_items ?? [], ro.latest_estimate_authorization, ro.invoice_overrides);
+    const totals = calculateLineItemTotals(items, Number(ro.tax_rate));
 
-    // Revenue only counts once the customer has actually paid, attributed to the month they paid.
+    // Sales, tax and profit count once the customer has actually paid, in the period they paid.
     if (ro.paid && ro.paid_at) {
-      const row = getRow(monthKeyOf(ro.paid_at));
-      row.revenue += calculateLineItemTotals(items, Number(ro.tax_rate)).total;
+      const row = getRow(ro.paid_at);
+      const partsSales = items.reduce((sum, item) => (item.item_type === "part" ? sum + item.quantity * item.unit_price : sum), 0);
+      const partsCost = items.reduce((sum, item) => (item.item_type === "part" ? sum + item.quantity * Number(item.unit_cost || 0) : sum), 0);
+      row.sales += totals.subtotal;
+      row.taxableSales += totals.taxableSubtotal;
+      row.taxCollected += totals.tax;
+      row.collected += totals.total;
       row.laborRevenue += items.reduce((sum, item) => (item.item_type === "labor" ? sum + item.quantity * item.unit_price : sum), 0);
-      row.partsProfit += items.reduce(
-        (sum, item) => (item.item_type === "part" ? sum + item.quantity * (item.unit_price - (item.unit_cost ?? 0)) : sum),
-        0
-      );
+      row.partsSales += partsSales;
+      row.partsCost += partsCost;
+      row.grossProfit += totals.subtotal - partsCost;
     }
 
-    // Outstanding: work that's done but not yet paid — shown against the month it was completed.
+    // Outstanding: work that's done but not yet paid — shown against the period it was completed.
     if (ro.status === "completed" && !ro.paid) {
-      const monthKey = ro.completed_at ? monthKeyOf(ro.completed_at) : "unknown";
-      getRow(monthKey).outstanding += calculateLineItemTotals(items, Number(ro.tax_rate)).total;
+      getRow(ro.completed_at ?? "unknown").outstanding += totals.total;
     }
   }
 
-  return [...rows.values()].sort((a, b) => (a.monthKey < b.monthKey ? 1 : -1));
+  return [...rows.values()].sort((a, b) => (a.key < b.key ? 1 : -1));
+}
+
+function downloadReportCsv(rows: ReportRow[], period: ReportPeriod) {
+  const header = [period === "week" ? "Week" : "Month", "Jobs completed", "Sales (before tax)", "Taxable sales", "Sales tax collected", "Total collected", "Labor", "Parts sales", "Parts cost", "Gross profit", "Outstanding"];
+  const cell = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+  const num = (n: number) => n.toFixed(2);
+  const lines = [header.map(cell).join(",")];
+  for (const r of rows) {
+    lines.push([r.label, r.jobsCompleted, num(r.sales), num(r.taxableSales), num(r.taxCollected), num(r.collected), num(r.laborRevenue), num(r.partsSales), num(r.partsCost), num(r.grossProfit), num(r.outstanding)].map(cell).join(","));
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `sales-and-tax-by-${period}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
-  const rows = useMemo(() => buildMonthlyReport(repairOrders), [repairOrders]);
+  const [period, setPeriod] = useState<ReportPeriod>("month");
+  const rows = useMemo(() => buildReport(repairOrders, period), [repairOrders, period]);
   const totalOutstanding = rows.reduce((sum, row) => sum + row.outstanding, 0);
+  const latest = rows.find((row) => row.key !== "unknown");
 
   return (
     <div className="panel">
       <h2 style={{ marginTop: 0 }}>Reports</h2>
       <p className="muted" style={{ marginTop: -8, marginBottom: 20 }}>
-        Revenue and parts profit count once an invoice is marked paid, shown in the month it was paid. Jobs completed and
-        outstanding balances are shown in the month a job was marked completed.
+        Sales, sales tax and profit count once an invoice is marked paid, in the {period === "week" ? "week (Mon–Sun)" : "month"} it was
+        paid. Sales are shown before tax; sales tax collected is what you owe the state, not income. Jobs completed and outstanding
+        balances are shown in the {period === "week" ? "week" : "month"} a job was marked completed.
       </p>
 
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className="muted">View by</span>
+          <select aria-label="Report period" value={period} onChange={(event) => setPeriod(event.target.value as ReportPeriod)}>
+            <option value="month">Month</option>
+            <option value="week">Week</option>
+          </select>
+        </label>
+        <button type="button" onClick={() => downloadReportCsv(rows, period)} disabled={!rows.length}>
+          Download CSV
+        </button>
+      </div>
+
       <div className="stat-tiles" style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
+        <div className="panel" style={{ flex: "1 1 200px" }}>
+          <div className="muted">Sales tax collected — {latest ? latest.label : "no paid invoices yet"}</div>
+          <div style={{ fontSize: 28, fontWeight: 600 }}>{money(latest?.taxCollected ?? 0)}</div>
+        </div>
+        <div className="panel" style={{ flex: "1 1 200px" }}>
+          <div className="muted">Gross profit — {latest ? latest.label : "no paid invoices yet"}</div>
+          <div style={{ fontSize: 28, fontWeight: 600 }}>{money(latest?.grossProfit ?? 0)}</div>
+        </div>
         <div className="panel" style={{ flex: "1 1 200px" }}>
           <div className="muted">Total outstanding (unpaid, completed work)</div>
           <div style={{ fontSize: 28, fontWeight: 600 }}>{money(totalOutstanding)}</div>
@@ -1734,22 +1802,32 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
         <table>
           <thead>
             <tr>
-              <th>Month</th>
+              <th>{period === "week" ? "Week" : "Month"}</th>
               <th>Jobs completed</th>
-              <th>Revenue (paid)</th>
-              <th>Labor revenue</th>
-              <th>Parts profit (markup)</th>
+              <th>Sales (before tax)</th>
+              <th>Taxable sales</th>
+              <th>Sales tax collected</th>
+              <th>Total collected</th>
+              <th>Labor</th>
+              <th>Parts sales</th>
+              <th>Parts cost</th>
+              <th>Gross profit</th>
               <th>Outstanding</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.monthKey}>
-                <td>{row.monthLabel}</td>
+              <tr key={row.key}>
+                <td>{row.label}</td>
                 <td>{row.jobsCompleted}</td>
-                <td>{money(row.revenue)}</td>
+                <td>{money(row.sales)}</td>
+                <td>{money(row.taxableSales)}</td>
+                <td>{money(row.taxCollected)}</td>
+                <td>{money(row.collected)}</td>
                 <td>{money(row.laborRevenue)}</td>
-                <td>{money(row.partsProfit)}</td>
+                <td>{money(row.partsSales)}</td>
+                <td>{money(row.partsCost)}</td>
+                <td>{money(row.grossProfit)}</td>
                 <td>{row.outstanding ? money(row.outstanding) : "—"}</td>
               </tr>
             ))}
@@ -1757,6 +1835,10 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
         </table>
         </div>
       )}
+      <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+        Gross profit = sales before tax minus recorded parts cost, the same as the profit panel on each repair order. It does not include
+        rent, tools or other shop expenses. Check your filing frequency and what counts as taxable with your accountant or the Texas Comptroller.
+      </p>
     </div>
   );
 }
