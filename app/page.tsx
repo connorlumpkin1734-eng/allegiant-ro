@@ -1759,6 +1759,8 @@ function downloadReportCsv(rows: ReportRow[], period: ReportPeriod) {
 
 function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
   const [period, setPeriod] = useState<ReportPeriod>("month");
+  const [detail, setDetail] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [feeByRo, setFeeByRo] = useState<Map<string, number>>(new Map());
   useEffect(() => {
     let cancelled = false;
@@ -1780,6 +1782,7 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
     };
   }, [repairOrders]);
   const rows = useMemo(() => buildReport(repairOrders, period, feeByRo), [repairOrders, period, feeByRo]);
+  const visibleRows = showAll ? rows : rows.slice(0, 6);
   const totalOutstanding = rows.reduce((sum, row) => sum + row.outstanding, 0);
   const latest = rows.find((row) => row.key !== "unknown");
 
@@ -1798,6 +1801,13 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
           <select aria-label="Report period" value={period} onChange={(event) => setPeriod(event.target.value as ReportPeriod)}>
             <option value="month">Month</option>
             <option value="week">Week</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className="muted">Columns</span>
+          <select aria-label="Report columns" value={detail ? "detail" : "summary"} onChange={(event) => setDetail(event.target.value === "detail")}>
+            <option value="summary">Summary</option>
+            <option value="detail">All details</option>
           </select>
         </label>
         <button type="button" onClick={() => downloadReportCsv(rows, period)} disabled={!rows.length}>
@@ -1830,36 +1840,36 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
               <th>{period === "week" ? "Week" : "Month"}</th>
               <th>Jobs completed</th>
               <th>Sales (before tax)</th>
-              <th>Taxable sales</th>
+              {detail && <th>Taxable sales</th>}
               <th>Sales tax collected</th>
-              <th>Total collected</th>
-              <th>Processing fees</th>
+              {detail && <th>Total collected</th>}
+              {detail && <th>Processing fees</th>}
               <th>Net deposited</th>
-              <th>Labor</th>
-              <th>Parts sales</th>
-              <th>Parts cost</th>
-              <th>Parts profit</th>
-              <th>Parts margin</th>
+              {detail && <th>Labor</th>}
+              {detail && <th>Parts sales</th>}
+              {detail && <th>Parts cost</th>}
+              {detail && <th>Parts profit</th>}
+              {detail && <th>Parts margin</th>}
               <th>Gross profit</th>
               <th>Outstanding</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {visibleRows.map((row) => (
               <tr key={row.key}>
                 <td>{row.label}</td>
                 <td>{row.jobsCompleted}</td>
                 <td>{money(row.sales)}</td>
-                <td>{money(row.taxableSales)}</td>
+                {detail && <td>{money(row.taxableSales)}</td>}
                 <td>{money(row.taxCollected)}</td>
-                <td>{money(row.collected)}</td>
-                <td>{row.fees ? money(row.fees) : "—"}</td>
+                {detail && <td>{money(row.collected)}</td>}
+                {detail && <td>{row.fees ? money(row.fees) : "—"}</td>}
                 <td>{money(row.netDeposited)}</td>
-                <td>{money(row.laborRevenue)}</td>
-                <td>{money(row.partsSales)}</td>
-                <td>{money(row.partsCost)}</td>
-                <td>{money(row.partsSales - row.partsCost)}</td>
-                <td>{row.partsSales ? `${(((row.partsSales - row.partsCost) / row.partsSales) * 100).toFixed(1)}%` : "—"}</td>
+                {detail && <td>{money(row.laborRevenue)}</td>}
+                {detail && <td>{money(row.partsSales)}</td>}
+                {detail && <td>{money(row.partsCost)}</td>}
+                {detail && <td>{money(row.partsSales - row.partsCost)}</td>}
+                {detail && <td>{row.partsSales ? `${(((row.partsSales - row.partsCost) / row.partsSales) * 100).toFixed(1)}%` : "—"}</td>}
                 <td>{money(row.grossProfit)}</td>
                 <td>{row.outstanding ? money(row.outstanding) : "—"}</td>
               </tr>
@@ -1867,6 +1877,11 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
           </tbody>
         </table>
         </div>
+      )}
+      {rows.length > 6 && (
+        <button type="button" style={{ marginTop: 12 }} onClick={() => setShowAll(!showAll)}>
+          {showAll ? "Show fewer" : `Show all ${rows.length} ${period === "week" ? "weeks" : "months"}`}
+        </button>
       )}
       <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
         Processing fees are what Stripe charged on card and bank payments, recorded automatically for payments received after fee tracking was added (earlier payments, Zelle, cash and checks show —). Net deposited = total collected minus fees. Gross profit = sales before tax minus recorded parts cost, the same as the profit panel on each repair order, and does not include
