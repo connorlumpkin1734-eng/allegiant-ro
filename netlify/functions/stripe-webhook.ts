@@ -159,14 +159,41 @@ async function handler(request: Request): Promise<Response> {
     // Otherwise: a shop collecting a card/ACH payment from ITS OWN customer via Stripe Connect.
     if (session.payment_status !== "paid") return json({ received: true });
 
-    const paymentsResponse = await fetch(`${supabaseUrl}/rest/v1/payments?processor_session_id=eq.${session.id}&select=id,repair_order_id`, { headers: serviceHeaders });
-    const payments = paymentsResponse.ok ? await paymentsResponse.json() as Array<{ id: string; repair_order_id: string }> : [];
+    const paymentsResponse = await fetch(`${supabaseUrl}/rest/v1/payments?processor_session_id=eq.${session.id}&select=id,repair_order_id,processor_account_id`, { headers: serviceHeaders });
+    const payments = paymentsResponse.ok ? await paymentsResponse.json() as Array<{ id: string; repair_order_id: string; processor_account_id: string | null }> : [];
     const payment = payments[0];
     if (!payment) return json({ received: true });
 
+    // Best-effort: look up what Stripe charged to process this payment (fee and net) and which method
+    // was used. A failure here must never stop the invoice from being marked paid.
+    const feeFields: Record<string, unknown> = {};
+    try {
+      const connectedAccount = event.account || payment.processor_account_id;
+      if (stripeSecretKey && connectedAccount && session.payment_intent) {
+        const intentResponse = await fetch(
+          `https://api.stripe.com/v1/payment_intents/${encodeURIComponent(session.payment_intent)}?expand[]=latest_charge.balance_transaction`,
+          { headers: { Authorization: `Bearer ${stripeSecretKey}`, "Stripe-Account": connectedAccount } }
+        );
+        if (intentResponse.ok) {
+          const intent = await intentResponse.json() as {
+            latest_charge?: { payment_method_details?: { type?: string }; balance_transaction?: { fee?: number; net?: number } | string | null } | string | null;
+          };
+          const charge = typeof intent.latest_charge === "object" ? intent.latest_charge : null;
+          const balance = charge && typeof charge.balance_transaction === "object" ? charge.balance_transaction : null;
+          if (balance && typeof balance.fee === "number") {
+            feeFields.fee_amount = balance.fee / 100;
+            if (typeof balance.net === "number") feeFields.net_amount = balance.net / 100;
+          }
+          if (charge?.payment_method_details?.type) feeFields.payment_method_type = charge.payment_method_details.type;
+        }
+      }
+    } catch {
+      // Leave fee fields unset; the payment itself is still recorded below.
+    }
+
     await fetch(`${supabaseUrl}/rest/v1/payments?id=eq.${payment.id}`, {
       method: "PATCH", headers: serviceHeaders,
-      body: JSON.stringify({ status: "succeeded", processor_payment_id: session.payment_intent || null }),
+      body: JSON.stringify({ status: "succeeded", processor_payment_id: session.payment_intent || null, ...feeFields }),
     });
     await fetch(`${supabaseUrl}/rest/v1/repair_orders?id=eq.${payment.repair_order_id}`, {
       method: "PATCH", headers: serviceHeaders,

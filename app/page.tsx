@@ -1656,6 +1656,8 @@ type ReportRow = {
   taxableSales: number;
   taxCollected: number;
   collected: number; // sales + tax, i.e. what the customers actually paid
+  fees: number; // card/bank processing fees charged by Stripe (only recorded for payments received after fee tracking was added)
+  netDeposited: number; // collected minus fees
   laborRevenue: number;
   partsSales: number;
   partsCost: number;
@@ -1689,14 +1691,14 @@ function periodOf(value: string, period: ReportPeriod): { key: string; label: st
   return { key: `${day.getFullYear()}-${pad2(day.getMonth() + 1)}-${pad2(day.getDate())}`, label: `${fmt(day, false)} – ${fmt(end, true)}` };
 }
 
-function buildReport(repairOrders: RepairOrder[], period: ReportPeriod): ReportRow[] {
+function buildReport(repairOrders: RepairOrder[], period: ReportPeriod, feeByRo: Map<string, number>): ReportRow[] {
   const rows = new Map<string, ReportRow>();
 
   const getRow = (value: string) => {
     const { key, label } = periodOf(value, period);
     let row = rows.get(key);
     if (!row) {
-      row = { key, label, jobsCompleted: 0, sales: 0, taxableSales: 0, taxCollected: 0, collected: 0, laborRevenue: 0, partsSales: 0, partsCost: 0, grossProfit: 0, outstanding: 0 };
+      row = { key, label, jobsCompleted: 0, sales: 0, taxableSales: 0, taxCollected: 0, collected: 0, fees: 0, netDeposited: 0, laborRevenue: 0, partsSales: 0, partsCost: 0, grossProfit: 0, outstanding: 0 };
       rows.set(key, row);
     }
     return row;
@@ -1720,6 +1722,9 @@ function buildReport(repairOrders: RepairOrder[], period: ReportPeriod): ReportR
       row.taxableSales += totals.taxableSubtotal;
       row.taxCollected += totals.tax;
       row.collected += totals.total;
+      const fee = feeByRo.get(ro.id) ?? 0;
+      row.fees += fee;
+      row.netDeposited += totals.total - fee;
       row.laborRevenue += items.reduce((sum, item) => (item.item_type === "labor" ? sum + item.quantity * item.unit_price : sum), 0);
       row.partsSales += partsSales;
       row.partsCost += partsCost;
@@ -1736,12 +1741,12 @@ function buildReport(repairOrders: RepairOrder[], period: ReportPeriod): ReportR
 }
 
 function downloadReportCsv(rows: ReportRow[], period: ReportPeriod) {
-  const header = [period === "week" ? "Week" : "Month", "Jobs completed", "Sales (before tax)", "Taxable sales", "Sales tax collected", "Total collected", "Labor", "Parts sales", "Parts cost", "Gross profit", "Outstanding"];
+  const header = [period === "week" ? "Week" : "Month", "Jobs completed", "Sales (before tax)", "Taxable sales", "Sales tax collected", "Total collected", "Processing fees", "Net deposited", "Labor", "Parts sales", "Parts cost", "Gross profit", "Outstanding"];
   const cell = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
   const num = (n: number) => n.toFixed(2);
   const lines = [header.map(cell).join(",")];
   for (const r of rows) {
-    lines.push([r.label, r.jobsCompleted, num(r.sales), num(r.taxableSales), num(r.taxCollected), num(r.collected), num(r.laborRevenue), num(r.partsSales), num(r.partsCost), num(r.grossProfit), num(r.outstanding)].map(cell).join(","));
+    lines.push([r.label, r.jobsCompleted, num(r.sales), num(r.taxableSales), num(r.taxCollected), num(r.collected), num(r.fees), num(r.netDeposited), num(r.laborRevenue), num(r.partsSales), num(r.partsCost), num(r.grossProfit), num(r.outstanding)].map(cell).join(","));
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -1754,7 +1759,27 @@ function downloadReportCsv(rows: ReportRow[], period: ReportPeriod) {
 
 function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
   const [period, setPeriod] = useState<ReportPeriod>("month");
-  const rows = useMemo(() => buildReport(repairOrders, period), [repairOrders, period]);
+  const [feeByRo, setFeeByRo] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from("payments")
+      .select("repair_order_id,fee_amount")
+      .eq("status", "succeeded")
+      .not("fee_amount", "is", null)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const map = new Map<string, number>();
+        for (const row of (data ?? []) as Array<{ repair_order_id: string; fee_amount: number | string }>) {
+          map.set(row.repair_order_id, (map.get(row.repair_order_id) ?? 0) + Number(row.fee_amount));
+        }
+        setFeeByRo(map);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repairOrders]);
+  const rows = useMemo(() => buildReport(repairOrders, period, feeByRo), [repairOrders, period, feeByRo]);
   const totalOutstanding = rows.reduce((sum, row) => sum + row.outstanding, 0);
   const latest = rows.find((row) => row.key !== "unknown");
 
@@ -1808,6 +1833,8 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
               <th>Taxable sales</th>
               <th>Sales tax collected</th>
               <th>Total collected</th>
+              <th>Processing fees</th>
+              <th>Net deposited</th>
               <th>Labor</th>
               <th>Parts sales</th>
               <th>Parts cost</th>
@@ -1824,6 +1851,8 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
                 <td>{money(row.taxableSales)}</td>
                 <td>{money(row.taxCollected)}</td>
                 <td>{money(row.collected)}</td>
+                <td>{row.fees ? money(row.fees) : "—"}</td>
+                <td>{money(row.netDeposited)}</td>
                 <td>{money(row.laborRevenue)}</td>
                 <td>{money(row.partsSales)}</td>
                 <td>{money(row.partsCost)}</td>
@@ -1836,7 +1865,7 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
         </div>
       )}
       <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-        Gross profit = sales before tax minus recorded parts cost, the same as the profit panel on each repair order. It does not include
+        Processing fees are what Stripe charged on card and bank payments, recorded automatically for payments received after fee tracking was added (earlier payments, Zelle, cash and checks show —). Net deposited = total collected minus fees. Gross profit = sales before tax minus recorded parts cost, the same as the profit panel on each repair order, and does not include
         rent, tools or other shop expenses. Check your filing frequency and what counts as taxable with your accountant or the Texas Comptroller.
       </p>
     </div>
