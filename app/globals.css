@@ -1845,3 +1845,44 @@ tbody tr:hover { background: var(--panel-header); }
    stretching to the full 360px logo slot. */
 .document-logo { object-position: left center; }
 .document-page.tpl-bold .document-logo { width: auto; height: auto; max-width: 360px; max-height: 110px; object-position: center; }
+
+/* ==========================================================================
+   Phone layout (shop-user side). Desktop and tablet are unchanged.
+   ========================================================================== */
+@media (max-width: 700px) {
+  /* 1) Charge lines (labor / parts / discounts) become small cards instead of a 1,050px-wide row. */
+  .job-lines { overflow-x: visible; }
+  .charge-line {
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    align-items: end;
+    padding: 12px;
+  }
+  .charge-line.associated-part { padding-left: 12px; margin-left: 10px; border-left: 3px solid var(--accent); }
+  .charge-line .charge-type-label { grid-column: 1; grid-row: 1; }
+  .charge-line .icon-button { grid-column: 2; grid-row: 1; justify-self: end; min-width: 44px; min-height: 44px; }
+  .charge-line .description-field { grid-column: 1 / -1; }
+  .charge-line .line-total { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; padding-top: 4px; border-top: 1px solid var(--line); }
+  .charge-line .checkbox-row.compact { align-self: center; }
+  .charge-line input:not([type="checkbox"]) { min-height: 44px; font-size: 16px; } /* 16px stops iOS zooming the page on focus */
+
+  /* 2) Top bar: smaller logo, compact buttons, navigation in one swipeable row. */
+  .topbar { padding: 8px 12px; gap: 8px; min-height: 0; }
+  .topbar-logo { width: 150px; max-height: 38px; }
+  .brand-button { padding: 4px 8px; }
+  .topbar .button { padding: 7px 10px; font-size: 12px; min-height: 0; }
+  .theme-picker select { padding: 6px 8px; font-size: 12px; max-width: 130px; }
+  .topbar nav { order: 3; width: 100%; height: 40px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .topbar nav::-webkit-scrollbar { display: none; }
+  .topbar nav button { flex: 0 0 auto; white-space: nowrap; padding: 0 12px; }
+
+  /* 3) Service job header: number + title on top, total and delete underneath, nothing cut off. */
+  .service-job-header { grid-template-columns: 38px minmax(0, 1fr); align-items: center; }
+  .service-job-header > .service-job-total { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; text-align: left; }
+  .service-job-header > .service-job-total span, .service-job-header > .service-job-total strong { display: inline; margin: 0; }
+  .service-job-header > .button { grid-column: 1 / -1; width: 100%; min-height: 44px; }
+
+  /* Floating Close / Save bar: solid and compact so it covers less while you scroll. */
+  .workspace-bottom-actions { padding: 10px 0 8px; background: var(--background); border-top: 1px solid var(--line); }
+}
