@@ -1071,11 +1071,31 @@ function RepairOrderApp({ user }: { user: User }) {
 
   useEffect(() => {
     // A staff login should never land on an owner-only screen — bounce back to the dashboard.
-    if (staffResolved && !isAdminAccess && view === "settings") {
+    if (staffResolved && !isAdminAccess && (view === "settings" || view === "reports")) {
       setView("dashboard");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffResolved, isAdminAccess, view]);
+
+  // Remember which main tab you were on across a page refresh (kept in the URL hash, e.g. #reports).
+  // Restoring happens once on load; the effect below keeps the hash in step with later tab changes.
+  useEffect(() => {
+    const saved = window.location.hash.slice(1);
+    if (saved === "customers" || saved === "reports" || saved === "settings") setView(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const viewHashSkipFirst = useRef(true);
+  useEffect(() => {
+    if (viewHashSkipFirst.current) {
+      viewHashSkipFirst.current = false;
+      return;
+    }
+    if (view === "dashboard" || view === "customers" || view === "reports" || view === "settings") {
+      const next = view === "dashboard" ? window.location.pathname + window.location.search : `#${view}`;
+      window.history.replaceState({}, "", next);
+    }
+  }, [view]);
 
   useEffect(() => {
     // Landing back here after Stripe onboarding (Express account link, or Standard OAuth) —
