@@ -5197,8 +5197,6 @@ function DocumentView({
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [paymentLink, setPaymentLink] = useState("");
   const [paymentError, setPaymentError] = useState("");
-  const [zelleBusy, setZelleBusy] = useState(false);
-  const [zelleLink, setZelleLink] = useState("");
   const [zelleError, setZelleError] = useState("");
   const [pendingZellePayment, setPendingZellePayment] = useState<{ id: string; amount: number; status: string } | null>(null);
   const [zelleConfirmBusy, setZelleConfirmBusy] = useState(false);
@@ -5237,41 +5235,18 @@ function DocumentView({
       const { data } = await supabase.auth.getSession();
       const accessToken = data.session?.access_token;
       if (!accessToken) throw new Error("Your session expired. Sign in again.");
-      const response = await fetch("/.netlify/functions/create-payment-session", {
+      const response = await fetch("/.netlify/functions/create-pay-link", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ repairOrderId: ro.id }),
       });
       const body = await response.json() as { url?: string; error?: string };
-      if (!response.ok || !body.url) throw new Error(body.error || "Could not start a payment.");
+      if (!response.ok || !body.url) throw new Error(body.error || "Could not create the payment link.");
       setPaymentLink(body.url);
     } catch (caught) {
       setPaymentError(caught instanceof Error ? caught.message : "Could not start a payment.");
     } finally {
       setPaymentBusy(false);
-    }
-  }
-
-  async function requestZellePayment() {
-    setZelleBusy(true);
-    setZelleError("");
-    setZelleLink("");
-    try {
-      const { data } = await supabase.auth.getSession();
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("Your session expired. Sign in again.");
-      const response = await fetch("/.netlify/functions/request-zelle-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ repairOrderId: ro.id }),
-      });
-      const body = await response.json() as { url?: string; error?: string };
-      if (!response.ok || !body.url) throw new Error(body.error || "Could not create a Zelle payment link.");
-      setZelleLink(body.url);
-    } catch (caught) {
-      setZelleError(caught instanceof Error ? caught.message : "Could not create a Zelle payment link.");
-    } finally {
-      setZelleBusy(false);
     }
   }
 
@@ -5323,7 +5298,7 @@ function DocumentView({
     return () => {
       cancelled = true;
     };
-  }, [isInvoice, ro.id, zelleLink]);
+  }, [isInvoice, ro.id, paymentLink]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5442,14 +5417,9 @@ function DocumentView({
                 {invoiceEmailBusy ? "Sending…" : "Email Invoice"}
               </button>
             )}
-            {isInvoice && !ro.paid && ro.status !== "voided" && settings.stripe_charges_enabled && settings.subscription_status !== "trialing" && (
+            {isInvoice && !ro.paid && ro.status !== "voided" && (settings.stripe_charges_enabled || settings.zelle_recipient) && settings.subscription_status !== "trialing" && (
               <button className="button success" disabled={paymentBusy} onClick={() => void collectPayment()}>
                 {paymentBusy ? "Starting…" : "Collect payment"}
-              </button>
-            )}
-            {isInvoice && !ro.paid && ro.status !== "voided" && settings.zelle_recipient && settings.subscription_status !== "trialing" && (
-              <button className="button secondary" disabled={zelleBusy} onClick={() => void requestZellePayment()}>
-                {zelleBusy ? "Starting…" : "Request Zelle payment"}
               </button>
             )}
             <button className="button primary" disabled={photosLoading || printing || Boolean(photoError)} onClick={() => void printDocument()}>{photosLoading || printing ? "Loading images…" : "Print / Save PDF"}</button>
@@ -5467,7 +5437,7 @@ function DocumentView({
             <span>{paymentError}</span>
           ) : (
             <>
-              <span>Payment link ready — copy it to the customer, or open it to take payment right now:</span>
+              <span>Payment link ready. Customer pays by {[settings.stripe_charges_enabled && "card or bank", settings.zelle_recipient && "Zelle"].filter(Boolean).join(" or ")}. Copy it to them, or open it to pay together right now.{settings.zelle_recipient ? <> <strong>Zelle payments aren&apos;t marked paid until you confirm them.</strong></> : null}</span>
               <input readOnly value={paymentLink} onFocus={(event) => event.target.select()} style={{ flex: "1 1 320px", minWidth: 220 }} />
               <button type="button" className="button secondary" onClick={() => void navigator.clipboard.writeText(paymentLink)}>Copy link</button>
               <a className="button primary" href={paymentLink} target="_blank" rel="noopener noreferrer">Open</a>
@@ -5475,18 +5445,9 @@ function DocumentView({
           )}
         </div>
       )}
-      {(zelleLink || zelleError) && (
-        <div className={`no-print ${zelleError ? "error-banner" : "notice"}`} style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          {zelleError ? (
-            <span>{zelleError}</span>
-          ) : (
-            <>
-              <span>Zelle payment link ready — send it to the customer. <strong>You&apos;ll still need to confirm payment yourself</strong> once it arrives in your bank account.</span>
-              <input readOnly value={zelleLink} onFocus={(event) => event.target.select()} style={{ flex: "1 1 320px", minWidth: 220 }} />
-              <button type="button" className="button secondary" onClick={() => void navigator.clipboard.writeText(zelleLink)}>Copy link</button>
-              <a className="button primary" href={zelleLink} target="_blank" rel="noopener noreferrer">Open</a>
-            </>
-          )}
+      {zelleError && (
+        <div className="no-print error-banner" style={{ margin: "0 0 16px" }}>
+          <span>{zelleError}</span>
         </div>
       )}
       {pendingZellePayment && (
