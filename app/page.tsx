@@ -1402,12 +1402,18 @@ function RepairOrderApp({ user }: { user: User }) {
       return;
     }
     const confirmed = window.confirm(
-      `Permanently delete RO #${padRo(ro.ro_number)}?\n\nThis also deletes its line items and saved inspection and cannot be undone.`
+      `Permanently delete RO #${padRo(ro.ro_number)}?\n\nThis also deletes its line items, inspection, photos and estimate approvals, and cannot be undone. (ROs with recorded payments can't be deleted — void or archive those instead.)`
     );
     if (!confirmed) return;
 
     setError("");
+    // Look up the RO's photo files first; the database rows go with the RO, the files are removed after.
+    const { data: photoRows } = await supabase.from("estimate_photos").select("storage_path").eq("repair_order_id", ro.id);
     const { error: deleteError } = await supabase.from("repair_orders").delete().eq("id", ro.id);
+    if (!deleteError) {
+      const paths = (photoRows ?? []).map((photo) => photo.storage_path as string).filter(Boolean);
+      if (paths.length) await supabase.storage.from("estimate-photos").remove(paths);
+    }
     if (deleteError) {
       setError(`Could not delete RO #${padRo(ro.ro_number)}: ${deleteError.message}`);
       return;
