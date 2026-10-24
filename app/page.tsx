@@ -53,6 +53,8 @@ type Settings = {
   logo_path: string | null;
   team_features_enabled: boolean;
   techs_can_price: boolean;
+  /** How technicians get work: every RO, their team's ROs, or only ROs assigned to them. */
+  tech_work_mode: TechWorkMode;
   stripe_account_id: string | null;
   stripe_account_type: "express" | "standard" | null;
   stripe_onboarding_complete: boolean;
@@ -145,6 +147,8 @@ type LineItem = {
 };
 
 type JobStatus = "authorized" | "needs_approval" | "pending_review";
+
+type TechWorkMode = "open" | "team" | "technician";
 
 // Dealer-style line kinds. "customer" = customer concern (needs diagnosis).
 type LineKind = "request" | "customer" | "inspection";
@@ -250,6 +254,8 @@ type RepairOrder = {
   vehicles?: Vehicle | null;
   line_items?: LineItem[];
   concern_lines?: ConcernLine[];
+  team_id?: string | null;
+  repair_order_technicians?: Array<{ staff_id: string }>;
   latest_estimate_authorization?: EstimateAuthorization | null;
 };
 
@@ -350,6 +356,7 @@ const defaultSettings: Settings = {
   logo_path: null,
   team_features_enabled: false,
   techs_can_price: true,
+  tech_work_mode: "open",
   stripe_account_id: null,
   stripe_account_type: null,
   stripe_onboarding_complete: false,
@@ -3549,7 +3556,12 @@ function RepairOrderEditor({
       </div>
 
       {canRestructureRo && settings.team_features_enabled && initialRo && (
-        <TechnicianAssignment ownerId={ownerId} repairOrderId={initialRo.id} />
+        <TechnicianAssignment
+          ownerId={ownerId}
+          repairOrderId={initialRo.id}
+          workMode={settings.tech_work_mode ?? "technician"}
+          initialTeamId={initialRo.team_id ?? null}
+        />
       )}
 
       <section className="panel line-items-panel">
@@ -3734,30 +3746,43 @@ function RepairOrderEditor({
   );
 }
 
-function TechnicianAssignment({ ownerId, repairOrderId }: { ownerId: string; repairOrderId: string }) {
+// Dispatch box on an RO: which team has it, and which techs are on it. What it does for techs depends
+// on the shop's "How do technicians get work?" setting (enforced in the database by staff_can_work_ro).
+function TechnicianAssignment({
+  ownerId,
+  repairOrderId,
+  workMode,
+  initialTeamId,
+}: {
+  ownerId: string;
+  repairOrderId: string;
+  workMode: TechWorkMode;
+  initialTeamId: string | null;
+}) {
   const [technicians, setTechnicians] = useState<StaffMember[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [teamId, setTeamId] = useState<string | null>(initialTeamId);
   const [assignedIds, setAssignedIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-
   async function loadAll() {
-    const [staffResult, assignmentsResult] = await Promise.all([
+    const [staffResult, assignmentsResult, teamsResult] = await Promise.all([
       supabase.from("staff").select("*").eq("role", "technician").eq("active", true).order("name"),
       supabase.from("repair_order_technicians").select("staff_id").eq("repair_order_id", repairOrderId),
+      supabase.from("teams").select("id, name").order("name"),
     ]);
     if (staffResult.error) setMessage(staffResult.error.message);
     if (assignmentsResult.error) setMessage(assignmentsResult.error.message);
     setTechnicians((staffResult.data ?? []) as StaffMember[]);
+    setTeams((teamsResult.data ?? []) as Team[]);
     setAssignedIds(((assignmentsResult.data ?? []) as Array<{ staff_id: string }>).map((row) => row.staff_id));
     setLoading(false);
   }
-
   useEffect(() => {
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repairOrderId]);
-
   async function toggle(staffId: string, assign: boolean) {
     setBusy(true);
     setMessage("");
@@ -3768,32 +3793,72 @@ function TechnicianAssignment({ ownerId, repairOrderId }: { ownerId: string; rep
     await loadAll();
     setBusy(false);
   }
-
+  async function chooseTeam(nextTeamId: string | null) {
+    setBusy(true);
+    setMessage("");
+    const previous = teamId;
+    setTeamId(nextTeamId);
+    const { error } = await supabase.from("repair_orders").update({ team_id: nextTeamId }).eq("id", repairOrderId);
+    if (error) {
+      setTeamId(previous);
+      setMessage(error.message);
+    }
+    setBusy(false);
+  }
+  const teamName = (id: string | null) => teams.find((team) => team.id === id)?.name;
+  const help = workMode === "open"
+    ? "Open shop: every tech can already work this RO. Tag who's on it so everyone knows."
+    : workMode === "team"
+      ? "Pick the team that has this car — everyone on it can work it. Add a specific tech if needed."
+      : "Only the techs you add here can see and work this RO.";
+  // Team mode: that team's techs first.
+  const sortedTechs = [...technicians].sort((a, b) =>
+    Number(b.team_id === teamId && Boolean(teamId)) - Number(a.team_id === teamId && Boolean(teamId)) || a.name.localeCompare(b.name));
   return (
-    <section className="panel">
-      <h3 style={{ marginTop: 0 }}>Assigned technicians</h3>
-      <p className="muted" style={{ marginTop: -6, fontSize: 13 }}>Reassign anytime — technicians only see jobs assigned to them here (unless their account is set to see all shop work).</p>
+    <section className="panel dispatch-panel">
+      <div className="dispatch-heading">
+        <h3>Dispatch</h3>
+        <span className="muted">{help}</span>
+      </div>
       {message && <div className="notice">{message}</div>}
       {loading ? (
         <p className="muted">Loading…</p>
-      ) : !technicians.length ? (
-        <p className="muted">No active technicians yet. Add them in Settings → Staff &amp; Teams.</p>
       ) : (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {technicians.map((tech) => {
-            const assigned = assignedIds.includes(tech.id);
-            return (
-              <button
-                key={tech.id}
-                type="button"
-                className={`button small ${assigned ? "primary" : "secondary"}`}
-                disabled={busy}
-                onClick={() => void toggle(tech.id, !assigned)}
-              >
-                {assigned ? "✓ " : "+ "}{tech.name}
-              </button>
-            );
-          })}
+        <div className="dispatch-body">
+          {teams.length > 0 && (
+            <label className="dispatch-team">
+              Team
+              <select value={teamId ?? ""} disabled={busy} onChange={(event) => void chooseTeam(event.target.value || null)}>
+                <option value="">{workMode === "team" ? "Choose a team…" : "No team"}</option>
+                {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+              </select>
+            </label>
+          )}
+          <div className="dispatch-techs">
+            <span className="dispatch-label">Technicians</span>
+            {!technicians.length ? (
+              <span className="muted">No active technicians yet. Add them in Settings → Staff &amp; Teams.</span>
+            ) : (
+              <div className="dispatch-tech-buttons">
+                {sortedTechs.map((tech) => {
+                  const assigned = assignedIds.includes(tech.id);
+                  return (
+                    <button
+                      key={tech.id}
+                      type="button"
+                      className={`button small ${assigned ? "primary" : "secondary"}`}
+                      disabled={busy}
+                      onClick={() => void toggle(tech.id, !assigned)}
+                      title={tech.team_id ? `Team: ${teamName(tech.team_id) ?? ""}` : undefined}
+                    >
+                      {assigned ? "✓ " : "+ "}{tech.name}
+                      {workMode === "team" && teamId && tech.team_id === teamId && <span className="dispatch-team-tag">team</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </section>
@@ -5213,6 +5278,30 @@ function SettingsPanel({
             </span>
           </label>
         )}
+        {form.team_features_enabled && (
+          <fieldset className="work-mode-picker">
+            <legend>How do technicians get work?</legend>
+            {([
+              ["open", "Open shop", "Every tech can see and work every repair order. No dispatching needed — best for small shops where everyone grabs the next car."],
+              ["team", "By team", "Give each repair order to a team; every tech on that team can see and work it. You can still assign a specific tech."],
+              ["technician", "By technician", "Techs only see and work repair orders assigned to them. For shops that dispatch car by car."],
+            ] as Array<[TechWorkMode, string, string]>).map(([value, label, help]) => (
+              <label key={value} className={`work-mode-option ${form.tech_work_mode === value ? "selected" : ""}`}>
+                <input
+                  type="radio"
+                  name="tech_work_mode"
+                  value={value}
+                  checked={form.tech_work_mode === value}
+                  onChange={() => setForm({ ...form, tech_work_mode: value })}
+                />
+                <span><strong>{label}</strong><small>{help}</small></span>
+              </label>
+            ))}
+            <p className="muted" style={{ margin: "8px 0 0", fontSize: 12 }}>
+              A lead tech or shop foreman set to &quot;All shop work&quot; below can always see and work every repair order.
+            </p>
+          </fieldset>
+        )}
       </div>
 
       {form.team_features_enabled && <StaffTeamsManager ownerId={ownerId} />}
@@ -5493,8 +5582,8 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
                     </td>
                     <td>
                       <select value={member.can_view_all_work ? "all" : "own"} onChange={(event) => void updateStaff(member.id, { can_view_all_work: event.target.value === "all" })}>
-                        <option value="own">{member.role === "technician" ? "Assigned jobs only" : "Their own ROs only"}</option>
-                        <option value="all">All shop work</option>
+                        <option value="own">{member.role === "technician" ? "Follows shop setting" : "Their own ROs only"}</option>
+                        <option value="all">{member.role === "technician" ? "All shop work (lead / foreman)" : "All shop work"}</option>
                       </select>
                     </td>
                     <td>

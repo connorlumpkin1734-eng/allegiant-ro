@@ -2082,3 +2082,28 @@ tbody tr:hover { background: var(--panel-header); }
 
 .document-charges tbody tr:last-child td { border-bottom: 1px solid #cbd5e1; padding-bottom: 14px; }
 .document-page .document-line-story p, .document-page .document-op-note { color: #000 !important; }
+
+/* "How do technicians get work?" picker in Settings. */
+.work-mode-picker { margin: 18px 0 0; padding: 0; border: 0; }
+.work-mode-picker legend { margin-bottom: 8px; color: var(--ink); font-weight: 800; }
+.work-mode-option {
+  display: flex; flex-direction: row; align-items: flex-start; gap: 10px;
+  margin-top: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); cursor: pointer;
+}
+.work-mode-option input { width: auto; margin-top: 3px; }
+.work-mode-option.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+.work-mode-option span { display: flex; flex-direction: column; gap: 3px; }
+.work-mode-option small { color: var(--muted); font-size: 12.5px; font-weight: 500; line-height: 1.4; }
+
+/* Dispatch box on an RO. */
+.dispatch-panel { padding-top: 16px; padding-bottom: 16px; }
+.dispatch-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 12px; }
+.dispatch-heading h3 { margin: 0; }
+.dispatch-heading .muted { font-size: 13px; }
+.dispatch-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 24px; }
+.dispatch-team { min-width: 220px; }
+.dispatch-techs { display: flex; flex-direction: column; gap: 6px; }
+.dispatch-label { color: var(--ink); font-size: 13px; font-weight: 700; }
+.dispatch-tech-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.dispatch-team-tag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--accent-tint); color: var(--accent); font-size: 10px; text-transform: uppercase; }
