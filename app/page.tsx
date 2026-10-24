@@ -321,16 +321,28 @@ type VehicleForm = {
   vin_data: Record<string, unknown> | null;
 };
 
+// {shop} in the document footer prints the shop's name from Settings.
+const DEFAULT_INVOICE_FOOTER =
+  "Thank you for choosing {shop}. Payment is due upon completion of services. Please retain this document for your records.";
+
+function shopName(settings: Pick<Settings, "business_name">): string {
+  return settings.business_name?.trim() || "our shop";
+}
+
+function fillShopName(text: string | null | undefined, settings: Pick<Settings, "business_name">): string {
+  return (text ?? "").replace(/\{shop\}/gi, shopName(settings));
+}
+
 const defaultSettings: Settings = {
-  business_name: "Allegiant Auto Care",
+  // New shops start blank and are prompted to enter their own name (see the setup notice).
+  business_name: "",
   business_address: "",
   business_phone: "",
   business_email: "",
   default_labor_rate: 100,
   default_parts_markup: 15,
   sales_tax_rate: 0,
-  invoice_footer:
-    "Thank you for choosing Allegiant Auto Care. Payment is due upon completion of services. Warranty coverage, when applicable, will be stated on the final invoice. Please retain this document for your records.",
+  invoice_footer: DEFAULT_INVOICE_FOOTER,
   primary_color: "#2459a9",
   accent_color: "#b5222d",
   secondary_color: "#10264d",
@@ -978,6 +990,11 @@ function RepairOrderApp({ user }: { user: User }) {
   const [currentStaff, setCurrentStaff] = useState<CurrentStaff | null>(null);
   const [staffResolved, setStaffResolved] = useState(false);
   const isOwner = !currentStaff;
+  // Browser tab shows the shop's own name.
+  useEffect(() => {
+    const name = settings.business_name?.trim();
+    document.title = name ? `${name} · Repair Orders` : "Repair Orders";
+  }, [settings.business_name]);
   const isAdminAccess = isOwner || Boolean(currentStaff?.is_admin);
   const isTechnicianOnly = Boolean(currentStaff) && currentStaff!.role === "technician" && !currentStaff!.is_admin;
   const ownerId = currentStaff?.owner_id ?? user.id;
@@ -1595,6 +1612,11 @@ function RepairOrderApp({ user }: { user: User }) {
 
       <main className="main-area">
         {error && <div className="error-banner no-print">{error}</div>}
+        {isOwner && staffResolved && !loading && !settings.business_name?.trim() && (
+          <div className="notice notice-warn no-print" style={{ marginBottom: 16 }}>
+            Add your shop&apos;s name, address and phone in <strong>Settings</strong> — they print on every estimate, work order and invoice.
+          </div>
+        )}
         {canWrite && settings.subscription_status === "past_due" && !loading && (
           <div className="billing-banner no-print">
             <span>
@@ -5043,7 +5065,7 @@ function SettingsPanel({
             <input type="number" step="0.001" value={form.sales_tax_rate} onChange={(event) => setForm({ ...form, sales_tax_rate: Number(event.target.value) || 0 })} />
           </label>
           <label className="span-two">
-            Document footer
+            Document footer <span className="muted" style={{ fontWeight: 400 }}>— type {"{shop}"} anywhere to print your shop name</span>
             <textarea rows={5} value={form.invoice_footer} onChange={(event) => setForm({ ...form, invoice_footer: event.target.value })} />
           </label>
         </div>
@@ -5821,7 +5843,16 @@ function DocumentView({
   ].filter((section) => section.groups.length > 0 || (
     !isEstimate && section.line !== null && Boolean(section.line.concern || section.line.cause || section.line.correction)
   ));
-  const lineHeading = (line: ConcernLine) => line.concern?.trim() || LINE_KIND_LABEL[line.kind];
+  const sameText = (a: string | null | undefined, b: string | null | undefined) =>
+    (a ?? "").trim().toLowerCase().replace(/[.\s]+$/, "") === (b ?? "").trim().toLowerCase().replace(/[.\s]+$/, "");
+  // The line's own words, unless they're empty or just repeat its only job's name — then the line
+  // type ("Customer request") is the heading and the type tag isn't printed a second time.
+  const lineHeading = (line: ConcernLine, groups: DocumentGroup[]) => {
+    const text = line.concern?.trim() ?? "";
+    const repeatsJob = groups.length === 1 && sameText(text, groups[0].title);
+    return text && !repeatsJob ? text : LINE_KIND_LABEL[line.kind];
+  };
+  const showsKindTag = (line: ConcernLine, groups: DocumentGroup[]) => lineHeading(line, groups) !== LINE_KIND_LABEL[line.kind];
   // Requests have no Cause; a tech's recommendation calls it "Findings".
   const lineCause = (line: ConcernLine) => (lineHasCause(line.kind) ? line.cause?.trim() || "" : "");
 
@@ -5830,10 +5861,15 @@ function DocumentView({
     const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
     const separateAuthorization = ro.invoice_overrides?.[group.id];
     const decision = isServiceJob && hasCustomerResponse && !separateAuthorization && group.status !== "authorized" ? decisions[group.id] : undefined;
+    // When a job has one labor line named the same as the job, print it the way a dealer RO does:
+    // the operation once (name + hours + labor), parts underneath, then the job total.
+    const laborLines = group.items.filter((item) => item.item_type === "labor");
+    const opLabor = isServiceJob && laborLines.length === 1 && (!laborLines[0].description.trim() || sameText(laborLines[0].description, group.title)) ? laborLines[0] : null;
+    const otherItems = opLabor ? group.items.filter((item) => item !== opLabor) : group.items;
     return [
       isServiceJob && (
         <tr className={`document-job-heading ${decision ? `authorization-${decision}` : ""} ${group.status === "pending_review" ? "document-job-pending" : ""}`} key={`${group.id}-heading`}>
-          <td colSpan={4}>
+          <td colSpan={opLabor ? 1 : 4}>
             <div className="document-job-title">
               <strong>{group.title}</strong>
               {decision && <span className={`authorization-mark ${decision}`}>{decision}</span>}
@@ -5844,10 +5880,19 @@ function DocumentView({
             {isInvoice && separateAuthorization && <p><span>Separately authorized:</span> {separateAuthorization.note}</p>}
             {!inLine && isInvoice && group.workPerformed && <p><span>Work performed:</span> {group.workPerformed}</p>}
           </td>
-          <td><strong>{money(jobTotal)}</strong></td>
+          {opLabor ? (
+            <>
+              <td>Labor</td>
+              <td>{opLabor.quantity}</td>
+              <td>{money(opLabor.unit_price)}</td>
+              <td><strong>{money(opLabor.quantity * opLabor.unit_price)}</strong></td>
+            </>
+          ) : (
+            <td><strong>{money(jobTotal)}</strong></td>
+          )}
         </tr>
       ),
-      ...group.items.map((item) => (
+      ...otherItems.map((item) => (
         <tr key={item.id} className={`${item.item_type === "discount" ? "document-discount-row" : item.item_type === "part" && isServiceJob ? "document-associated-part" : ""} ${decision === "declined" ? "authorization-declined-line" : ""}`}>
           <td>
             {item.item_type === "discount" && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}
@@ -5859,6 +5904,12 @@ function DocumentView({
           <td className={item.item_type === "discount" ? "discount-amount" : ""}>{money(item.quantity * item.unit_price)}</td>
         </tr>
       )),
+      opLabor && otherItems.length > 0 && (
+        <tr className="document-job-total" key={`${group.id}-total`}>
+          <td colSpan={4}>Job total</td>
+          <td><strong>{money(jobTotal)}</strong></td>
+        </tr>
+      ),
     ];
   };
 
@@ -6096,8 +6147,8 @@ function DocumentView({
                 )}
                 {section.line && (
                   <header className="estimate-line-header">
-                    <span>Line {section.letter} · {LINE_KIND_LABEL[section.line.kind]}</span>
-                    <h3>{lineHeading(section.line)}</h3>
+                    <span>Line {section.letter}{showsKindTag(section.line, section.groups) ? ` · ${LINE_KIND_LABEL[section.line.kind]}` : ""}</span>
+                    <h3>{lineHeading(section.line, section.groups)}</h3>
                     {lineCause(section.line) && <p><strong>Findings:</strong> {lineCause(section.line)}</p>}
                   </header>
                 )}
@@ -6119,7 +6170,7 @@ function DocumentView({
                     <table className="document-table">
                       <thead><tr><th>Description</th><th>Type</th><th>Qty/Hrs</th><th>Est. Rate/Price</th><th>Amount</th></tr></thead>
                       <tbody>{group.items.map((item) => (
-                        <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : undefined}><td>{item.description}</td><td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
+                        <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : undefined}><td>{item.item_type === "labor" && (!item.description.trim() || sameText(item.description, group.title)) ? "Labor" : item.description}</td><td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
                       ))}</tbody>
                     </table>
                   </details>
@@ -6155,7 +6206,7 @@ function DocumentView({
               section.line ? (
                 <tr className="document-line-heading" key={`${section.key}-line`}>
                   <td colSpan={5}>
-                    <div className="document-line-title"><span>Line {section.letter}</span><strong>{lineHeading(section.line)}</strong><em>{LINE_KIND_LABEL[section.line.kind]}</em></div>
+                    <div className="document-line-title"><span>Line {section.letter}</span><strong>{lineHeading(section.line, section.groups)}</strong>{showsKindTag(section.line, section.groups) && <em>{LINE_KIND_LABEL[section.line.kind]}</em>}</div>
                     {lineCause(section.line) && <p><span>{section.line.kind === "inspection" ? "Findings:" : "Cause:"}</span> {lineCause(section.line)}</p>}
                     {section.line.correction && <p><span>Correction:</span> {section.line.correction}</p>}
                   </td>
@@ -6254,7 +6305,7 @@ function DocumentView({
         {isWorkOrder && (
           <section className="document-terms repair-order-terms">
             <strong>Work authorization</strong>
-            <p>Customer authorizes Allegiant Auto Care to perform the work listed above and acknowledges that additional work requires further approval.</p>
+            <p>Customer authorizes {shopName(settings)} to perform the work listed above and acknowledges that additional work requires further approval.</p>
           </section>
         )}
 
@@ -6273,7 +6324,7 @@ function DocumentView({
             )}
             <footer className="document-footer">
               <strong>{ro.paid ? "PAID IN FULL" : "PAYMENT DUE UPON COMPLETION"}</strong>
-              <p>{settings.invoice_footer}</p>
+              <p>{fillShopName(settings.invoice_footer, settings)}</p>
             </footer>
           </>
         )}

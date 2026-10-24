@@ -94,7 +94,7 @@ async function handler(request: Request): Promise<Response> {
   const settingsRows = settingsCheck.ok ? await settingsCheck.json() as Array<{ owner_id: string; business_name?: string; business_email?: string }> : [];
   if (!settingsRows.length) return json({ error: "Only the shop owner can add staff." }, 403);
   const shopSettings = settingsRows[0];
-  const businessName = shopSettings.business_name || "Allegiant Auto Care";
+  const businessName = shopSettings.business_name || "Your repair shop";
 
   // Usernames are unique across the whole platform (the login screen resolves a username to an
   // email before it knows which shop someone belongs to), so check for a collision up front.

@@ -112,7 +112,7 @@ export default async (request: Request) => {
     tax,
     total,
     taxRate: Number(ro.tax_rate),
-    businessName: settings.business_name || "Allegiant Auto Care",
+    businessName: settings.business_name || "Your repair shop",
     businessAddress: settings.business_address || "",
     businessPhone: settings.business_phone || "",
     businessEmail: settings.business_email || "",

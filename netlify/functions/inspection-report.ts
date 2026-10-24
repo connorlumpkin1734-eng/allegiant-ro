@@ -42,7 +42,7 @@ export default async (request: Request) => {
       repairOrder: inspection.repair_orders,
     },
     business: {
-      name: settings.business_name || "Allegiant Auto Care",
+      name: settings.business_name || "Your repair shop",
       address: settings.business_address || "",
       phone: settings.business_phone || "",
       email: settings.business_email || "",

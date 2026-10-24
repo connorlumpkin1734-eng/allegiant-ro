@@ -71,7 +71,7 @@ export default async (request: Request) => {
 
   const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=*&owner_id=eq.${user.id}&limit=1`, { headers: serviceHeaders });
   const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<Record<string, unknown>> : [])[0] || {};
-  const businessName = (settings.business_name as string) || "Allegiant Auto Care";
+  const businessName = (settings.business_name as string) || "Your repair shop";
   const primaryColor = (settings.primary_color as string) || "#2459a9";
   const accentColor = (settings.accent_color as string) || "#b5222d";
   // Shared platform sending domain, tenant display name, Reply-To back to the shop — same

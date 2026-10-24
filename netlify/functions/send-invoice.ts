@@ -227,7 +227,7 @@ async function handler(request: Request): Promise<Response> {
             roNumber: ro.ro_number,
             customerName: ro.customers?.name || "Customer",
             vehicle: [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" "),
-            businessName: (settings.business_name as string) || "Allegiant Auto Care",
+            businessName: (settings.business_name as string) || "Your repair shop",
             businessAddress: (settings.business_address as string) || "",
             businessPhone: (settings.business_phone as string) || "",
             businessEmail: (settings.business_email as string) || "",
@@ -252,7 +252,7 @@ async function handler(request: Request): Promise<Response> {
 
   const roNumberDigits = String(ro.ro_number).padStart(4, "0");
   const roNumberLabel = `#${roNumberDigits}`;
-  const businessName = (settings.business_name as string) || "Allegiant Auto Care";
+  const businessName = (settings.business_name as string) || "Your repair shop";
   // Shared platform sending domain: every shop sends from the same verified address (so we're not
   // starting sender reputation from zero per tenant), but the display name is the shop's own name,
   // and Reply-To routes the customer's reply to the shop's real inbox, not this platform mailbox.

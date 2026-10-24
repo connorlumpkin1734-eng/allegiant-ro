@@ -130,7 +130,7 @@ async function handler(request: Request): Promise<Response> {
   const resendKey = process.env.RESEND_API_KEY;
   if (resendKey && settings?.business_email) {
     try {
-      const businessName = settings.business_name || "Allegiant Auto Care";
+      const businessName = settings.business_name || "Your repair shop";
       const roLabel = ro?.ro_number ? `#${String(ro.ro_number).padStart(4, "0")}` : "";
       const customerName = ro?.customers?.name || "A customer";
       const amount = Number(payment.amount).toLocaleString("en-US", { style: "currency", currency: "usd" });
