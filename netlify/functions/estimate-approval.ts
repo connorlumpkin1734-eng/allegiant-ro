@@ -3,7 +3,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 type Decision = "approved" | "declined";
-type SnapshotItem = { quantity: number; unit_price: number; taxable?: boolean; service_group_id?: string | null };
+type SnapshotItem = { quantity: number; unit_price: number; taxable?: boolean; service_group_id?: string | null; job_status?: string | null };
 type Snapshot = { items?: SnapshotItem[]; taxRate?: number; photos?: Array<Record<string, unknown>>; videos?: Array<Record<string, unknown>> };
 
 function r2Client() {
@@ -98,7 +98,11 @@ export default async (request: Request) => {
   const snapshot = authorization.estimate_snapshot as Snapshot;
   const items = snapshot.items ?? [];
   const groupIds = [...new Set(items.map((item) => item.service_group_id).filter((id): id is string => Boolean(id)))];
-  const decisions = body.decisions ?? {};
+  // Jobs authorized at write-up were already approved at drop-off: the customer can't decline them here.
+  const decisions: Record<string, Decision> = { ...(body.decisions ?? {}) };
+  for (const item of items) {
+    if (item.service_group_id && item.job_status === "authorized") decisions[item.service_group_id] = "approved";
+  }
   if (!groupIds.length || groupIds.some((id) => !["approved", "declined"].includes(decisions[id]))) return json({ error: "Choose approve or decline for every service." }, 400);
   const approvedGroups = groupIds.filter((id) => decisions[id] === "approved");
   const approvedItems = items.filter((item) => item.service_group_id ? decisions[item.service_group_id] === "approved" : approvedGroups.length > 0);

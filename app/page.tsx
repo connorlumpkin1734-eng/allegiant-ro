@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { MultipointInspection } from "@/components/MultipointInspection";
 import { supabase } from "@/lib/supabase";
@@ -261,6 +261,8 @@ type EstimateAuthorization = {
       service_group_id?: string | null;
       service_group_title?: string | null;
       technician_story?: string | null;
+      job_note?: string | null;
+      concern_line_id?: string | null;
     }>;
   };
 };
@@ -482,7 +484,7 @@ function declinedEstimateGroups(
       group = {
         id: groupId,
         title: item.service_group_title || "Recommended service",
-        recommendation: item.technician_story || "",
+        recommendation: item.job_note || (item.concern_line_id ? "" : item.technician_story || ""),
         items: [],
       };
       groups.set(groupId, group);
@@ -1981,6 +1983,7 @@ function Dashboard({
       vehicle?.vin,
       vehicle?.license_plate,
       ro.customer_concern,
+      ...(ro.concern_lines ?? []).map((line) => line.concern),
       ro.status,
       ro.paid ? "paid" : "unpaid",
       ro.archived_at ? "archived" : "",
@@ -4168,7 +4171,7 @@ function CustomerProfile({
                       <td className="ro-number">#{padRo(ro.ro_number)}</td>
                       <td>{new Date(ro.created_at).toLocaleDateString()}</td>
                       <td>{[ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "—"}</td>
-                      <td className="history-description">{ro.customer_concern || "—"}</td>
+                      <td className="history-description">{[...(ro.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order).map((line) => line.concern).filter(Boolean).join(" · ") || ro.customer_concern || "—"}</td>
                       <td><span className={`badge ${ro.status}`}>{statusLabel(ro.status)}</span></td>
                       <td><span className={`badge ${ro.paid ? "paid" : ro.status === "completed" ? "unpaid" : "neutral"}`}>{ro.paid ? "Paid" : ro.status === "completed" ? "Unpaid" : "Not final"}</span></td>
                       <td>{money(repairOrderTotal(ro))}</td>
@@ -5594,17 +5597,23 @@ function DocumentView({
   const decisions = authorization?.line_decisions ?? {};
   const hasCustomerResponse = hasAuthorizationResponse(authorization);
   const decisionSummary = authorizationDecisionSummary(authorization);
-  const pricedItems = isEstimate ? items : authorizedLineItems(items, authorization, ro.invoice_overrides);
+  // Pending technician requests show on the shop's work order only — never on the estimate or invoice.
+  const visibleItems = isWorkOrder ? items : items.filter((item) => !isPendingReview(item));
+  const pricedItems = isEstimate ? visibleItems : authorizedLineItems(items, authorization, ro.invoice_overrides);
   const { subtotal, tax, total } = calculateLineItemTotals(pricedItems, Number(ro.tax_rate));
   const declinedGroups = isInvoice ? declinedEstimateGroups(authorization).filter((group) => !ro.invoice_overrides?.[group.id]) : [];
   const currentStatusLabel = statusLabel(ro.status);
-  const displayedItems = isInvoice && hasCustomerResponse ? pricedItems : items;
+  const displayedItems = isInvoice && hasCustomerResponse ? pricedItems : visibleItems;
+  type DocumentGroup = {
+    id: string; title: string; lineId: string | null; status: JobStatus; note: string;
+    recommendation: string; workPerformed: string; items: LineItem[];
+  };
   const groupedDocumentItems = (() => {
-    const groups: Array<{ id: string; title: string; concern: string; recommendation: string; workPerformed: string; items: LineItem[] }> = [];
-    const byId = new Map<string, { id: string; title: string; concern: string; recommendation: string; workPerformed: string; items: LineItem[] }>();
+    const groups: DocumentGroup[] = [];
+    const byId = new Map<string, DocumentGroup>();
     for (const item of displayedItems) {
       if (!item.service_group_id) {
-        groups.push({ id: `line-${item.id}`, title: "", concern: "", recommendation: "", workPerformed: "", items: [item] });
+        groups.push({ id: `line-${item.id}`, title: "", lineId: null, status: "needs_approval", note: "", recommendation: "", workPerformed: "", items: [item] });
         continue;
       }
       let group = byId.get(item.service_group_id);
@@ -5612,7 +5621,10 @@ function DocumentView({
         group = {
           id: item.service_group_id,
           title: item.service_group_title || "Service Job",
-          concern: item.service_concern || "",
+          lineId: item.concern_line_id ?? null,
+          status: item.job_status ?? "needs_approval",
+          note: item.job_note || "",
+          // Older jobs not on a concern line keep their original story / work performed text.
           recommendation: item.technician_story || "",
           workPerformed: item.work_performed || "",
           items: [],
@@ -5625,6 +5637,65 @@ function DocumentView({
     return groups;
   })();
 
+  // Line A / B / C… with their jobs. Lines with no jobs still print on the work order and invoice
+  // when they have text (e.g. "could not duplicate"); jobs not on any line print last.
+  const documentLines = [...(ro.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+  const jobGroups = groupedDocumentItems.filter((group) => group.title);
+  const documentSections = [
+    ...documentLines.map((line, index) => ({
+      key: line.id,
+      line,
+      letter: lineLetter(index),
+      groups: jobGroups.filter((group) => group.lineId === line.id),
+    })),
+    {
+      key: "unassigned",
+      line: null as ConcernLine | null,
+      letter: "",
+      groups: jobGroups.filter((group) => !group.lineId || !documentLines.some((line) => line.id === group.lineId)),
+    },
+  ].filter((section) => section.groups.length > 0 || (
+    !isEstimate && section.line !== null && Boolean(section.line.concern || section.line.cause || section.line.correction)
+  ));
+  const lineHeading = (line: ConcernLine) => (line.kind === "inspection" ? "Found during inspection" : line.concern || "Customer concern");
+
+  const renderJobRows = (group: DocumentGroup, inLine: boolean): ReactNode[] => {
+    const isServiceJob = Boolean(group.title);
+    const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+    const separateAuthorization = ro.invoice_overrides?.[group.id];
+    const decision = isServiceJob && hasCustomerResponse && !separateAuthorization && group.status !== "authorized" ? decisions[group.id] : undefined;
+    return [
+      isServiceJob && (
+        <tr className={`document-job-heading ${decision ? `authorization-${decision}` : ""} ${group.status === "pending_review" ? "document-job-pending" : ""}`} key={`${group.id}-heading`}>
+          <td colSpan={4}>
+            <div className="document-job-title">
+              <strong>{group.title}</strong>
+              {decision && <span className={`authorization-mark ${decision}`}>{decision}</span>}
+              {isWorkOrder && group.status === "pending_review" && <span className="authorization-mark pending">Pending advisor review</span>}
+            </div>
+            {group.note && <p><span>Note:</span> {group.note}</p>}
+            {!inLine && isWorkOrder && group.recommendation && <p><span>Authorized scope:</span> {group.recommendation}</p>}
+            {isInvoice && separateAuthorization && <p><span>Separately authorized:</span> {separateAuthorization.note}</p>}
+            {!inLine && isInvoice && group.workPerformed && <p><span>Work performed:</span> {group.workPerformed}</p>}
+          </td>
+          <td><strong>{money(jobTotal)}</strong></td>
+        </tr>
+      ),
+      ...group.items.map((item) => (
+        <tr key={item.id} className={`${item.item_type === "discount" ? "document-discount-row" : item.item_type === "part" && isServiceJob ? "document-associated-part" : ""} ${decision === "declined" ? "authorization-declined-line" : ""}`}>
+          <td>
+            {item.item_type === "discount" && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}
+            {item.description}
+          </td>
+          <td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td>
+          <td>{item.quantity}</td>
+          <td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td>
+          <td className={item.item_type === "discount" ? "discount-amount" : ""}>{money(item.quantity * item.unit_price)}</td>
+        </tr>
+      )),
+    ];
+  };
+
   const title = isEstimate ? "Estimate" : isWorkOrder ? "Work Order" : "Invoice";
   const documentSubtitle = isEstimate
     ? "Proposed work and estimated pricing"
@@ -5632,9 +5703,9 @@ function DocumentView({
       ? "Active job record and shop copy"
       : "Final charges and payment record";
   const sectionHeading = isEstimate ? "Proposed services" : isWorkOrder ? "Work to perform" : "Final charges";
-  // Per-job concerns now live on each service job (3C). The RO-level box is general customer notes;
-  // older ROs that only used this box still print it here.
-  const hasJobConcerns = groupedDocumentItems.some((group) => group.concern);
+  // Concerns now live on concern lines. The RO-level box is general customer notes;
+  // older ROs that only used this box still print it under its old heading.
+  const hasJobConcerns = documentLines.some((line) => line.concern);
   const concernHeading = hasJobConcerns
     ? "Customer notes"
     : isEstimate
@@ -5849,19 +5920,28 @@ function DocumentView({
 
         {isEstimate ? (
           <div className="estimate-service-cards">
-            {groupedDocumentItems.map((group) => {
-              const isServiceJob = Boolean(group.title);
+            {documentSections.map((section) => (
+              <div className="estimate-line-block" key={section.key}>
+                {section.line && (
+                  <header className="estimate-line-header">
+                    <span>Line {section.letter}</span>
+                    <h3>{lineHeading(section.line)}</h3>
+                    {section.line.cause && <p><strong>Findings:</strong> {section.line.cause}</p>}
+                  </header>
+                )}
+                {section.groups.map((group, jobIndex) => {
               const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-              if (!isServiceJob) return null;
+              const jobNote = group.note || (section.line ? "" : group.recommendation);
               return (
                 <section className="estimate-service-card" key={group.id}>
-                  <header><div><span>Recommended service</span><h3>{group.title}</h3></div><strong>{money(jobTotal)}</strong></header>
-                  {group.concern ? (
-                    <div className="estimate-recommendation estimate-3c">
-                      <p><span>Concern:</span> {group.concern}</p>
-                      {group.recommendation && <p><span>Findings:</span> {group.recommendation}</p>}
+                  <header>
+                    <div>
+                      <span>{section.line ? `Job ${section.letter}${jobIndex + 1}` : "Recommended service"}{group.status === "authorized" ? " · Already authorized" : ""}</span>
+                      <h3>{group.title}</h3>
                     </div>
-                  ) : group.recommendation && <p className="estimate-recommendation">{group.recommendation}</p>}
+                    <strong>{money(jobTotal)}</strong>
+                  </header>
+                  {jobNote && <p className="estimate-recommendation">{jobNote}</p>}
                   <details className="estimate-breakdown" open>
                     <summary>Parts and labor breakdown</summary>
                     <table className="document-table">
@@ -5873,7 +5953,9 @@ function DocumentView({
                   </details>
                 </section>
               );
-            })}
+                })}
+              </div>
+            ))}
             {groupedDocumentItems.some((group) => !group.title) && (
               <section className="estimate-service-card additional-charges">
                 <header><div><span>Estimate details</span><h3>Additional charges and discounts</h3></div></header>
@@ -5897,39 +5979,19 @@ function DocumentView({
             </tr>
           </thead>
           <tbody>
-            {groupedDocumentItems.map((group) => {
-              const isServiceJob = Boolean(group.title);
-              const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-              const separateAuthorization = ro.invoice_overrides?.[group.id];
-              const decision = isServiceJob && hasCustomerResponse && !separateAuthorization ? decisions[group.id] : undefined;
-              return [
-                isServiceJob && (
-                  <tr className={`document-job-heading ${decision ? `authorization-${decision}` : ""}`} key={`${group.id}-heading`}>
-                    <td colSpan={4}>
-                      <div className="document-job-title"><strong>{group.title}</strong>{decision && <span className={`authorization-mark ${decision}`}>{decision}</span>}</div>
-                      {group.concern && <p><span>Concern:</span> {group.concern}</p>}
-                      {isWorkOrder && group.recommendation && <p><span>{group.concern ? "Cause:" : "Authorized scope:"}</span> {group.recommendation}</p>}
-                      {isInvoice && group.concern && group.recommendation && <p><span>Cause:</span> {group.recommendation}</p>}
-                      {isInvoice && separateAuthorization && <p><span>Separately authorized:</span> {separateAuthorization.note}</p>}
-                      {isInvoice && group.workPerformed && <p><span>{group.concern ? "Correction:" : "Work performed:"}</span> {group.workPerformed}</p>}
-                    </td>
-                    <td><strong>{money(jobTotal)}</strong></td>
-                  </tr>
-                ),
-                ...group.items.map((item) => (
-                  <tr key={item.id} className={`${item.item_type === "discount" ? "document-discount-row" : item.item_type === "part" && isServiceJob ? "document-associated-part" : ""} ${decision === "declined" ? "authorization-declined-line" : ""}`}>
-                    <td>
-                      {item.item_type === "discount" && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}
-                      {item.description}
-                    </td>
-                    <td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td>
-                    <td>{item.quantity}</td>
-                    <td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td>
-                    <td className={item.item_type === "discount" ? "discount-amount" : ""}>{money(item.quantity * item.unit_price)}</td>
-                  </tr>
-                )),
-              ];
-            })}
+            {documentSections.flatMap((section) => [
+              section.line ? (
+                <tr className="document-line-heading" key={`${section.key}-line`}>
+                  <td colSpan={5}>
+                    <div className="document-line-title"><span>Line {section.letter}</span><strong>{lineHeading(section.line)}</strong></div>
+                    {section.line.cause && <p><span>Cause:</span> {section.line.cause}</p>}
+                    {section.line.correction && <p><span>Correction:</span> {section.line.correction}</p>}
+                  </td>
+                </tr>
+              ) : null,
+              ...section.groups.flatMap((group) => renderJobRows(group, Boolean(section.line))),
+            ])}
+            {groupedDocumentItems.filter((group) => !group.title).flatMap((group) => renderJobRows(group, false))}
           </tbody>
         </table>}
 

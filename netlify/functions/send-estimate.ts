@@ -7,7 +7,8 @@ type RepairOrderRow = {
   customer_concern: string | null;
   customers: { name: string; email: string | null } | null;
   vehicles: { year: number | null; make: string | null; model: string | null; vin: string | null } | null;
-  line_items: Array<{ item_type: string; description: string; quantity: number; unit_price: number; taxable: boolean; sort_order: number; service_group_id: string | null; service_group_title: string | null; technician_story: string | null; service_concern: string | null }>;
+  line_items: Array<{ item_type: string; description: string; quantity: number; unit_price: number; taxable: boolean; sort_order: number; service_group_id: string | null; service_group_title: string | null; technician_story: string | null; service_concern: string | null; concern_line_id: string | null; job_status: string | null; job_note: string | null }>;
+  concern_lines: Array<{ id: string; sort_order: number; kind: string; concern: string | null; cause: string | null }> | null;
 };
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -56,7 +57,7 @@ export default async (request: Request) => {
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=*,customers(name,email),vehicles(year,make,model,vin),line_items(item_type,description,quantity,unit_price,taxable,sort_order,service_group_id,service_group_title,technician_story,service_concern)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${user.id}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=*,customers(name,email),vehicles(year,make,model,vin),line_items(item_type,description,quantity,unit_price,taxable,sort_order,service_group_id,service_group_title,technician_story,service_concern,concern_line_id,job_status,job_note),concern_lines(id,sort_order,kind,concern,cause)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${user.id}`,
     { headers: serviceHeaders }
   );
   const rows = await roResponse.json() as RepairOrderRow[];
@@ -73,7 +74,17 @@ export default async (request: Request) => {
   // and estimate-approval signs fresh playback URLs every time the customer opens the link.
   const videoResponse = await fetch(`${supabaseUrl}/rest/v1/estimate_videos?select=service_group_id,storage_key,content_type,caption,sort_order&repair_order_id=eq.${ro.id}&order=sort_order.asc`, { headers: serviceHeaders });
   const videos = videoResponse.ok ? await videoResponse.json() as Array<Record<string, unknown>> : [];
-  const items = [...(ro.line_items || [])].sort((a, b) => a.sort_order - b.sort_order);
+  // Technician requests still pending advisor review are not part of the estimate.
+  const items = [...(ro.line_items || [])]
+    .filter((item) => item.job_status !== "pending_review")
+    .sort((a, b) => a.sort_order - b.sort_order);
+  if (!items.some((item) => item.service_group_id)) {
+    return json({ error: "Add at least one priced job before sending the estimate (technician requests must be reviewed first)." }, 400);
+  }
+  // Concern lines (Line A, B, C…) frozen with the estimate, for the customer's approval page.
+  const concernLines = [...(ro.concern_lines || [])]
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((line, index) => ({ id: line.id, letter: String.fromCharCode(65 + (index % 26)), kind: line.kind, concern: line.concern, cause: line.cause }));
   const subtotal = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0);
   const taxable = items.reduce((sum, item) => sum + (item.taxable ? Number(item.quantity) * Number(item.unit_price) : 0), 0);
   const tax = Math.max(0, taxable) * (Number(ro.tax_rate) / 100);
@@ -92,6 +103,7 @@ export default async (request: Request) => {
     estimateDate: ro.created_at,
     customerConcern: ro.customer_concern || "",
     items,
+    concernLines,
     photos,
     videos,
     // The shop's chosen document layout, frozen at send time like everything else in the snapshot.

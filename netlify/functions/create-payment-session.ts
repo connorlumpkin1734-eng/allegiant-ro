@@ -34,7 +34,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
 }
 
 
-type LineItem = { item_type: string; quantity: number; unit_price: number; taxable: boolean; service_group_id: string | null };
+type LineItem = { item_type: string; quantity: number; unit_price: number; taxable: boolean; service_group_id: string | null; job_status?: string | null };
 type InvoiceOverrides = Record<string, { note: string; recorded_at: string; recorded_by: string }>;
 type EstimateAuthorization = {
   status: string;
@@ -65,12 +65,15 @@ function authorizedLineItems(
   authorization: EstimateAuthorization | null | undefined,
   overrides: InvoiceOverrides = {}
 ): LineItem[] {
-  if (!hasAuthorizationResponse(authorization)) return items;
+  // Pending technician requests are never billed; jobs authorized at write-up always are.
+  const billable = items.filter((item) => item.job_status !== "pending_review");
+  if (!hasAuthorizationResponse(authorization)) return billable;
   const decisions = authorization.line_decisions ?? {};
-  const hasApprovedService = Object.values(decisions).includes("approved") || items.some((item) => item.service_group_id && overrides[item.service_group_id]);
-  return items.filter((item) =>
+  const hasApprovedService = Object.values(decisions).includes("approved")
+    || billable.some((item) => item.service_group_id && (overrides[item.service_group_id] || item.job_status === "authorized"));
+  return billable.filter((item) =>
     item.service_group_id
-      ? decisions[item.service_group_id] === "approved" || Boolean(overrides[item.service_group_id])
+      ? item.job_status === "authorized" || decisions[item.service_group_id] === "approved" || Boolean(overrides[item.service_group_id])
       : hasApprovedService
   );
 }
@@ -129,7 +132,7 @@ async function handler(request: Request): Promise<Response> {
   if (!settings.stripe_charges_enabled) return json({ error: "Stripe onboarding isn't finished yet — finish it in Settings before collecting payment." }, 400);
 
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,invoice_overrides,customers(name,email),line_items(item_type,quantity,unit_price,taxable,service_group_id)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,invoice_overrides,customers(name,email),line_items(item_type,quantity,unit_price,taxable,service_group_id,job_status)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
     { headers: serviceHeaders }
   );
   const roRows = roResponse.ok ? await roResponse.json() as RepairOrderRow[] : [];

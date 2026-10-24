@@ -532,6 +532,15 @@ tbody tr:hover { background: var(--panel-header); }
 .authorization-mark.declined { background: #fae7e9; color: #981c28; }
 .document-job-heading.authorization-approved td { background: #edf8f2; }
 .document-job-heading.authorization-declined td { background: #fff0f1; }
+.authorization-mark.pending { background: #fff4e0; color: #8a5a00; }
+.document-job-pending td { opacity: .75; }
+/* Concern line rows (Line A / B / C) above their jobs. */
+.document-line-heading td { padding: 16px 12px 10px; border-top: 2px solid var(--navy); background: #fff; color: var(--navy); }
+.document-line-heading p { margin: 5px 0 0; color: #26354b; font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; }
+.document-line-heading p span { font-weight: 900; text-transform: uppercase; margin-right: 4px; }
+.document-line-title { display: flex; align-items: baseline; gap: 10px; }
+.document-line-title span { flex: 0 0 auto; padding: 2px 8px; border-radius: 6px; background: var(--navy); color: #fff; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
+.document-line-title strong { font-size: 14px; }
 .authorization-declined-line td { background: #fffafa; color: #7d8795; }
 .document-authorization-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0 18px; border: 1px solid #bfd7ca; border-left: 6px solid #16804e; border-radius: 8px; padding: 13px 15px; background: #f3fbf6; }
 .document-authorization-summary.partially_approved { border-color: #bfd0ea; border-left-color: #2459a9; background: #f3f7ff; }
@@ -604,6 +613,11 @@ tbody tr:hover { background: var(--panel-header); }
 .document-table th { background: var(--navy); color: white; }
 .document-table th:nth-child(n+3), .document-table td:nth-child(n+3) { text-align: right; }
 .estimate-service-cards { display: flex; flex-direction: column; gap: 16px; }
+.estimate-line-block { display: flex; flex-direction: column; gap: 10px; }
+.estimate-line-header { padding: 12px 2px 2px; border-top: 2px solid var(--navy); color: var(--navy); break-after: avoid; }
+.estimate-line-header span { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--navy); color: #fff; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
+.estimate-line-header h3 { margin: 6px 0 0; font-size: 16px; }
+.estimate-line-header p { margin: 6px 0 0; color: #26354b; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
 .estimate-service-card { overflow: hidden; border: 1px solid #cbd5e1; border-radius: 11px; break-inside: avoid; }
 .estimate-service-card > header { display: grid; grid-template-columns: 1fr auto; gap: 16px; padding: 14px 16px; background: #eaf0f6; }
 .estimate-service-card > header h3 { margin: 0; color: var(--navy); }
@@ -1735,6 +1749,8 @@ tbody tr:hover { background: var(--panel-header); }
 .document-page .document-subtitle,
 .document-page .document-info-grid span:not(.document-payment),
 .document-page .document-job-heading p,
+.document-page .document-line-heading p,
+.document-page .estimate-line-header p,
 .document-page .authorization-declined-line td,
 .document-page .document-stage-banner small,
 .document-page .document-footer,
@@ -1985,3 +2001,4 @@ tbody tr:hover { background: var(--panel-header); }
   /* Floating Close / Save bar: solid and compact so it covers less while you scroll. */
   .workspace-bottom-actions { padding: 10px 0 8px; background: var(--background); border-top: 1px solid var(--line); }
 }
+.approval-line-header { margin: 22px 0 8px; }

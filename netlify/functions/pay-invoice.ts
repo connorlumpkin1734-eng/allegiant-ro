@@ -30,7 +30,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
   }
 }
 
-type LineItem = { item_type: string; quantity: number; unit_price: number; taxable: boolean; service_group_id: string | null };
+type LineItem = { item_type: string; quantity: number; unit_price: number; taxable: boolean; service_group_id: string | null; job_status?: string | null };
 type InvoiceOverrides = Record<string, { note: string; recorded_at: string; recorded_by: string }>;
 type EstimateAuthorization = { status: string; line_decisions: Record<string, "approved" | "declined"> | null };
 type RepairOrderRow = {
@@ -42,12 +42,15 @@ function hasAuthorizationResponse(a: EstimateAuthorization | null | undefined): 
   return Boolean(a && ["approved", "partially_approved", "declined"].includes(a.status) && Object.keys(a.line_decisions ?? {}).length > 0);
 }
 function authorizedLineItems(items: LineItem[], a: EstimateAuthorization | null | undefined, overrides: InvoiceOverrides = {}): LineItem[] {
-  if (!hasAuthorizationResponse(a)) return items;
+  // Pending technician requests are never billed; jobs authorized at write-up always are.
+  const billable = items.filter((item) => item.job_status !== "pending_review");
+  if (!hasAuthorizationResponse(a)) return billable;
   const decisions = a.line_decisions ?? {};
-  const hasApprovedService = Object.values(decisions).includes("approved") || items.some((item) => item.service_group_id && overrides[item.service_group_id]);
-  return items.filter((item) =>
+  const hasApprovedService = Object.values(decisions).includes("approved")
+    || billable.some((item) => item.service_group_id && (overrides[item.service_group_id] || item.job_status === "authorized"));
+  return billable.filter((item) =>
     item.service_group_id
-      ? decisions[item.service_group_id] === "approved" || Boolean(overrides[item.service_group_id])
+      ? item.job_status === "authorized" || decisions[item.service_group_id] === "approved" || Boolean(overrides[item.service_group_id])
       : hasApprovedService
   );
 }
@@ -109,7 +112,7 @@ async function handler(request: Request): Promise<Response> {
 
   const [settingsResponse, roResponse, authorizationResponse] = await Promise.all([
     fetch(`${supabaseUrl}/rest/v1/settings?select=business_name,zelle_recipient,stripe_account_id,stripe_charges_enabled,subscription_status&owner_id=eq.${link.owner_id}&limit=1`, { headers: serviceHeaders }),
-    fetch(`${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,paid,status,invoice_overrides,customers(email),line_items(item_type,quantity,unit_price,taxable,service_group_id)&id=eq.${encodeURIComponent(link.repair_order_id)}&owner_id=eq.${link.owner_id}&limit=1`, { headers: serviceHeaders }),
+    fetch(`${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,paid,status,invoice_overrides,customers(email),line_items(item_type,quantity,unit_price,taxable,service_group_id,job_status)&id=eq.${encodeURIComponent(link.repair_order_id)}&owner_id=eq.${link.owner_id}&limit=1`, { headers: serviceHeaders }),
     fetch(`${supabaseUrl}/rest/v1/estimate_authorizations?select=status,line_decisions&repair_order_id=eq.${encodeURIComponent(link.repair_order_id)}&order=sent_at.desc&limit=1`, { headers: serviceHeaders }),
   ]);
   const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<{ business_name: string | null; zelle_recipient: string | null; stripe_account_id: string | null; stripe_charges_enabled: boolean; subscription_status: string }> : [])[0];
