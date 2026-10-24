@@ -148,6 +148,45 @@ textarea { resize: vertical; }
 }
 .notice { background: var(--accent-tint); border: 1px solid rgba(34, 211, 238, 0.35); color: var(--accent); }
 .error-banner { margin-bottom: 16px; background: var(--danger-tint); border: 1px solid rgba(242, 85, 95, 0.4); color: var(--danger-text); }
+.notice.notice-warn { background: var(--warn-tint); border-color: rgba(242, 184, 75, 0.4); color: var(--warn-text); }
+
+/* One-time login details shown after adding a staff member. Uses theme tokens so it
+   reads correctly in every interface theme (dark and light). */
+.credentials-notice {
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  background: var(--panel-header);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--success-text);
+  color: var(--ink);
+  line-height: 1.45;
+}
+.credentials-title { display: block; color: var(--success-text); font-size: 16px; }
+.credentials-text { margin: 6px 0 12px; }
+.credentials-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 14px;
+  align-items: center;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--background);
+  border: 1px solid var(--line);
+}
+.credentials-grid dt { color: var(--muted); font-size: 13px; }
+.credentials-grid dd { margin: 0; min-width: 0; }
+.credentials-grid code {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.credentials-footnote { margin: 0 0 12px; font-size: 12px; }
+.credentials-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .billing-banner {
   margin-bottom: 16px;

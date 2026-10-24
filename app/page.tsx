@@ -1518,7 +1518,7 @@ function RepairOrderApp({ user }: { user: User }) {
       <main className="main-area">
         {error && <div className="error-banner no-print">{error}</div>}
         {canWrite && settings.subscription_status === "past_due" && !loading && (
-          <div className="billing-banner no-print" style={{ background: "#fff4e5", borderColor: "#f0b429", color: "#7a4a00" }}>
+          <div className="billing-banner no-print">
             <span>
               We couldn&apos;t charge this shop&apos;s payment method. {pastDueDaysLeft(settings) ?? 7} day{pastDueDaysLeft(settings) === 1 ? "" : "s"} left to fix it before the account goes read-only — existing work stays viewable, but creating or editing will pause.
             </span>
@@ -4822,6 +4822,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
     name: "", email: "", username: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false,
   });
   const [createdCredentials, setCreatedCredentials] = useState<{ email: string; username: string; password: string; emailSent: boolean } | null>(null);
+  const [credentialsCopied, setCredentialsCopied] = useState(false);
   const [usernameStatus, setUsernameStatus] = useState<"idle" | "checking" | "available" | "taken" | "invalid">("idle");
 
   useEffect(() => {
@@ -4915,6 +4916,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
     setInviteBusy(true);
     setMessage("");
     setCreatedCredentials(null);
+    setCredentialsCopied(false);
     try {
       const { data } = await supabase.auth.getSession();
       const accessToken = data.session?.access_token;
@@ -4987,19 +4989,38 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
         <h2 style={{ marginTop: 0 }}>Staff</h2>
         {message && <div className="notice">{message}</div>}
         {createdCredentials && (
-          <div className="notice" style={{ background: "#edf4ff", borderColor: "var(--blue)" }}>
-            <strong>Account created for {createdCredentials.username}</strong>
-            <p style={{ margin: "6px 0" }}>
+          <div className="credentials-notice">
+            <strong className="credentials-title">Account created for {createdCredentials.username}</strong>
+            <p className="credentials-text">
               {createdCredentials.emailSent
-                ? <>Also emailed to {createdCredentials.email}. They&apos;ll log in with this username and temporary password (copy it now, just in case — it won&apos;t be shown again):</>
-                : <>Could not email this to {createdCredentials.email} — copy the password now and hand it to them directly (it won&apos;t be shown again):</>}
+                ? <>Login details were emailed to {createdCredentials.email}. Copy them now as a backup — the password won&apos;t be shown again.</>
+                : <>Couldn&apos;t email {createdCredentials.email}. Copy the password now and hand it to them directly — it won&apos;t be shown again.</>}
             </p>
-            <p style={{ margin: "4px 0" }}>Username: <code style={{ fontSize: 16, fontWeight: 700, userSelect: "all" }}>{createdCredentials.username}</code></p>
-            <p style={{ margin: "4px 0" }}>Password: <code style={{ fontSize: 16, fontWeight: 700, userSelect: "all" }}>{createdCredentials.password}</code></p>
-            <p className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
-              Their real email ({createdCredentials.email}) is only used if they need to reset a forgotten password. They can change their password after signing in.
+            <dl className="credentials-grid">
+              <dt>Username</dt>
+              <dd><code>{createdCredentials.username}</code></dd>
+              <dt>Password</dt>
+              <dd><code>{createdCredentials.password}</code></dd>
+            </dl>
+            <p className="muted credentials-footnote">
+              Their email is only used to reset a forgotten password. They&apos;ll be asked to change this password after signing in.
             </p>
-            <button type="button" className="button ghost small" style={{ marginTop: 8 }} onClick={() => setCreatedCredentials(null)}>Dismiss</button>
+            <div className="credentials-actions">
+              <button
+                type="button"
+                className="button small"
+                onClick={() => {
+                  const text = `Username: ${createdCredentials.username}\nPassword: ${createdCredentials.password}`;
+                  void navigator.clipboard?.writeText(text).then(
+                    () => setCredentialsCopied(true),
+                    () => setCredentialsCopied(false),
+                  );
+                }}
+              >
+                {credentialsCopied ? "Copied" : "Copy login info"}
+              </button>
+              <button type="button" className="button ghost small" onClick={() => { setCreatedCredentials(null); setCredentialsCopied(false); }}>Dismiss</button>
+            </div>
           </div>
         )}
 
@@ -5451,7 +5472,7 @@ function DocumentView({
         </div>
       )}
       {pendingZellePayment && (
-        <div className="no-print notice" style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "#fff7e6", borderColor: "#f0b429" }}>
+        <div className="no-print notice notice-warn" style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <span>
             {pendingZellePayment.status === "processing" ? (
               <>Customer says they sent <strong>{pendingZellePayment.amount.toLocaleString("en-US", { style: "currency", currency: "usd" })}</strong> via Zelle. <strong>Nothing is marked paid until you confirm it below</strong> — check your bank app first.</>
