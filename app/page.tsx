@@ -136,6 +136,8 @@ type LineItem = {
   technician_story: string | null;
   work_performed: string | null;
   internal_notes: string | null;
+  // 3C: Concern (advisor, read-only for technicians). Cause = technician_story, Correction = work_performed.
+  service_concern: string | null;
 };
 
 type EstimatePhoto = {
@@ -460,7 +462,8 @@ function emptyLine(
   groupTitle: string | null = null,
   technicianStory: string | null = null,
   workPerformed: string | null = null,
-  internalNotes: string | null = null
+  internalNotes: string | null = null,
+  serviceConcern: string | null = null
 ): LineItem {
   if (type === "labor") {
     return {
@@ -478,6 +481,7 @@ function emptyLine(
       technician_story: technicianStory,
       work_performed: workPerformed,
       internal_notes: internalNotes,
+      service_concern: serviceConcern,
     };
   }
 
@@ -497,6 +501,7 @@ function emptyLine(
       technician_story: technicianStory,
       work_performed: workPerformed,
       internal_notes: internalNotes,
+      service_concern: serviceConcern,
     };
   }
 
@@ -515,6 +520,7 @@ function emptyLine(
     technician_story: technicianStory,
     work_performed: workPerformed,
     internal_notes: internalNotes,
+    service_concern: serviceConcern,
   };
 }
 
@@ -2496,7 +2502,8 @@ function RepairOrderEditor({
         groupedItem?.service_group_title ?? null,
         groupedItem?.technician_story ?? null,
         groupedItem?.work_performed ?? null,
-        groupedItem?.internal_notes ?? null
+        groupedItem?.internal_notes ?? null,
+        groupedItem?.service_concern ?? null
       )];
     });
   }
@@ -2519,7 +2526,7 @@ function RepairOrderEditor({
     ]);
   }
 
-  function updateServiceJob(groupId: string, field: "service_group_title" | "technician_story" | "work_performed" | "internal_notes", value: string) {
+  function updateServiceJob(groupId: string, field: "service_group_title" | "service_concern" | "technician_story" | "work_performed" | "internal_notes", value: string) {
     setItems((current) => current.map((item) =>
       item.service_group_id === groupId ? { ...item, [field]: value } : item
     ));
@@ -2552,7 +2559,8 @@ function RepairOrderEditor({
             item.service_group_title,
             item.technician_story,
             item.work_performed,
-            item.internal_notes
+            item.internal_notes,
+            item.service_concern
           );
         }
 
@@ -2792,6 +2800,7 @@ function RepairOrderEditor({
         technician_story: valueOrNull(item.technician_story ?? ""),
         work_performed: valueOrNull(item.work_performed ?? ""),
         internal_notes: valueOrNull(item.internal_notes ?? ""),
+        service_concern: valueOrNull(item.service_concern ?? ""),
       }));
 
       const { error: lineError } = await supabase.from("line_items").upsert(linePayload, { onConflict: "id" });
@@ -3054,8 +3063,14 @@ function RepairOrderEditor({
                 <input inputMode="numeric" value={mileageOut} onChange={(event) => setMileageOut(event.target.value)} />
               </label>
               <label className="span-four">
-                Customer concern / requested work
-                <textarea rows={3} value={concern} onChange={(event) => setConcern(event.target.value)} />
+                General customer notes <span className="muted" style={{ fontWeight: 400 }}>(optional — write each concern on its own service job below)</span>
+                <textarea
+                  rows={2}
+                  readOnly={isTechnician}
+                  placeholder={isTechnician ? "" : "Prints on customer documents. Example: Customer prefers a call before any additional work."}
+                  value={concern}
+                  onChange={(event) => setConcern(event.target.value)}
+                />
               </label>
               <label className="span-four">
                 Internal notes
@@ -3208,17 +3223,30 @@ function RepairOrderEditor({
                   </div>
                 )}
                 <div className="service-job-narratives">
+                  <label className="job-concern">
+                    <span className="job-3c-letter">Concern</span> customer&apos;s request, in their words
+                    {isTechnician
+                      ? <span className="visibility-tag locked">Advisor only</span>
+                      : <span className="visibility-tag customer">All documents</span>}
+                    <textarea
+                      rows={2}
+                      readOnly={isTechnician}
+                      placeholder={isTechnician ? "No concern written for this job." : "Example: Customer states dragging noise from under vehicle at low speeds."}
+                      value={first.service_concern ?? ""}
+                      onChange={(event) => updateServiceJob(group.id, "service_concern", event.target.value)}
+                    />
+                  </label>
                   <label className="recommendation-story">
-                    Recommendation / reason <span className="visibility-tag customer">Estimate + approval</span>
+                    <span className="job-3c-letter">Cause</span> findings / recommendation <span className="visibility-tag customer">Estimate + approval</span>
                     <textarea
                       rows={3}
-                      placeholder="Example: Front brake pads are below minimum thickness and the rotors are scored. Recommend replacing pads and rotors."
+                      placeholder="Example: Road tested and verified noise. Found RF wheel bearing with excessive play and growl. Recommend replacing RF hub bearing."
                       value={first.technician_story ?? ""}
                       onChange={(event) => updateServiceJob(group.id, "technician_story", event.target.value)}
                     />
                   </label>
                   <label className="work-performed-story">
-                    Work performed <span className="visibility-tag invoice">Invoice only</span>
+                    <span className="job-3c-letter">Correction</span> work performed <span className="visibility-tag invoice">Invoice only</span>
                     <textarea
                       rows={3}
                       placeholder="Complete after the repair. Example: Replaced front pads and rotors, lubricated slide pins, and road-tested vehicle."
@@ -5373,11 +5401,11 @@ function DocumentView({
   const currentStatusLabel = statusLabel(ro.status);
   const displayedItems = isInvoice && hasCustomerResponse ? pricedItems : items;
   const groupedDocumentItems = (() => {
-    const groups: Array<{ id: string; title: string; recommendation: string; workPerformed: string; items: LineItem[] }> = [];
-    const byId = new Map<string, { id: string; title: string; recommendation: string; workPerformed: string; items: LineItem[] }>();
+    const groups: Array<{ id: string; title: string; concern: string; recommendation: string; workPerformed: string; items: LineItem[] }> = [];
+    const byId = new Map<string, { id: string; title: string; concern: string; recommendation: string; workPerformed: string; items: LineItem[] }>();
     for (const item of displayedItems) {
       if (!item.service_group_id) {
-        groups.push({ id: `line-${item.id}`, title: "", recommendation: "", workPerformed: "", items: [item] });
+        groups.push({ id: `line-${item.id}`, title: "", concern: "", recommendation: "", workPerformed: "", items: [item] });
         continue;
       }
       let group = byId.get(item.service_group_id);
@@ -5385,6 +5413,7 @@ function DocumentView({
         group = {
           id: item.service_group_id,
           title: item.service_group_title || "Service Job",
+          concern: item.service_concern || "",
           recommendation: item.technician_story || "",
           workPerformed: item.work_performed || "",
           items: [],
@@ -5404,11 +5433,16 @@ function DocumentView({
       ? "Active job record and shop copy"
       : "Final charges and payment record";
   const sectionHeading = isEstimate ? "Proposed services" : isWorkOrder ? "Work to perform" : "Final charges";
-  const concernHeading = isEstimate
-    ? "Customer request / proposed work"
-    : isWorkOrder
-      ? "Customer concern / work requested"
-      : "Services requested / performed";
+  // Per-job concerns now live on each service job (3C). The RO-level box is general customer notes;
+  // older ROs that only used this box still print it here.
+  const hasJobConcerns = groupedDocumentItems.some((group) => group.concern);
+  const concernHeading = hasJobConcerns
+    ? "Customer notes"
+    : isEstimate
+      ? "Customer request / proposed work"
+      : isWorkOrder
+        ? "Customer concern / work requested"
+        : "Services requested / performed";
   const finalTotalLabel = isEstimate ? "Estimated total" : isWorkOrder ? "Work order total" : "Invoice total";
   const className = isEstimate ? "document-estimate" : isWorkOrder ? "document-repair-order" : "document-invoice";
   return (
@@ -5623,7 +5657,12 @@ function DocumentView({
               return (
                 <section className="estimate-service-card" key={group.id}>
                   <header><div><span>Recommended service</span><h3>{group.title}</h3></div><strong>{money(jobTotal)}</strong></header>
-                  {group.recommendation && <p className="estimate-recommendation">{group.recommendation}</p>}
+                  {group.concern ? (
+                    <div className="estimate-recommendation estimate-3c">
+                      <p><span>Concern:</span> {group.concern}</p>
+                      {group.recommendation && <p><span>Findings:</span> {group.recommendation}</p>}
+                    </div>
+                  ) : group.recommendation && <p className="estimate-recommendation">{group.recommendation}</p>}
                   <details className="estimate-breakdown" open>
                     <summary>Parts and labor breakdown</summary>
                     <table className="document-table">
@@ -5669,9 +5708,11 @@ function DocumentView({
                   <tr className={`document-job-heading ${decision ? `authorization-${decision}` : ""}`} key={`${group.id}-heading`}>
                     <td colSpan={4}>
                       <div className="document-job-title"><strong>{group.title}</strong>{decision && <span className={`authorization-mark ${decision}`}>{decision}</span>}</div>
-                      {isWorkOrder && group.recommendation && <p><span>Authorized scope:</span> {group.recommendation}</p>}
+                      {group.concern && <p><span>Concern:</span> {group.concern}</p>}
+                      {isWorkOrder && group.recommendation && <p><span>{group.concern ? "Cause:" : "Authorized scope:"}</span> {group.recommendation}</p>}
+                      {isInvoice && group.concern && group.recommendation && <p><span>Cause:</span> {group.recommendation}</p>}
                       {isInvoice && separateAuthorization && <p><span>Separately authorized:</span> {separateAuthorization.note}</p>}
-                      {isInvoice && group.workPerformed && <p><span>Work performed:</span> {group.workPerformed}</p>}
+                      {isInvoice && group.workPerformed && <p><span>{group.concern ? "Correction:" : "Work performed:"}</span> {group.workPerformed}</p>}
                     </td>
                     <td><strong>{money(jobTotal)}</strong></td>
                   </tr>

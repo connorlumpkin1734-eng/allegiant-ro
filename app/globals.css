@@ -369,6 +369,12 @@ tbody tr:hover { background: var(--panel-header); }
 .visibility-tag.customer { color: var(--accent); background: var(--accent-tint); }
 .visibility-tag.invoice { color: var(--success-text); background: var(--success-tint); }
 .visibility-tag.private { color: var(--warn-text); background: var(--warn-tint); }
+.visibility-tag.locked { color: var(--muted); background: var(--line); }
+/* 3C: Concern spans the full width above Cause / Correction / Internal notes. */
+.service-job-narratives .job-concern { grid-column: 1 / -1; }
+.service-job-narratives .job-concern textarea { min-height: 56px; }
+.service-job-narratives .job-concern textarea[readonly] { color: var(--ink); background: var(--panel-header); cursor: default; }
+.job-3c-letter { font-weight: 800; color: var(--ink); margin-right: 4px; }
 .service-job-narratives .internal-job-notes textarea { border-color: rgba(242, 184, 75, 0.45); background: var(--warn-tint); }
 .job-profit-panel {
   display: grid;
@@ -553,6 +559,9 @@ tbody tr:hover { background: var(--panel-header); }
 .estimate-service-card > header span { color: var(--muted); font-size: 10px; font-weight: 900; text-transform: uppercase; }
 .estimate-service-card > header strong { color: var(--navy); font-size: 18px; }
 .estimate-recommendation { margin: 0; padding: 14px 16px; border-top: 1px solid #d8e0ea; white-space: pre-wrap; }
+.estimate-3c p { margin: 0; }
+.estimate-3c p + p { margin-top: 8px; }
+.estimate-3c span { font-weight: 900; text-transform: uppercase; font-size: 11px; letter-spacing: .03em; margin-right: 4px; }
 .estimate-service-card details { border-top: 1px solid #d8e0ea; }
 .estimate-service-card summary { padding: 10px 16px; color: #2459a9; font-size: 12px; font-weight: 900; cursor: pointer; }
 .estimate-service-card .document-table { margin: 0; }
