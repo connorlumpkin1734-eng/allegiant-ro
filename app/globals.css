@@ -406,7 +406,19 @@ tbody tr:hover { background: var(--panel-header); }
 .concern-line-title span { display: block; color: var(--muted); font-size: 11px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
 .concern-line-title strong { display: block; color: var(--ink); font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .concern-line-3c { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 0 16px 14px; }
-.concern-line-3c.no-concern { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.concern-line-3c.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.concern-line-card.request { border-left-color: var(--success-text); }
+.concern-line-card.request .concern-line-letter { background: var(--success-text); color: var(--background); }
+.concern-line-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; }
+/* Request / Concern switch on a line. */
+.segmented { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--background); }
+.segmented button {
+  border: 0; border-radius: 7px; padding: 6px 12px;
+  background: transparent; color: var(--muted);
+  font: inherit; font-size: 12px; font-weight: 800; cursor: pointer;
+}
+.segmented button.active { background: var(--accent); color: var(--accent-on); }
+.service-job-narratives.one-up { grid-template-columns: minmax(0, 1fr); }
 .concern-line-3c textarea { min-height: 64px; background: var(--panel); }
 .concern-line-3c textarea[readonly] { color: var(--ink); background: var(--panel-header); cursor: default; }
 .concern-line-jobs { display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; border-top: 1px solid var(--line); background: var(--background); }
@@ -575,7 +587,8 @@ tbody tr:hover { background: var(--panel-header); }
   .service-job-header { grid-template-columns: 38px minmax(0, 1fr); }
   .service-job-total { text-align: left; }
   .service-job-narratives { grid-template-columns: 1fr; }
-  .service-job-narratives.two-up, .concern-line-3c, .concern-line-3c.no-concern { grid-template-columns: 1fr; }
+  .service-job-narratives.two-up, .concern-line-3c, .concern-line-3c.cols-2 { grid-template-columns: 1fr; }
+  .concern-line-header { flex-wrap: wrap; }
   .job-status-select select { min-width: 0; }
   .job-profit-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .job-profit-heading, .job-profit-panel small { grid-column: 1 / -1; }
@@ -2021,3 +2034,4 @@ tbody tr:hover { background: var(--panel-header); }
   color: var(--ink);
   font-weight: 700; font-size: 14px;
 }
+.document-line-title em { margin-left: auto; color: #5b6b82; font-size: 11px; font-style: normal; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }

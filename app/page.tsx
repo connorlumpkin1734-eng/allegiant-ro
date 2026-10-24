@@ -146,10 +146,22 @@ type LineItem = {
 
 type JobStatus = "authorized" | "needs_approval" | "pending_review";
 
+// Dealer-style line kinds. "customer" = customer concern (needs diagnosis).
+type LineKind = "request" | "customer" | "inspection";
+const LINE_KIND_LABEL: Record<LineKind, string> = {
+  request: "Customer request",
+  customer: "Customer concern",
+  inspection: "Technician recommendation",
+};
+/** Requests (oil change, tire rotation…) have nothing to diagnose, so no Cause. */
+function lineHasCause(kind: LineKind): boolean {
+  return kind !== "request";
+}
+
 type ConcernLine = {
   id: string;
   sort_order: number;
-  kind: "customer" | "inspection";
+  kind: LineKind;
   concern: string | null;
   cause: string | null;
   correction: string | null;
@@ -2318,6 +2330,17 @@ function RepairOrderEditor({
       ? [...(initialRo.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order)
       : [{ id: crypto.randomUUID(), sort_order: 0, kind: "customer", concern: "", cause: "", correction: "" }]
   );
+  // A newly added line gets the cursor in its first box.
+  const [focusLineId, setFocusLineId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!focusLineId) return;
+    const box = document.querySelector<HTMLTextAreaElement>(`[data-line-text="${focusLineId}"]`);
+    box?.focus();
+    box?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFocusLineId(null);
+  }, [focusLineId]);
+  // Private shop notes stay tucked away until someone adds one.
+  const [openShopNotes, setOpenShopNotes] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [vinBusy, setVinBusy] = useState(false);
   const vinPhotoRef = useRef<HTMLInputElement>(null);
@@ -2590,30 +2613,36 @@ function RepairOrderEditor({
       emptyLine("labor", settings, current.length, {
         ...NO_JOB,
         service_group_id: groupId,
-        service_group_title: isTechnician ? "Requested job" : "New job",
+        service_group_title: "",
         concern_line_id: concernLineId,
         job_status: defaultJobStatus(),
       }),
     ]);
   }
 
-  function addConcernLine() {
-    setConcernLines((current) => [
-      ...current,
-      { id: crypto.randomUUID(), sort_order: current.length, kind: "customer", concern: "", cause: "", correction: "" },
-    ]);
-  }
-
-  // "Found during inspection": one per RO; anyone (including technicians) can start it.
-  function ensureInspectionLine(): string {
-    const existing = concernLines.find((line) => line.kind === "inspection");
-    if (existing) return existing.id;
+  function addConcernLine(kind: "request" | "customer") {
     const id = crypto.randomUUID();
     setConcernLines((current) => [
       ...current,
-      { id, sort_order: current.length, kind: "inspection", concern: null, cause: "", correction: "" },
+      { id, sort_order: current.length, kind, concern: "", cause: "", correction: "" },
     ]);
-    return id;
+    setFocusLineId(id);
+  }
+
+  // One line per finding: "+ Recommend repair" starts a technician recommendation line with its
+  // job already created, and puts the cursor in the recommendation box.
+  function addRecommendation() {
+    const id = crypto.randomUUID();
+    setConcernLines((current) => [
+      ...current,
+      { id, sort_order: current.length, kind: "inspection", concern: "", cause: "", correction: "" },
+    ]);
+    addServiceJob(id);
+    setFocusLineId(id);
+  }
+
+  function setLineKind(id: string, kind: LineKind) {
+    setConcernLines((current) => current.map((line) => (line.id === id ? { ...line, kind } : line)));
   }
 
   function updateConcernLine(id: string, field: "concern" | "cause" | "correction", value: string) {
@@ -2792,12 +2821,23 @@ function RepairOrderEditor({
     }
     // A write-up can be just concerns (jobs come after the tech inspects), so charge lines are optional
     // as long as there's at least one concern or job.
-    const hasConcern = concernLines.some((line) => line.kind === "inspection" || Boolean(line.concern?.trim()));
+    const hasConcern = concernLines.some((line) => Boolean(line.concern?.trim()));
     if (!items.length && !hasConcern) {
-      setMessage("Write at least one customer concern, or add a job.");
+      setMessage("Write at least one customer request or concern, or add a job.");
       return;
     }
-    const missingDescription = items.find((item) => !item.description.trim());
+    const untitledJob = items.find((item) => item.service_group_id && !item.service_group_title?.trim());
+    if (untitledJob) {
+      setMessage("Every job needs a name (the Job box at the top of the job).");
+      return;
+    }
+    // Labor left blank takes the job's name, the way a dealer op reads ("Replace front pads and rotors").
+    const preparedItems = items.map((item) =>
+      item.item_type === "labor" && !item.description.trim() && item.service_group_title?.trim()
+        ? { ...item, description: item.service_group_title.trim() }
+        : item
+    );
+    const missingDescription = preparedItems.find((item) => !item.description.trim());
     if (missingDescription) {
       const where = missingDescription.service_group_id
         ? `the "${missingDescription.service_group_title?.trim() || "untitled"}" job`
@@ -2908,7 +2948,7 @@ function RepairOrderEditor({
             repair_order_id: roId,
             sort_order: index,
             kind: line.kind,
-            concern: line.kind === "inspection" ? null : valueOrNull(line.concern ?? ""),
+            concern: valueOrNull(line.concern ?? ""),
             cause: valueOrNull(line.cause ?? ""),
             correction: valueOrNull(line.correction ?? ""),
           })),
@@ -2917,7 +2957,7 @@ function RepairOrderEditor({
         if (concernLineError) throw concernLineError;
       }
 
-      const linePayload = items.map((item, index) => ({
+      const linePayload = preparedItems.map((item, index) => ({
         id: item.id,
         owner_id: ownerId,
         repair_order_id: roId,
@@ -2968,7 +3008,6 @@ function RepairOrderEditor({
   const unassignedJobs = serviceGroups.filter((group) =>
     !group.items[0].concern_line_id || !concernLines.some((line) => line.id === group.items[0].concern_line_id)
   );
-  const hasInspectionLine = concernLines.some((line) => line.kind === "inspection");
 
   const jobStatusLabel: Record<JobStatus, string> = {
     authorized: "Authorized",
@@ -2994,7 +3033,11 @@ function RepairOrderEditor({
           <div className="service-job-number">{label}</div>
           <label>
             Job
-            <input value={first.service_group_title ?? ""} onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)} />
+            <input
+              value={first.service_group_title ?? ""}
+              placeholder="Name this job (e.g. Replace front pads and rotors)"
+              onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)}
+            />
           </label>
           <div className="service-job-total">
             {invoiceOverrides[group.id] && <span className="authorization-mark approved">Separately authorized</span>}
@@ -3029,7 +3072,7 @@ function RepairOrderEditor({
                 {!concernLines.some((line) => line.id === first.concern_line_id) && <option value="">Not on a line</option>}
                 {concernLines.map((line, index) => (
                   <option key={line.id} value={line.id}>
-                    Line {lineLetter(index)}{line.kind === "inspection" ? " — Found during inspection" : line.concern ? ` — ${line.concern.slice(0, 40)}` : ""}
+                    Line {lineLetter(index)} — {line.concern?.trim() ? line.concern.trim().slice(0, 40) : LINE_KIND_LABEL[line.kind]}
                   </option>
                 ))}
               </select>
@@ -3061,28 +3104,29 @@ function RepairOrderEditor({
             )}
           </div>
         )}
-        <div className="service-job-narratives two-up">
-          <label className="recommendation-story">
-            <span className="field-title">Job note <span className="muted">(optional)</span></span>
-            <span className="visibility-tag customer">Estimate + approval</span>
-            <textarea
-              rows={2}
-              placeholder="Example: Pads measured 2mm, rotors scored."
-              value={first.job_note ?? ""}
-              onChange={(event) => updateServiceJob(group.id, "job_note", event.target.value)}
-            />
-          </label>
-          <label className="internal-job-notes">
-            <span className="field-title">Internal technician notes</span>
-            <span className="visibility-tag private">Private</span>
-            <textarea
-              rows={2}
-              placeholder="Shop instructions, reminders, or details the customer should not see."
-              value={first.internal_notes ?? ""}
-              onChange={(event) => updateServiceJob(group.id, "internal_notes", event.target.value)}
-            />
-          </label>
-        </div>
+        {(first.job_note || openShopNotes.has(group.id) || first.internal_notes) && (
+          <div className={`service-job-narratives ${first.job_note && (openShopNotes.has(group.id) || first.internal_notes) ? "two-up" : "one-up"}`}>
+            {first.job_note && (
+              <label className="recommendation-story">
+                <span className="field-title">Job note</span>
+                <span className="visibility-tag customer">Estimate + approval</span>
+                <textarea rows={2} value={first.job_note ?? ""} onChange={(event) => updateServiceJob(group.id, "job_note", event.target.value)} />
+              </label>
+            )}
+            {(openShopNotes.has(group.id) || first.internal_notes) && (
+              <label className="internal-job-notes">
+                <span className="field-title">Shop note</span>
+                <span className="visibility-tag private">Private</span>
+                <textarea
+                  rows={2}
+                  placeholder="Instructions or reminders the customer should never see."
+                  value={first.internal_notes ?? ""}
+                  onChange={(event) => updateServiceJob(group.id, "internal_notes", event.target.value)}
+                />
+              </label>
+            )}
+          </div>
+        )}
         {!hideCostAndMargin && (
           <section className="job-profit-panel" aria-label="Internal job profitability">
             <div className="job-profit-heading">
@@ -3117,7 +3161,10 @@ function RepairOrderEditor({
         )}
         <div className="job-add-actions">
           <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>
-          {canAddPartLine && <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Associated Part</button>}
+          {canAddPartLine && <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Part</button>}
+          {!openShopNotes.has(group.id) && !first.internal_notes && (
+            <button className="button small ghost" onClick={() => setOpenShopNotes((current) => new Set(current).add(group.id))}>+ Shop note</button>
+          )}
         </div>
       </article>
     );
@@ -3467,21 +3514,20 @@ function RepairOrderEditor({
       <section className="panel line-items-panel">
         <div className="section-heading wrap">
           <div>
-            <h2>{workspaceTab === "invoice" ? "Invoice lines" : "Concerns & jobs"}</h2>
+            <h2>{workspaceTab === "invoice" ? "Invoice lines" : "Lines & jobs"}</h2>
             <p className="muted">
               {workspaceTab === "invoice"
                 ? "Declined jobs stay uncharged unless you record a separate authorization. Pending technician requests are never billed."
                 : isTechnician
-                  ? "Write your findings in Cause, request any additional jobs under the matching line, and use Found during inspection for anything the customer didn't mention."
-                  : `One line per customer concern; jobs go underneath. Labor defaults to ${money(settings.default_labor_rate)}/hr and parts to ${settings.default_parts_markup}% markup.`}
+                  ? "Write what you found in Cause. Found something the customer didn't mention? Recommend a repair — it goes to the advisor to price and send."
+                  : `One line per thing the customer asked for, jobs underneath. Labor defaults to ${money(settings.default_labor_rate)}/hr, parts to ${settings.default_parts_markup}% markup.`}
             </p>
           </div>
           <div className="button-row">
-            {canRestructureRo && <button className="button primary" onClick={addConcernLine}>+ Concern line</button>}
-            {!hasInspectionLine && (
-              <button className="button secondary" onClick={() => ensureInspectionLine()}>+ Found during inspection</button>
-            )}
-            {canRestructureRo && <button className="button secondary" onClick={() => addItem("fee")}>+ Fee</button>}
+            {canRestructureRo && <button className="button primary" onClick={() => addConcernLine("request")}>+ Customer request</button>}
+            {canRestructureRo && <button className="button primary" onClick={() => addConcernLine("customer")}>+ Customer concern</button>}
+            <button className={`button ${isTechnician ? "primary" : "secondary"}`} onClick={addRecommendation}>+ Recommend repair</button>
+            {canRestructureRo && <button className="button ghost" onClick={() => addItem("fee")}>+ Fee</button>}
             {canRestructureRo && <button className="button discount-button" onClick={() => addItem("discount")}>+ Discount</button>}
           </div>
         </div>
@@ -3491,48 +3537,78 @@ function RepairOrderEditor({
             const letter = lineLetter(lineIndex);
             const lineJobs = jobsForLine(line.id);
             const isInspection = line.kind === "inspection";
+            // Customers' words belong to the advisor; a technician writes only their own recommendations.
+            const textLocked = isTechnician && !isInspection;
+            const lineIsUnsaved = !(initialRo?.concern_lines ?? []).some((saved) => saved.id === line.id);
+            const canDeleteLine = canRestructureRo || (isTechnician && isInspection && lineIsUnsaved);
+            const pendingCount = lineJobs.filter((group) => group.items[0].job_status === "pending_review").length;
+            const lineTotal = lineJobs.reduce((sum, group) => sum + group.items.reduce((jobSum, item) => jobSum + item.quantity * item.unit_price, 0), 0);
+            const textLabel = line.kind === "request" ? "What the customer wants" : line.kind === "customer" ? "The customer's concern, in their words" : "Your recommendation";
+            const textPlaceholder = line.kind === "request"
+              ? "Customer requests oil and filter change."
+              : line.kind === "customer"
+                ? "Customer states dragging noise from under vehicle at low speeds."
+                : "Technician recommends replacing front brake pads and rotors.";
+            const causeLabel = isInspection ? "Why — what you found" : "Cause — what the tech found";
+            const causePlaceholder = isInspection
+              ? "Front pads measured 2mm, rotors scored below spec."
+              : "Road tested and verified noise. RF wheel bearing has excessive play.";
+            const fieldCount = 2 + (lineHasCause(line.kind) ? 1 : 0);
             return (
               <article className={`concern-line-card ${line.kind}`} key={line.id}>
                 <header className="concern-line-header">
                   <div className="concern-line-letter">{letter}</div>
                   <div className="concern-line-title">
                     <span>Line {letter}</span>
-                    <strong>{isInspection ? "Found during inspection" : line.concern?.trim() || "New customer concern"}</strong>
+                    <strong>{LINE_KIND_LABEL[line.kind]}</strong>
                   </div>
-                  {canRestructureRo && (
+                  <div className="concern-line-meta">
+                    {pendingCount > 0 && <span className="job-status-badge pending_review">{pendingCount} waiting on advisor</span>}
+                    {lineJobs.length > 0 && <span className="muted">{lineJobs.length} job{lineJobs.length === 1 ? "" : "s"}{hideCostAndMargin ? "" : ` · ${money(lineTotal)}`}</span>}
+                  </div>
+                  {canRestructureRo && !isInspection && (
+                    <div className="segmented" role="group" aria-label="Line type">
+                      <button type="button" className={line.kind === "request" ? "active" : ""} onClick={() => setLineKind(line.id, "request")}>Request</button>
+                      <button type="button" className={line.kind === "customer" ? "active" : ""} onClick={() => setLineKind(line.id, "customer")}>Concern</button>
+                    </div>
+                  )}
+                  {canDeleteLine && (
                     <button className="button small danger" onClick={() => void deleteConcernLine(line.id)}>Delete line</button>
                   )}
                 </header>
-                <div className={`concern-line-3c ${isInspection ? "no-concern" : ""}`}>
-                  {!isInspection && (
-                    <label className="line-concern">
-                      <span className="field-title">Concern</span>
-                      <span className={`visibility-tag ${isTechnician ? "locked" : "customer"}`}>{isTechnician ? "Advisor only" : "All documents"}</span>
+                <div className={`concern-line-3c cols-${fieldCount}`}>
+                  <label className="line-concern">
+                    <span className="field-title">{textLabel}</span>
+                    {textLocked
+                      ? <span className="visibility-tag locked">Advisor only</span>
+                      : <span className="visibility-tag customer">All documents</span>}
+                    <textarea
+                      rows={2}
+                      data-line-text={line.id}
+                      readOnly={textLocked}
+                      placeholder={textLocked ? "Nothing written yet." : textPlaceholder}
+                      value={line.concern ?? ""}
+                      onChange={(event) => updateConcernLine(line.id, "concern", event.target.value)}
+                    />
+                  </label>
+                  {lineHasCause(line.kind) && (
+                    <label>
+                      <span className="field-title">{causeLabel}</span>
+                      <span className="visibility-tag customer">Estimate + invoice</span>
                       <textarea
                         rows={2}
-                        readOnly={isTechnician}
-                        placeholder={isTechnician ? "No concern written." : "In the customer's words. Example: Customer states dragging noise from under vehicle at low speeds."}
-                        value={line.concern ?? ""}
-                        onChange={(event) => updateConcernLine(line.id, "concern", event.target.value)}
+                        placeholder={causePlaceholder}
+                        value={line.cause ?? ""}
+                        onChange={(event) => updateConcernLine(line.id, "cause", event.target.value)}
                       />
                     </label>
                   )}
                   <label>
-                    <span className="field-title">Cause</span>
-                    <span className="visibility-tag customer">Estimate + invoice</span>
-                    <textarea
-                      rows={2}
-                      placeholder={isInspection ? "Optional summary of what the inspection found." : "Technician's findings. Example: Road tested, verified noise. RF wheel bearing has excessive play."}
-                      value={line.cause ?? ""}
-                      onChange={(event) => updateConcernLine(line.id, "cause", event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    <span className="field-title">Correction</span>
+                    <span className="field-title">Correction — what was done</span>
                     <span className="visibility-tag invoice">Invoice</span>
                     <textarea
                       rows={2}
-                      placeholder="Fill in after the work. Example: Replaced RF hub bearing, road tested, noise gone."
+                      placeholder={line.kind === "request" ? "Performed oil and filter change, reset maintenance reminder." : "Fill in after the work. Example: Replaced RF hub bearing, road tested, noise gone."}
                       value={line.correction ?? ""}
                       onChange={(event) => updateConcernLine(line.id, "correction", event.target.value)}
                     />
@@ -3542,7 +3618,11 @@ function RepairOrderEditor({
                   {lineJobs.map((group, jobIndex) => renderJob(group, `${letter}${jobIndex + 1}`))}
                   {!lineJobs.length && (
                     <p className="concern-line-empty">
-                      {isTechnician ? "No jobs on this line yet." : "No jobs yet. Add the job now if you can price it at write-up, or leave it for the technician to inspect and request."}
+                      {isTechnician
+                        ? "No jobs yet. If this needs work, request a job and the advisor will price it."
+                        : line.kind === "customer"
+                          ? "No job yet — add one now if you can price it at write-up, or leave it for the tech to diagnose and request."
+                          : "No job yet."}
                     </p>
                   )}
                 </div>
@@ -5720,7 +5800,9 @@ function DocumentView({
   ].filter((section) => section.groups.length > 0 || (
     !isEstimate && section.line !== null && Boolean(section.line.concern || section.line.cause || section.line.correction)
   ));
-  const lineHeading = (line: ConcernLine) => (line.kind === "inspection" ? "Found during inspection" : line.concern || "Customer concern");
+  const lineHeading = (line: ConcernLine) => line.concern?.trim() || LINE_KIND_LABEL[line.kind];
+  // Requests have no Cause; a tech's recommendation calls it "Findings".
+  const lineCause = (line: ConcernLine) => (lineHasCause(line.kind) ? line.cause?.trim() || "" : "");
 
   const renderJobRows = (group: DocumentGroup, inLine: boolean): ReactNode[] => {
     const isServiceJob = Boolean(group.title);
@@ -5993,9 +6075,9 @@ function DocumentView({
                 )}
                 {section.line && (
                   <header className="estimate-line-header">
-                    <span>Line {section.letter}</span>
+                    <span>Line {section.letter} · {LINE_KIND_LABEL[section.line.kind]}</span>
                     <h3>{lineHeading(section.line)}</h3>
-                    {section.line.cause && <p><strong>Findings:</strong> {section.line.cause}</p>}
+                    {lineCause(section.line) && <p><strong>Findings:</strong> {lineCause(section.line)}</p>}
                   </header>
                 )}
                 {section.groups.map((group, jobIndex) => {
@@ -6052,8 +6134,8 @@ function DocumentView({
               section.line ? (
                 <tr className="document-line-heading" key={`${section.key}-line`}>
                   <td colSpan={5}>
-                    <div className="document-line-title"><span>Line {section.letter}</span><strong>{lineHeading(section.line)}</strong></div>
-                    {section.line.cause && <p><span>Cause:</span> {section.line.cause}</p>}
+                    <div className="document-line-title"><span>Line {section.letter}</span><strong>{lineHeading(section.line)}</strong><em>{LINE_KIND_LABEL[section.line.kind]}</em></div>
+                    {lineCause(section.line) && <p><span>{section.line.kind === "inspection" ? "Findings:" : "Cause:"}</span> {lineCause(section.line)}</p>}
                     {section.line.correction && <p><span>Correction:</span> {section.line.correction}</p>}
                   </td>
                 </tr>
