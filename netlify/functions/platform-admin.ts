@@ -29,11 +29,16 @@ type BackupSnapshot = {
 // children that reference them (so a foreign key never points at a row that doesn't exist yet).
 // rate_limits is skipped — same reasoning as the backup job, it's pure ephemeral state.
 const RESTORE_ORDER = [
-  "settings", "teams", "customers", "vehicles", "repair_orders", "line_items",
-  "multipoint_inspections", "estimate_photos", "estimate_authorizations",
-  "staff", "repair_order_technicians", "payments",
-  "platform_config", "platform_admins", "site_visits",
+  "settings", "teams", "customers", "vehicles", "repair_orders", "concern_lines", "line_items",
+  "multipoint_inspections", "estimate_photos", "estimate_videos", "estimate_authorizations",
+  "staff", "repair_order_technicians", "payments", "payment_links", "video_share_links",
+  "platform_config", "platform_admins", "site_visits", "user_preferences",
 ] as const;
+
+// Tables whose primary key isn't `id` (restore upserts match on the primary key).
+const CONFLICT_COLUMN: Partial<Record<(typeof RESTORE_ORDER)[number], string>> = {
+  user_preferences: "user_id",
+};
 
 export default async (request: Request) => {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
@@ -151,7 +156,7 @@ export default async (request: Request) => {
       let restored = 0;
       for (let offset = 0; offset < rows.length; offset += 500) {
         const chunk = rows.slice(offset, offset + 500);
-        const response = await fetch(`${supabaseUrl}/rest/v1/${table}?on_conflict=id`, {
+        const response = await fetch(`${supabaseUrl}/rest/v1/${table}?on_conflict=${CONFLICT_COLUMN[table] ?? "id"}`, {
           method: "POST",
           headers: { ...serviceHeaders, Prefer: "resolution=merge-duplicates,return=minimal" },
           body: JSON.stringify(chunk),

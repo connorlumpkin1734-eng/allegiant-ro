@@ -136,9 +136,56 @@ type LineItem = {
   technician_story: string | null;
   work_performed: string | null;
   internal_notes: string | null;
-  // 3C: Concern (advisor, read-only for technicians). Cause = technician_story, Correction = work_performed.
+  // Superseded by concern lines; kept so older data still loads.
   service_concern: string | null;
+  // Concern lines: the job's line (A, B, C…), its status, and an optional short note for this job.
+  concern_line_id: string | null;
+  job_status: JobStatus | null;
+  job_note: string | null;
 };
+
+type JobStatus = "authorized" | "needs_approval" | "pending_review";
+
+type ConcernLine = {
+  id: string;
+  sort_order: number;
+  kind: "customer" | "inspection";
+  concern: string | null;
+  cause: string | null;
+  correction: string | null;
+};
+
+// Fields every line of a service job carries (a job is all line items sharing service_group_id).
+type JobFields = Pick<LineItem,
+  "service_group_id" | "service_group_title" | "technician_story" | "work_performed" | "internal_notes"
+  | "service_concern" | "concern_line_id" | "job_status" | "job_note">;
+
+const NO_JOB: JobFields = {
+  service_group_id: null, service_group_title: null, technician_story: null, work_performed: null,
+  internal_notes: null, service_concern: null, concern_line_id: null, job_status: null, job_note: null,
+};
+
+function jobFieldsOf(item: LineItem | null | undefined): JobFields {
+  if (!item) return NO_JOB;
+  return {
+    service_group_id: item.service_group_id, service_group_title: item.service_group_title,
+    technician_story: item.technician_story, work_performed: item.work_performed, internal_notes: item.internal_notes,
+    service_concern: item.service_concern, concern_line_id: item.concern_line_id ?? null,
+    job_status: item.job_status ?? null, job_note: item.job_note ?? null,
+  };
+}
+
+/** Pending advisor review = a technician's request that hasn't been priced/approved yet: never billed or sent. */
+function isPendingReview(item: { job_status?: JobStatus | null }): boolean {
+  return item.job_status === "pending_review";
+}
+
+function lineLetter(index: number): string {
+  let n = index;
+  let letters = "";
+  do { letters = String.fromCharCode(65 + (n % 26)) + letters; n = Math.floor(n / 26) - 1; } while (n >= 0);
+  return letters;
+}
 
 type EstimatePhoto = {
   id: string;
@@ -190,6 +237,7 @@ type RepairOrder = {
   customers?: Customer | null;
   vehicles?: Vehicle | null;
   line_items?: LineItem[];
+  concern_lines?: ConcernLine[];
   latest_estimate_authorization?: EstimateAuthorization | null;
 };
 
@@ -352,17 +400,24 @@ function hasAuthorizationResponse(
   );
 }
 
-function authorizedLineItems<T extends { service_group_id: string | null }>(
+// What gets billed. Mirrored in the payment/invoice Netlify functions — keep them in sync.
+//  - Pending advisor review (a technician's unpriced request): never billed.
+//  - Authorized at write-up: always billed, no estimate approval needed.
+//  - Needs customer approval: billed only if approved (or separately authorized) once the
+//    customer has responded; before any response, everything else is billed as before.
+function authorizedLineItems<T extends { service_group_id: string | null; job_status?: JobStatus | null }>(
   items: T[],
   authorization: EstimateAuthorization | null | undefined,
   overrides: InvoiceOverrides = {}
 ): T[] {
-  if (!hasAuthorizationResponse(authorization)) return items;
+  const billable = items.filter((item) => item.job_status !== "pending_review");
+  if (!hasAuthorizationResponse(authorization)) return billable;
   const decisions = authorization.line_decisions ?? {};
-  const hasApprovedService = Object.values(decisions).includes("approved") || items.some((item) => item.service_group_id && overrides[item.service_group_id]);
-  return items.filter((item) =>
+  const hasApprovedService = Object.values(decisions).includes("approved")
+    || billable.some((item) => item.service_group_id && (overrides[item.service_group_id] || item.job_status === "authorized"));
+  return billable.filter((item) =>
     item.service_group_id
-      ? decisions[item.service_group_id] === "approved" || Boolean(overrides[item.service_group_id])
+      ? item.job_status === "authorized" || decisions[item.service_group_id] === "approved" || Boolean(overrides[item.service_group_id])
       : hasApprovedService
   );
 }
@@ -454,73 +509,18 @@ function numberOrNull(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function emptyLine(
-  type: ItemType,
-  settings: Settings,
-  index: number,
-  groupId: string | null = null,
-  groupTitle: string | null = null,
-  technicianStory: string | null = null,
-  workPerformed: string | null = null,
-  internalNotes: string | null = null,
-  serviceConcern: string | null = null
-): LineItem {
+function emptyLine(type: ItemType, settings: Settings, index: number, job: JobFields = NO_JOB): LineItem {
+  const base = { id: crypto.randomUUID(), item_type: type, sort_order: index, ...job };
   if (type === "labor") {
-    return {
-      id: crypto.randomUUID(),
-      item_type: type,
-      description: "",
-      quantity: 1,
-      unit_cost: null,
-      markup_percent: null,
-      unit_price: settings.default_labor_rate,
-      taxable: false,
-      sort_order: index,
-      service_group_id: groupId,
-      service_group_title: groupTitle,
-      technician_story: technicianStory,
-      work_performed: workPerformed,
-      internal_notes: internalNotes,
-      service_concern: serviceConcern,
-    };
+    return { ...base, description: "", quantity: 1, unit_cost: null, markup_percent: null, unit_price: settings.default_labor_rate, taxable: false };
   }
-
   if (type === "part") {
-    return {
-      id: crypto.randomUUID(),
-      item_type: type,
-      description: "",
-      quantity: 1,
-      unit_cost: 0,
-      markup_percent: settings.default_parts_markup,
-      unit_price: 0,
-      taxable: true,
-      sort_order: index,
-      service_group_id: groupId,
-      service_group_title: groupTitle,
-      technician_story: technicianStory,
-      work_performed: workPerformed,
-      internal_notes: internalNotes,
-      service_concern: serviceConcern,
-    };
+    return { ...base, description: "", quantity: 1, unit_cost: 0, markup_percent: settings.default_parts_markup, unit_price: 0, taxable: true };
   }
-
   return {
-    id: crypto.randomUUID(),
-    item_type: type,
+    ...base,
     description: type === "fee" ? "Shop supplies" : "Discount",
-    quantity: 1,
-    unit_cost: null,
-    markup_percent: null,
-    unit_price: 0,
-    taxable: type === "fee",
-    sort_order: index,
-    service_group_id: groupId,
-    service_group_title: groupTitle,
-    technician_story: technicianStory,
-    work_performed: workPerformed,
-    internal_notes: internalNotes,
-    service_concern: serviceConcern,
+    quantity: 1, unit_cost: null, markup_percent: null, unit_price: 0, taxable: type === "fee",
   };
 }
 
@@ -996,7 +996,7 @@ function RepairOrderApp({ user }: { user: User }) {
       supabase.from("vehicles").select("*").order("year", { ascending: false }),
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*)")
         .order("created_at", { ascending: false }),
       supabase
         .from("estimate_authorizations")
@@ -1159,7 +1159,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*)")
         .eq("id", id)
         .single(),
       supabase
@@ -1194,7 +1194,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*)")
         .eq("id", id)
         .single(),
       supabase
@@ -1229,7 +1229,7 @@ function RepairOrderApp({ user }: { user: User }) {
     setError("");
     const { data, error: fetchError } = await supabase
       .from("repair_orders")
-      .select("*, customers(*), vehicles(*), line_items(*)")
+      .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*)")
       .eq("id", id)
       .single();
 
@@ -2255,7 +2255,13 @@ function RepairOrderEditor({
   const [items, setItems] = useState<LineItem[]>(() =>
     initialRo?.line_items?.length
       ? initialRo.line_items.map((item, index) => ({ ...item, sort_order: index }))
-      : [emptyLine("labor", settings, 0, crypto.randomUUID(), "New Service Job", "")]
+      : []
+  );
+  // Concern lines (Line A, B, C…). A new RO starts with one empty line for the advisor's write-up.
+  const [concernLines, setConcernLines] = useState<ConcernLine[]>(() =>
+    initialRo
+      ? [...(initialRo.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order)
+      : [{ id: crypto.randomUUID(), sort_order: 0, kind: "customer", concern: "", cause: "", correction: "" }]
   );
   const [busy, setBusy] = useState(false);
   const [vinBusy, setVinBusy] = useState(false);
@@ -2405,8 +2411,9 @@ function RepairOrderEditor({
     [vehicles, selectedCustomerId]
   );
 
+  // Pending technician requests aren't priced/approved yet, so they never count toward totals.
   const totals = useMemo(() => {
-    return calculateLineItemTotals(items, taxRate);
+    return calculateLineItemTotals(items.filter((item) => !isPendingReview(item)), taxRate);
   }, [items, taxRate]);
 
   const currentAuthorization = initialRo?.latest_estimate_authorization;
@@ -2500,17 +2507,7 @@ function RepairOrderEditor({
   function addItem(type: ItemType, groupId: string | null = null) {
     setItems((current) => {
       const groupedItem = groupId ? current.find((item) => item.service_group_id === groupId) : null;
-      return [...current, emptyLine(
-        type,
-        settings,
-        current.length,
-        groupId,
-        groupedItem?.service_group_title ?? null,
-        groupedItem?.technician_story ?? null,
-        groupedItem?.work_performed ?? null,
-        groupedItem?.internal_notes ?? null,
-        groupedItem?.service_concern ?? null
-      )];
+      return [...current, emptyLine(type, settings, current.length, groupedItem ? jobFieldsOf(groupedItem) : NO_JOB)];
     });
   }
 
@@ -2524,22 +2521,77 @@ function RepairOrderEditor({
     setMessage("Additional authorization recorded. Save Changes to update the invoice.");
   }
 
-  function addServiceJob() {
+  // Jobs added while writing up a new RO are authorized at drop-off; jobs added later need the
+  // customer's approval. A technician's job is always a request for the advisor to review.
+  function defaultJobStatus(): JobStatus {
+    if (isTechnician) return "pending_review";
+    return initialRo ? "needs_approval" : "authorized";
+  }
+
+  function addServiceJob(concernLineId: string | null) {
     const groupId = crypto.randomUUID();
     setItems((current) => [
       ...current,
-      emptyLine("labor", settings, current.length, groupId, "New Service Job", ""),
+      emptyLine("labor", settings, current.length, {
+        ...NO_JOB,
+        service_group_id: groupId,
+        service_group_title: isTechnician ? "Requested job" : "New job",
+        concern_line_id: concernLineId,
+        job_status: defaultJobStatus(),
+      }),
     ]);
   }
 
-  function updateServiceJob(groupId: string, field: "service_group_title" | "service_concern" | "technician_story" | "work_performed" | "internal_notes", value: string) {
+  function addConcernLine() {
+    setConcernLines((current) => [
+      ...current,
+      { id: crypto.randomUUID(), sort_order: current.length, kind: "customer", concern: "", cause: "", correction: "" },
+    ]);
+  }
+
+  // "Found during inspection": one per RO; anyone (including technicians) can start it.
+  function ensureInspectionLine(): string {
+    const existing = concernLines.find((line) => line.kind === "inspection");
+    if (existing) return existing.id;
+    const id = crypto.randomUUID();
+    setConcernLines((current) => [
+      ...current,
+      { id, sort_order: current.length, kind: "inspection", concern: null, cause: "", correction: "" },
+    ]);
+    return id;
+  }
+
+  function updateConcernLine(id: string, field: "concern" | "cause" | "correction", value: string) {
+    setConcernLines((current) => current.map((line) => (line.id === id ? { ...line, [field]: value } : line)));
+  }
+
+  async function deleteConcernLine(id: string) {
+    const lineJobs = [...new Set(items.filter((item) => item.concern_line_id === id && item.service_group_id).map((item) => item.service_group_id as string))];
+    if (!window.confirm(lineJobs.length
+      ? `Delete this line and its ${lineJobs.length} job${lineJobs.length === 1 ? "" : "s"} (with any attached photos)?`
+      : "Delete this line?")) return;
+    for (const groupId of lineJobs) await deleteJobPhotos(groupId);
+    setItems((current) => current.filter((item) => item.concern_line_id !== id));
+    setConcernLines((current) => current.filter((line) => line.id !== id));
+  }
+
+  function setJobStatus(groupId: string, jobStatus: JobStatus) {
+    setItems((current) => current.map((item) => (item.service_group_id === groupId ? { ...item, job_status: jobStatus } : item)));
+  }
+
+  function updateServiceJob(groupId: string, field: "service_group_title" | "job_note" | "internal_notes", value: string) {
     setItems((current) => current.map((item) =>
       item.service_group_id === groupId ? { ...item, [field]: value } : item
     ));
   }
 
   async function deleteServiceJob(groupId: string) {
-    if (!window.confirm("Delete this service job and its attached photos?")) return;
+    if (!window.confirm("Delete this job and its attached photos?")) return;
+    await deleteJobPhotos(groupId);
+    setItems((current) => current.filter((item) => item.service_group_id !== groupId));
+  }
+
+  async function deleteJobPhotos(groupId: string) {
     if (initialRo) {
       const { data } = await supabase.from("estimate_photos").select("storage_path")
         .eq("repair_order_id", initialRo.id).eq("service_group_id", groupId);
@@ -2547,7 +2599,6 @@ function RepairOrderEditor({
       if (paths.length) await supabase.storage.from("estimate-photos").remove(paths);
       await supabase.from("estimate_photos").delete().eq("repair_order_id", initialRo.id).eq("service_group_id", groupId);
     }
-    setItems((current) => current.filter((item) => item.service_group_id !== groupId));
   }
 
   function changeItem(id: string, field: keyof LineItem, rawValue: string | boolean | number) {
@@ -2557,17 +2608,7 @@ function RepairOrderEditor({
         const next = { ...item };
 
         if (field === "item_type") {
-          return emptyLine(
-            rawValue as ItemType,
-            settings,
-            item.sort_order,
-            item.service_group_id,
-            item.service_group_title,
-            item.technician_story,
-            item.work_performed,
-            item.internal_notes,
-            item.service_concern
-          );
+          return emptyLine(rawValue as ItemType, settings, item.sort_order, jobFieldsOf(item));
         }
 
         if (field === "description") next.description = String(rawValue);
@@ -2789,6 +2830,27 @@ function RepairOrderEditor({
       const currentLineIds = new Set(items.map((entry) => entry.id));
       const removedLineIds = [...existingLineIds].filter((id) => !currentLineIds.has(id));
 
+      // Concern lines go in before the jobs that point at them.
+      const existingConcernLineIds = new Set((initialRo?.concern_lines ?? []).map((line) => line.id));
+      const currentConcernLineIds = new Set(concernLines.map((line) => line.id));
+      const removedConcernLineIds = [...existingConcernLineIds].filter((id) => !currentConcernLineIds.has(id));
+      if (concernLines.length) {
+        const { error: concernLineError } = await supabase.from("concern_lines").upsert(
+          concernLines.map((line, index) => ({
+            id: line.id,
+            owner_id: ownerId,
+            repair_order_id: roId,
+            sort_order: index,
+            kind: line.kind,
+            concern: line.kind === "inspection" ? null : valueOrNull(line.concern ?? ""),
+            cause: valueOrNull(line.cause ?? ""),
+            correction: valueOrNull(line.correction ?? ""),
+          })),
+          { onConflict: "id" }
+        );
+        if (concernLineError) throw concernLineError;
+      }
+
       const linePayload = items.map((item, index) => ({
         id: item.id,
         owner_id: ownerId,
@@ -2807,14 +2869,24 @@ function RepairOrderEditor({
         work_performed: valueOrNull(item.work_performed ?? ""),
         internal_notes: valueOrNull(item.internal_notes ?? ""),
         service_concern: valueOrNull(item.service_concern ?? ""),
+        concern_line_id: item.service_group_id ? item.concern_line_id : null,
+        job_status: item.service_group_id ? (item.job_status ?? "needs_approval") : null,
+        job_note: valueOrNull(item.job_note ?? ""),
       }));
 
-      const { error: lineError } = await supabase.from("line_items").upsert(linePayload, { onConflict: "id" });
-      if (lineError) throw lineError;
+      if (linePayload.length) {
+        const { error: lineError } = await supabase.from("line_items").upsert(linePayload, { onConflict: "id" });
+        if (lineError) throw lineError;
+      }
 
       if (removedLineIds.length) {
         const { error: deleteError } = await supabase.from("line_items").delete().in("id", removedLineIds);
         if (deleteError) throw deleteError;
+      }
+
+      if (removedConcernLineIds.length) {
+        const { error: deleteLineError } = await supabase.from("concern_lines").delete().in("id", removedConcernLineIds);
+        if (deleteLineError) throw deleteLineError;
       }
 
       setBusy(false);
@@ -2824,6 +2896,166 @@ function RepairOrderEditor({
       setBusy(false);
     }
   }
+
+  const savedLineIds = new Set((initialRo?.line_items ?? []).map((entry) => entry.id));
+  const jobsForLine = (lineId: string) => serviceGroups.filter((group) => group.items[0].concern_line_id === lineId);
+  const unassignedJobs = serviceGroups.filter((group) =>
+    !group.items[0].concern_line_id || !concernLines.some((line) => line.id === group.items[0].concern_line_id)
+  );
+  const hasInspectionLine = concernLines.some((line) => line.kind === "inspection");
+
+  const jobStatusLabel: Record<JobStatus, string> = {
+    authorized: "Authorized",
+    needs_approval: "Needs customer approval",
+    pending_review: "Pending advisor review",
+  };
+
+  const renderJob = (group: { id: string; items: LineItem[] }, label: string) => {
+    const first = group.items[0];
+    const jobStatus: JobStatus = first.job_status ?? "needs_approval";
+    const customerDecision = hasCustomerAuthorizationResponse ? currentDecisions[group.id] : undefined;
+    const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+    const jobCost = group.items.reduce((sum, item) =>
+      sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0
+    );
+    const jobGrossProfit = jobTotal - jobCost;
+    const jobGrossMargin = jobTotal !== 0 ? (jobGrossProfit / jobTotal) * 100 : 0;
+    const jobIsUnsaved = group.items.every((item) => !savedLineIds.has(item.id));
+    const canDeleteJob = canRestructureRo || (isTechnician && jobIsUnsaved);
+    return (
+      <article className={`service-job-card job-status-${jobStatus} ${customerDecision ? `customer-${customerDecision}` : ""}`} key={group.id}>
+        <header className="service-job-header">
+          <div className="service-job-number">{label}</div>
+          <label>
+            Job
+            <input value={first.service_group_title ?? ""} onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)} />
+          </label>
+          <div className="service-job-total">
+            {invoiceOverrides[group.id] && <span className="authorization-mark approved">Separately authorized</span>}
+            {customerDecision && <span className={`authorization-mark ${customerDecision}`}>{invoiceOverrides[group.id] ? `Originally ${customerDecision}` : customerDecision}</span>}
+            <span>Job total</span><strong>{hideCostAndMargin ? "—" : money(jobTotal)}</strong>
+          </div>
+          {canDeleteJob && (
+            <button className="button small danger" onClick={() => void deleteServiceJob(group.id)}>Delete job</button>
+          )}
+        </header>
+        <div className="job-status-row">
+          {canRestructureRo ? (
+            <label className="job-status-select">
+              Status
+              <select value={jobStatus} onChange={(event) => setJobStatus(group.id, event.target.value as JobStatus)}>
+                <option value="authorized">Authorized (approved at write-up)</option>
+                <option value="needs_approval">Needs customer approval</option>
+                <option value="pending_review">Pending advisor review</option>
+              </select>
+            </label>
+          ) : (
+            <span className={`job-status-badge ${jobStatus}`}>{jobStatusLabel[jobStatus]}</span>
+          )}
+          {canRestructureRo && concernLines.length > 1 && (
+            <label className="job-status-select">
+              Line
+              <select
+                value={concernLines.some((line) => line.id === first.concern_line_id) ? first.concern_line_id ?? "" : ""}
+                onChange={(event) => setItems((current) => current.map((item) =>
+                  item.service_group_id === group.id ? { ...item, concern_line_id: event.target.value || null } : item))}
+              >
+                {!concernLines.some((line) => line.id === first.concern_line_id) && <option value="">Not on a line</option>}
+                {concernLines.map((line, index) => (
+                  <option key={line.id} value={line.id}>
+                    Line {lineLetter(index)}{line.kind === "inspection" ? " — Found during inspection" : line.concern ? ` — ${line.concern.slice(0, 40)}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {jobStatus === "pending_review" && (
+            <span className="job-status-hint">
+              {canRestructureRo
+                ? "Technician request: check the parts and labor, then set it to Needs customer approval (or Authorized). It isn't on estimates or invoices until you do."
+                : "Sent to the advisor for review. It won't reach the customer until the advisor prices and approves it."}
+            </span>
+          )}
+        </div>
+        {hasCustomerAuthorizationResponse && canRestructureRo && (
+          <div className="notice">
+            {invoiceOverrides[group.id] ? (
+              <><strong>Separate authorization: </strong>{invoiceOverrides[group.id].note}
+                <button className="button small ghost" type="button" onClick={() => {
+                  if (!window.confirm("Remove the separate authorization? This job will follow the original estimate decision again.")) return;
+                  setInvoiceOverrides((current) => { const next = { ...current }; delete next[group.id]; return next; });
+                }}>Remove override</button>
+              </>
+            ) : jobStatus === "authorized" ? (
+              <span>Authorized at write-up — billed without needing estimate approval.</span>
+            ) : (
+              <><span>{customerDecision === "approved" ? "Record separate authorization for changes to this job." : "This job is excluded from the invoice until separately authorized."}</span>
+                <button className="button small secondary" type="button" onClick={() => overrideInvoiceJob(group.id)}>{customerDecision === "approved" ? "Record additional authorization" : "Include on invoice"}</button>
+              </>
+            )}
+          </div>
+        )}
+        <div className="service-job-narratives two-up">
+          <label className="recommendation-story">
+            <span className="field-title">Job note <span className="muted">(optional)</span></span>
+            <span className="visibility-tag customer">Estimate + approval</span>
+            <textarea
+              rows={2}
+              placeholder="Example: Pads measured 2mm, rotors scored."
+              value={first.job_note ?? ""}
+              onChange={(event) => updateServiceJob(group.id, "job_note", event.target.value)}
+            />
+          </label>
+          <label className="internal-job-notes">
+            <span className="field-title">Internal technician notes</span>
+            <span className="visibility-tag private">Private</span>
+            <textarea
+              rows={2}
+              placeholder="Shop instructions, reminders, or details the customer should not see."
+              value={first.internal_notes ?? ""}
+              onChange={(event) => updateServiceJob(group.id, "internal_notes", event.target.value)}
+            />
+          </label>
+        </div>
+        {!hideCostAndMargin && (
+          <section className="job-profit-panel" aria-label="Internal job profitability">
+            <div className="job-profit-heading">
+              <strong>Internal job profit</strong>
+              <span>Private — never shown on customer documents</span>
+            </div>
+            <div><span>Job revenue</span><strong>{money(jobTotal)}</strong></div>
+            <div><span>Recorded cost</span><strong>{money(jobCost)}</strong></div>
+            <div className={jobGrossProfit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(jobGrossProfit)}</strong></div>
+            <div className={jobGrossMargin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{jobGrossMargin.toFixed(1)}%</strong></div>
+            <small>Uses customer price minus recorded part/sublet costs. Labor and shop overhead are not deducted.</small>
+          </section>
+        )}
+        <div className="job-lines">
+          {group.items.map((item) => (
+            <ChargeLine
+              key={item.id}
+              item={item}
+              changeItem={changeItem}
+              removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}
+              hideCostAndMargin={hideCostAndMargin}
+              priceEditable={item.item_type === "part" ? partPriceEditable : canRestructureRo}
+              canRemove={canRestructureRo || (isTechnician && !savedLineIds.has(item.id))}
+            />
+          ))}
+        </div>
+        {initialRo && workspaceTab === "work_order" && (
+          <>
+            <JobPhotos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
+            <JobVideos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
+          </>
+        )}
+        <div className="job-add-actions">
+          <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>
+          {canAddPartLine && <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Associated Part</button>}
+        </div>
+      </article>
+    );
+  };
 
   return (
     <section>
@@ -3169,146 +3401,107 @@ function RepairOrderEditor({
       <section className="panel line-items-panel">
         <div className="section-heading wrap">
           <div>
-            <h2>{workspaceTab === "invoice" ? "Invoice service jobs" : "Service jobs"}</h2>
+            <h2>{workspaceTab === "invoice" ? "Invoice lines" : "Concerns & jobs"}</h2>
             <p className="muted">
               {workspaceTab === "invoice"
-                ? "Add jobs here, then use Include on invoice to record separate customer authorization. Other declined jobs remain uncharged."
-                : `Build each repair as a job. Labor defaults to ${money(settings.default_labor_rate)}/hr and parts to ${settings.default_parts_markup}% markup.`}
+                ? "Declined jobs stay uncharged unless you record a separate authorization. Pending technician requests are never billed."
+                : isTechnician
+                  ? "Write your findings in Cause, request any additional jobs under the matching line, and use Found during inspection for anything the customer didn't mention."
+                  : `One line per customer concern; jobs go underneath. Labor defaults to ${money(settings.default_labor_rate)}/hr and parts to ${settings.default_parts_markup}% markup.`}
             </p>
           </div>
-          {canRestructureRo && (
-            <div className="button-row">
-              <button className="button primary" onClick={addServiceJob}>+ Add Service Job</button>
-              <button className="button secondary" onClick={() => addItem("fee")}>+ Fee</button>
-              <button className="button discount-button" onClick={() => addItem("discount")}>+ Discount</button>
-            </div>
-          )}
+          <div className="button-row">
+            {canRestructureRo && <button className="button primary" onClick={addConcernLine}>+ Concern line</button>}
+            {!hasInspectionLine && (
+              <button className="button secondary" onClick={() => ensureInspectionLine()}>+ Found during inspection</button>
+            )}
+            {canRestructureRo && <button className="button secondary" onClick={() => addItem("fee")}>+ Fee</button>}
+            {canRestructureRo && <button className="button discount-button" onClick={() => addItem("discount")}>+ Discount</button>}
+          </div>
         </div>
 
-        <div className="service-jobs">
-          {serviceGroups.map((group, groupIndex) => {
-            const first = group.items[0];
-            const customerDecision = hasCustomerAuthorizationResponse ? currentDecisions[group.id] : undefined;
-            const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-            const jobCost = group.items.reduce((sum, item) =>
-              sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0
-            );
-            const jobGrossProfit = jobTotal - jobCost;
-            const jobGrossMargin = jobTotal !== 0 ? (jobGrossProfit / jobTotal) * 100 : 0;
+        <div className="concern-lines">
+          {concernLines.map((line, lineIndex) => {
+            const letter = lineLetter(lineIndex);
+            const lineJobs = jobsForLine(line.id);
+            const isInspection = line.kind === "inspection";
             return (
-              <article className={`service-job-card ${customerDecision ? `customer-${customerDecision}` : ""}`} key={group.id}>
-                <header className="service-job-header">
-                  <div className="service-job-number">{groupIndex + 1}</div>
-                  <label>
-                    Recommended service
-                    <input value={first.service_group_title ?? ""} onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)} />
-                  </label>
-                  <div className="service-job-total">
-                    {invoiceOverrides[group.id] && <span className="authorization-mark approved">Separately authorized</span>}
-                    {customerDecision && <span className={`authorization-mark ${customerDecision}`}>{invoiceOverrides[group.id] ? `Originally ${customerDecision}` : customerDecision}</span>}
-                    <span>Job total</span><strong>{money(jobTotal)}</strong>
+              <article className={`concern-line-card ${line.kind}`} key={line.id}>
+                <header className="concern-line-header">
+                  <div className="concern-line-letter">{letter}</div>
+                  <div className="concern-line-title">
+                    <span>Line {letter}</span>
+                    <strong>{isInspection ? "Found during inspection" : line.concern?.trim() || "New customer concern"}</strong>
                   </div>
                   {canRestructureRo && (
-                    <button className="button small danger" onClick={() => void deleteServiceJob(group.id)}>Delete job</button>
+                    <button className="button small danger" onClick={() => void deleteConcernLine(line.id)}>Delete line</button>
                   )}
                 </header>
-                {hasCustomerAuthorizationResponse && (
-                  <div className="notice">
-                    {invoiceOverrides[group.id] ? (
-                      <><strong>Separate authorization: </strong>{invoiceOverrides[group.id].note}
-                        <button className="button small ghost" type="button" onClick={() => {
-                          if (!window.confirm("Remove the separate authorization? This job will follow the original estimate decision again.")) return;
-                          setInvoiceOverrides((current) => { const next = { ...current }; delete next[group.id]; return next; });
-                        }}>Remove override</button>
-                      </>
-                    ) : (
-                      <><span>{customerDecision === "approved" ? "Record separate authorization for changes to this job." : "This job is excluded from the invoice until separately authorized."}</span>
-                        <button className="button small secondary" type="button" onClick={() => overrideInvoiceJob(group.id)}>{customerDecision === "approved" ? "Record additional authorization" : "Include on invoice"}</button>
-                      </>
-                    )}
-                  </div>
-                )}
-                <div className="service-job-narratives">
-                  <label className="job-concern">
-                    <span className="job-3c-letter">Concern</span> customer&apos;s request, in their words
-                    {isTechnician
-                      ? <span className="visibility-tag locked">Advisor only</span>
-                      : <span className="visibility-tag customer">All documents</span>}
+                <div className={`concern-line-3c ${isInspection ? "no-concern" : ""}`}>
+                  {!isInspection && (
+                    <label className="line-concern">
+                      <span className="field-title">Concern</span>
+                      <span className={`visibility-tag ${isTechnician ? "locked" : "customer"}`}>{isTechnician ? "Advisor only" : "All documents"}</span>
+                      <textarea
+                        rows={2}
+                        readOnly={isTechnician}
+                        placeholder={isTechnician ? "No concern written." : "In the customer's words. Example: Customer states dragging noise from under vehicle at low speeds."}
+                        value={line.concern ?? ""}
+                        onChange={(event) => updateConcernLine(line.id, "concern", event.target.value)}
+                      />
+                    </label>
+                  )}
+                  <label>
+                    <span className="field-title">Cause</span>
+                    <span className="visibility-tag customer">Estimate + invoice</span>
                     <textarea
                       rows={2}
-                      readOnly={isTechnician}
-                      placeholder={isTechnician ? "No concern written for this job." : "Example: Customer states dragging noise from under vehicle at low speeds."}
-                      value={first.service_concern ?? ""}
-                      onChange={(event) => updateServiceJob(group.id, "service_concern", event.target.value)}
+                      placeholder={isInspection ? "Optional summary of what the inspection found." : "Technician's findings. Example: Road tested, verified noise. RF wheel bearing has excessive play."}
+                      value={line.cause ?? ""}
+                      onChange={(event) => updateConcernLine(line.id, "cause", event.target.value)}
                     />
                   </label>
-                  <label className="recommendation-story">
-                    <span className="job-3c-letter">Cause</span> findings / recommendation <span className="visibility-tag customer">Estimate + approval</span>
-                    <textarea
-                      rows={3}
-                      placeholder="Example: Road tested and verified noise. Found RF wheel bearing with excessive play and growl. Recommend replacing RF hub bearing."
-                      value={first.technician_story ?? ""}
-                      onChange={(event) => updateServiceJob(group.id, "technician_story", event.target.value)}
-                    />
-                  </label>
-                  <label className="work-performed-story">
-                    <span className="job-3c-letter">Correction</span> work performed <span className="visibility-tag invoice">Invoice only</span>
-                    <textarea
-                      rows={3}
-                      placeholder="Complete after the repair. Example: Replaced front pads and rotors, lubricated slide pins, and road-tested vehicle."
-                      value={first.work_performed ?? ""}
-                      onChange={(event) => updateServiceJob(group.id, "work_performed", event.target.value)}
-                    />
-                  </label>
-                  <label className="internal-job-notes">
-                    Internal technician notes <span className="visibility-tag private">Private</span>
+                  <label>
+                    <span className="field-title">Correction</span>
+                    <span className="visibility-tag invoice">Invoice</span>
                     <textarea
                       rows={2}
-                      placeholder="Shop instructions, reminders, or details the customer should not see."
-                      value={first.internal_notes ?? ""}
-                      onChange={(event) => updateServiceJob(group.id, "internal_notes", event.target.value)}
+                      placeholder="Fill in after the work. Example: Replaced RF hub bearing, road tested, noise gone."
+                      value={line.correction ?? ""}
+                      onChange={(event) => updateConcernLine(line.id, "correction", event.target.value)}
                     />
                   </label>
                 </div>
-                {!hideCostAndMargin && (
-                  <section className="job-profit-panel" aria-label="Internal job profitability">
-                    <div className="job-profit-heading">
-                      <strong>Internal job profit</strong>
-                      <span>Private — never shown on customer documents</span>
-                    </div>
-                    <div><span>Job revenue</span><strong>{money(jobTotal)}</strong></div>
-                    <div><span>Recorded cost</span><strong>{money(jobCost)}</strong></div>
-                    <div className={jobGrossProfit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(jobGrossProfit)}</strong></div>
-                    <div className={jobGrossMargin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{jobGrossMargin.toFixed(1)}%</strong></div>
-                    <small>Uses customer price minus recorded part/sublet costs. Labor and shop overhead are not deducted.</small>
-                  </section>
-                )}
-                <div className="job-lines">
-                  {group.items.map((item) => (
-                    <ChargeLine
-                      key={item.id}
-                      item={item}
-                      changeItem={changeItem}
-                      removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}
-                      hideCostAndMargin={hideCostAndMargin}
-                      priceEditable={item.item_type === "part" ? partPriceEditable : canRestructureRo}
-                      canRemove={canRestructureRo}
-                    />
-                  ))}
+                <div className="concern-line-jobs">
+                  {lineJobs.map((group, jobIndex) => renderJob(group, `${letter}${jobIndex + 1}`))}
+                  {!lineJobs.length && (
+                    <p className="concern-line-empty">
+                      {isTechnician ? "No jobs on this line yet." : "No jobs yet. Add the job now if you can price it at write-up, or leave it for the technician to inspect and request."}
+                    </p>
+                  )}
                 </div>
-                {initialRo && workspaceTab === "work_order" && (
-                  <>
-                    <JobPhotos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
-                    <JobVideos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
-                  </>
-                )}
-                <div className="job-add-actions">
-                  {canRestructureRo && <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>}
-                  {canAddPartLine && <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Associated Part</button>}
+                <div className="concern-line-actions">
+                  <button className="button small secondary" onClick={() => addServiceJob(line.id)}>
+                    {isTechnician ? "+ Request job" : "+ Add job"}
+                  </button>
                 </div>
               </article>
             );
           })}
+
+          {unassignedJobs.length > 0 && (
+            <section className="concern-line-card unassigned">
+              <header className="concern-line-header">
+                <div className="concern-line-title">
+                  <span>Not on a line</span>
+                  <strong>{canRestructureRo ? "Use each job's Line menu to move it under a concern" : "Jobs not yet assigned to a concern"}</strong>
+                </div>
+              </header>
+              <div className="concern-line-jobs">
+                {unassignedJobs.map((group, jobIndex) => renderJob(group, String(jobIndex + 1)))}
+              </div>
+            </section>
+          )}
 
           {ungroupedItems.length > 0 && (
             <section className="ungrouped-charges">
@@ -3331,8 +3524,8 @@ function RepairOrderEditor({
             </section>
           )}
 
-          {!serviceGroups.length && !ungroupedItems.length && (
-            <div className="empty-state">Add a service job to begin building this repair order.</div>
+          {!concernLines.length && !serviceGroups.length && !ungroupedItems.length && (
+            <div className="empty-state">Add a concern line to begin building this repair order.</div>
           )}
         </div>
       </section>

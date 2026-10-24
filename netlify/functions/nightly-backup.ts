@@ -49,10 +49,10 @@ async function notifyError(functionName: string, error: unknown, request: Reques
 
 // Every public table except rate_limits (ephemeral, self-regenerating, no backup value).
 const TABLES = [
-  "settings", "customers", "vehicles", "repair_orders", "line_items",
-  "multipoint_inspections", "estimate_photos", "estimate_authorizations",
-  "teams", "staff", "repair_order_technicians", "payments",
-  "platform_config", "platform_admins", "site_visits",
+  "settings", "customers", "vehicles", "repair_orders", "concern_lines", "line_items",
+  "multipoint_inspections", "estimate_photos", "estimate_videos", "estimate_authorizations",
+  "teams", "staff", "repair_order_technicians", "payments", "payment_links", "video_share_links",
+  "platform_config", "platform_admins", "site_visits", "user_preferences",
 ] as const;
 
 // How many nightly snapshots to keep around — at one a day this is ~3 weeks of history, which is
