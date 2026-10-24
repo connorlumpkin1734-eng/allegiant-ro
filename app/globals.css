@@ -782,7 +782,15 @@ tbody tr:hover { background: var(--panel-header); }
 .vin-camera-guide { position: absolute; inset: 35% 5%; display: grid; place-items: center; border: 3px solid #fff; border-radius: 8px; box-shadow: 0 0 0 999px rgba(0, 0, 0, .28); color: white; font-size: 11px; font-weight: 1000; letter-spacing: .18em; text-shadow: 0 1px 3px #000; }
 .vin-scanner-status { margin: 12px 0; color: var(--muted); font-size: 13px; font-weight: 700; }
 
-.approval-shell { min-height: 100vh; padding: 32px 16px; background: var(--background); }
+.approval-shell { min-height: 100vh; padding: 32px 16px; background: #eef2f7; color-scheme: light; }
+/* Customer-facing pages are always a light, printed-paper look — never the shop's dark app theme
+   (customers have no theme, so the app's dark defaults would otherwise leak into form fields). */
+.approval-shell input, .approval-shell select, .approval-shell textarea {
+  background: #fff;
+  color: #102a4c;
+  border-color: #b8c4d4;
+}
+.approval-shell input::placeholder, .approval-shell textarea::placeholder { color: #7a879a; }
 .approval-card { width: min(1040px, 100%); margin: 0 auto; padding: 34px; background: white; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 16px 40px rgba(15, 39, 71, 0.1); }
 .approval-logo { display: block; width: min(320px, 85%); height: auto; margin: 0 auto 24px; }
 .approval-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
