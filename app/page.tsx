@@ -987,6 +987,7 @@ type CurrentStaff = {
   id: string;
   owner_id: string;
   role: StaffRole;
+  team_id: string | null;
   can_view_all_work: boolean;
   is_admin: boolean;
   must_change_password: boolean;
@@ -1080,7 +1081,7 @@ function RepairOrderApp({ user }: { user: User }) {
       supabase.from("vehicles").select("*").order("year", { ascending: false }),
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id)")
         .order("created_at", { ascending: false }),
       supabase
         .from("estimate_authorizations")
@@ -1143,7 +1144,7 @@ function RepairOrderApp({ user }: { user: User }) {
     let cancelled = false;
     supabase
       .from("staff")
-      .select("id, owner_id, role, can_view_all_work, is_admin, must_change_password")
+      .select("id, owner_id, role, team_id, can_view_all_work, is_admin, must_change_password")
       .eq("auth_user_id", user.id)
       .maybeSingle()
       .then(({ data }) => {
@@ -1243,7 +1244,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id)")
         .eq("id", id)
         .single(),
       supabase
@@ -1278,7 +1279,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id)")
         .eq("id", id)
         .single(),
       supabase
@@ -1313,7 +1314,7 @@ function RepairOrderApp({ user }: { user: User }) {
     setError("");
     const { data, error: fetchError } = await supabase
       .from("repair_orders")
-      .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*)")
+      .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id)")
       .eq("id", id)
       .single();
 
@@ -1675,6 +1676,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onStatusChange={updateRoStatus}
             onPaidChange={updateRoPaidStatus}
             canCreate={!isTechnicianOnly}
+            techFilterFor={isTechnicianOnly && currentStaff ? { staffId: currentStaff.id, teamId: currentStaff.team_id } : null}
           />
         ) : view === "editor" ? (
           <RepairOrderEditor
@@ -2027,7 +2029,10 @@ function Dashboard({
   onStatusChange,
   onPaidChange,
   canCreate = true,
+  techFilterFor = null,
 }: {
+  /** Set for technicians: enables the My jobs / My team / Everything I can work filter. */
+  techFilterFor?: { staffId: string; teamId: string | null } | null;
   repairOrders: RepairOrder[];
   onNew: () => void;
   onOpen: (id: string, mode: DocumentMode) => void;
@@ -2039,6 +2044,7 @@ function Dashboard({
 }) {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [techScope, setTechScope] = useState<"mine" | "team" | "all">("all");
   const [savingId, setSavingId] = useState<string | null>(null);
   const normalized = search.toLowerCase().trim();
 
@@ -2060,7 +2066,11 @@ function Dashboard({
     }
   }
 
-  const visibleRecords = repairOrders.filter((ro) => showArchived || !ro.archived_at);
+  const isMine = (ro: RepairOrder) => Boolean(techFilterFor && (ro.repair_order_technicians ?? []).some((row) => row.staff_id === techFilterFor.staffId));
+  const isMyTeam = (ro: RepairOrder) => Boolean(techFilterFor?.teamId && ro.team_id === techFilterFor.teamId);
+  const visibleRecords = repairOrders
+    .filter((ro) => showArchived || !ro.archived_at)
+    .filter((ro) => !techFilterFor || techScope === "all" || (techScope === "mine" ? isMine(ro) : isMine(ro) || isMyTeam(ro)));
   const filtered = visibleRecords.filter((ro) => {
     if (!normalized) return true;
     const customer = ro.customers;
@@ -2132,6 +2142,13 @@ function Dashboard({
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
+          {techFilterFor && (
+            <div className="segmented" role="group" aria-label="Which work orders">
+              <button type="button" className={techScope === "mine" ? "active" : ""} onClick={() => setTechScope("mine")}>My jobs</button>
+              {techFilterFor.teamId && <button type="button" className={techScope === "team" ? "active" : ""} onClick={() => setTechScope("team")}>My team</button>}
+              <button type="button" className={techScope === "all" ? "active" : ""} onClick={() => setTechScope("all")}>All I can work</button>
+            </div>
+          )}
           <label className="checkbox-row archive-toggle">
             <input
               type="checkbox"
