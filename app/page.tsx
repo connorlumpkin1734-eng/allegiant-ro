@@ -2966,7 +2966,7 @@ function RepairOrderEditor({
           ) : (
             <span className={`job-status-badge ${jobStatus}`}>{jobStatusLabel[jobStatus]}</span>
           )}
-          {canRestructureRo && concernLines.length > 1 && (
+          {canRestructureRo && (concernLines.length > 1 || !concernLines.some((line) => line.id === first.concern_line_id)) && concernLines.length > 0 && (
             <label className="job-status-select">
               Line
               <select
@@ -5933,6 +5933,12 @@ function DocumentView({
           <div className="estimate-service-cards">
             {documentSections.map((section) => (
               <div className="estimate-line-block" key={section.key}>
+                {!section.line && documentLines.length > 0 && (
+                  <header className="estimate-line-header">
+                    <span>Other</span>
+                    <h3>Additional work</h3>
+                  </header>
+                )}
                 {section.line && (
                   <header className="estimate-line-header">
                     <span>Line {section.letter}</span>
@@ -5997,6 +6003,12 @@ function DocumentView({
                     <div className="document-line-title"><span>Line {section.letter}</span><strong>{lineHeading(section.line)}</strong></div>
                     {section.line.cause && <p><span>Cause:</span> {section.line.cause}</p>}
                     {section.line.correction && <p><span>Correction:</span> {section.line.correction}</p>}
+                  </td>
+                </tr>
+              ) : documentLines.length > 0 && section.groups.length > 0 ? (
+                <tr className="document-line-heading" key={`${section.key}-line`}>
+                  <td colSpan={5}>
+                    <div className="document-line-title"><span>Other</span><strong>Additional work</strong></div>
                   </td>
                 </tr>
               ) : null,
