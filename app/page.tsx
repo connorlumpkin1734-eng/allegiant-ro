@@ -990,15 +990,15 @@ function RepairOrderApp({ user }: { user: User }) {
   const [currentStaff, setCurrentStaff] = useState<CurrentStaff | null>(null);
   const [staffResolved, setStaffResolved] = useState(false);
   const isOwner = !currentStaff;
+  const isAdminAccess = isOwner || Boolean(currentStaff?.is_admin);
+  const isTechnicianOnly = Boolean(currentStaff) && currentStaff!.role === "technician" && !currentStaff!.is_admin;
+  const ownerId = currentStaff?.owner_id ?? user.id;
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
   // Browser tab shows the shop's own name.
   useEffect(() => {
     const name = settings.business_name?.trim();
     document.title = name ? `${name} · Repair Orders` : "Repair Orders";
   }, [settings.business_name]);
-  const isAdminAccess = isOwner || Boolean(currentStaff?.is_admin);
-  const isTechnicianOnly = Boolean(currentStaff) && currentStaff!.role === "technician" && !currentStaff!.is_admin;
-  const ownerId = currentStaff?.owner_id ?? user.id;
-  const [settings, setSettings] = useState<Settings>(defaultSettings);
   const canWrite = shopCanWrite(settings);
 
   // Color theme: per person. The saved choice is applied before first paint by a script in layout.tsx
