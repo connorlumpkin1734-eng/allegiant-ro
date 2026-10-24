@@ -580,10 +580,56 @@ export default function HomePage() {
   }
 
   if (isPlatformAdminAccount) {
-    return <PlatformAdminOnlyApp />;
+    return <><UpdateBanner /><PlatformAdminOnlyApp /></>;
   }
 
-  return <RepairOrderApp user={session.user} />;
+  return <><UpdateBanner /><RepairOrderApp user={session.user} /></>;
+}
+
+// Shows "a new version is available" when a newer deploy is live than the one this tab loaded.
+// Checks every 5 minutes and whenever the tab regains focus. It never reloads on its own, so
+// nobody loses an RO they're in the middle of writing.
+const CURRENT_BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? "";
+
+function UpdateBanner() {
+  const [updateReady, setUpdateReady] = useState(false);
+
+  useEffect(() => {
+    if (!CURRENT_BUILD_ID || CURRENT_BUILD_ID.startsWith("local-")) return;
+    let stopped = false;
+
+    async function check() {
+      if (stopped || document.visibilityState !== "visible") return;
+      try {
+        const response = await fetch(`/version.json?t=${Date.now()}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const body = await response.json() as { buildId?: string };
+        if (body.buildId && body.buildId !== "unknown" && body.buildId !== CURRENT_BUILD_ID) setUpdateReady(true);
+      } catch {
+        // Offline or mid-deploy: try again next time.
+      }
+    }
+
+    const timer = window.setInterval(() => void check(), 5 * 60 * 1000);
+    const onVisible = () => void check();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    void check();
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, []);
+
+  if (!updateReady) return null;
+  return (
+    <div className="update-banner no-print" role="status">
+      <span>A new version of the app is available. Save any work in progress, then refresh to update.</span>
+      <button type="button" className="button small primary" onClick={() => window.location.reload()}>Refresh now</button>
+    </div>
+  );
 }
 
 // The entire screen for a god-mode / platform-operator login: no shop chrome, no work orders, no

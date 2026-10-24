@@ -2010,3 +2010,14 @@ tbody tr:hover { background: var(--panel-header); }
   .workspace-bottom-actions { padding: 10px 0 8px; background: var(--background); border-top: 1px solid var(--line); }
 }
 .approval-line-header { margin: 22px 0 8px; }
+
+/* New-version notice (see UpdateBanner). */
+.update-banner {
+  position: sticky; top: 0; z-index: 60;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 16px;
+  padding: 10px 16px;
+  background: var(--panel-header);
+  border-bottom: 2px solid var(--accent);
+  color: var(--ink);
+  font-weight: 700; font-size: 14px;
+}
