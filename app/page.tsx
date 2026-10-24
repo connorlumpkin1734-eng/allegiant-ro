@@ -2601,12 +2601,17 @@ function RepairOrderEditor({
 
   // Jobs added while writing up a new RO are authorized at drop-off; jobs added later need the
   // customer's approval. A technician's job is always a request for the advisor to review.
-  function defaultJobStatus(): JobStatus {
+  // - A technician's job is always a request for the advisor to review.
+  // - A recommended repair always needs the customer's approval — that's the point of recommending it.
+  // - Otherwise, jobs added while writing up a new RO were approved at drop-off; later ones need approval.
+  function defaultJobStatus(lineKind: LineKind | undefined): JobStatus {
     if (isTechnician) return "pending_review";
+    if (lineKind === "inspection") return "needs_approval";
     return initialRo ? "needs_approval" : "authorized";
   }
 
-  function addServiceJob(concernLineId: string | null) {
+  function addServiceJob(concernLineId: string | null, lineKind?: LineKind) {
+    const kind = lineKind ?? concernLines.find((line) => line.id === concernLineId)?.kind;
     const groupId = crypto.randomUUID();
     setItems((current) => [
       ...current,
@@ -2615,7 +2620,7 @@ function RepairOrderEditor({
         service_group_id: groupId,
         service_group_title: "",
         concern_line_id: concernLineId,
-        job_status: defaultJobStatus(),
+        job_status: defaultJobStatus(kind),
       }),
     ]);
   }
@@ -2637,7 +2642,7 @@ function RepairOrderEditor({
       ...current,
       { id, sort_order: current.length, kind: "inspection", concern: "", cause: "", correction: "" },
     ]);
-    addServiceJob(id);
+    addServiceJob(id, "inspection");
     setFocusLineId(id);
   }
 
@@ -2646,7 +2651,18 @@ function RepairOrderEditor({
   }
 
   function updateConcernLine(id: string, field: "concern" | "cause" | "correction", value: string) {
-    setConcernLines((current) => current.map((line) => (line.id === id ? { ...line, [field]: value } : line)));
+    const line = concernLines.find((entry) => entry.id === id);
+    setConcernLines((current) => current.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry)));
+    // On a recommendation, the job's name follows what you type until you change the name yourself.
+    if (line?.kind === "inspection" && field === "concern") {
+      const previous = (line.concern ?? "").trim();
+      setItems((current) => current.map((item) =>
+        item.concern_line_id === id && item.service_group_id
+          && (!item.service_group_title?.trim() || item.service_group_title.trim() === previous)
+          ? { ...item, service_group_title: value.trim() ? value : "" }
+          : item
+      ));
+    }
   }
 
   async function deleteConcernLine(id: string) {
@@ -3150,6 +3166,9 @@ function RepairOrderEditor({
               hideCostAndMargin={hideCostAndMargin}
               priceEditable={item.item_type === "part" ? partPriceEditable : canRestructureRo}
               canRemove={canRestructureRo || (isTechnician && !savedLineIds.has(item.id))}
+              descriptionHint={item.item_type === "labor"
+                ? `Optional — same as job${first.service_group_title?.trim() ? `: ${first.service_group_title.trim()}` : ""}`
+                : item.item_type === "part" ? "Part name or number" : undefined}
             />
           ))}
         </div>
@@ -3548,7 +3567,7 @@ function RepairOrderEditor({
               ? "Customer requests oil and filter change."
               : line.kind === "customer"
                 ? "Customer states dragging noise from under vehicle at low speeds."
-                : "Technician recommends replacing front brake pads and rotors.";
+                : "Replace front brake pads and rotors";
             const causeLabel = isInspection ? "Why — what you found" : "Cause — what the tech found";
             const causePlaceholder = isInspection
               ? "Front pads measured 2mm, rotors scored below spec."
@@ -3983,7 +4002,9 @@ function ChargeLine({
   hideCostAndMargin = false,
   priceEditable = true,
   canRemove = true,
+  descriptionHint,
 }: {
+  descriptionHint?: string;
   item: LineItem;
   changeItem: (id: string, field: keyof LineItem, rawValue: string | boolean | number) => void;
   removeItem: () => void;
@@ -3999,7 +4020,7 @@ function ChargeLine({
       </span>
       <label className="description-field">
         Description
-        <input value={item.description} onChange={(event) => changeItem(item.id, "description", event.target.value)} />
+        <input value={item.description} placeholder={descriptionHint} onChange={(event) => changeItem(item.id, "description", event.target.value)} />
       </label>
       <label>
         {item.item_type === "labor" ? "Hours" : "Qty"}
