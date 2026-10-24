@@ -2738,8 +2738,19 @@ function RepairOrderEditor({
       setMessage("Enter at least the vehicle year, make, or model.");
       return;
     }
-    if (!items.length || items.some((item) => !item.description.trim())) {
-      setMessage("Every line item needs a description.");
+    // A write-up can be just concerns (jobs come after the tech inspects), so charge lines are optional
+    // as long as there's at least one concern or job.
+    const hasConcern = concernLines.some((line) => line.kind === "inspection" || Boolean(line.concern?.trim()));
+    if (!items.length && !hasConcern) {
+      setMessage("Write at least one customer concern, or add a job.");
+      return;
+    }
+    const missingDescription = items.find((item) => !item.description.trim());
+    if (missingDescription) {
+      const where = missingDescription.service_group_id
+        ? `the "${missingDescription.service_group_title?.trim() || "untitled"}" job`
+        : "Fees & Discounts";
+      setMessage(`A ${missingDescription.item_type} line in ${where} needs a description (the box next to Hours/Qty).`);
       return;
     }
 
