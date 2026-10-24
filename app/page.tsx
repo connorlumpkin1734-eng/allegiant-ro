@@ -5845,72 +5845,81 @@ function DocumentView({
   ));
   const sameText = (a: string | null | undefined, b: string | null | undefined) =>
     (a ?? "").trim().toLowerCase().replace(/[.\s]+$/, "") === (b ?? "").trim().toLowerCase().replace(/[.\s]+$/, "");
-  // The line's own words, unless they're empty or just repeat its only job's name — then the line
-  // type ("Customer request") is the heading and the type tag isn't printed a second time.
-  const lineHeading = (line: ConcernLine, groups: DocumentGroup[]) => {
-    const text = line.concern?.trim() ?? "";
-    const repeatsJob = groups.length === 1 && sameText(text, groups[0].title);
-    return text && !repeatsJob ? text : LINE_KIND_LABEL[line.kind];
+  const LINE_PREFIX: Record<LineKind, string> = {
+    request: "Customer requests",
+    customer: "Customer states",
+    inspection: "Technician recommends",
   };
-  const showsKindTag = (line: ConcernLine, groups: DocumentGroup[]) => lineHeading(line, groups) !== LINE_KIND_LABEL[line.kind];
+  // A line's own words — unless they're empty or just repeat its only job, in which case it reads
+  // like a dealer RO: "Customer requests: Replace engine oil and filter".
+  const lineOwnText = (line: ConcernLine, groups: DocumentGroup[]) => {
+    const text = line.concern?.trim() ?? "";
+    return text && !(groups.length === 1 && sameText(text, groups[0].title)) ? text : "";
+  };
+  const lineHeading = (line: ConcernLine, groups: DocumentGroup[]) =>
+    lineOwnText(line, groups) || (groups.length === 1 ? `${LINE_PREFIX[line.kind]}: ${groups[0].title}` : LINE_KIND_LABEL[line.kind]);
   // Requests have no Cause; a tech's recommendation calls it "Findings".
   const lineCause = (line: ConcernLine) => (lineHasCause(line.kind) ? line.cause?.trim() || "" : "");
+  const groupTotal = (group: DocumentGroup) => group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+  const qtyText = (item: LineItem) => (item.item_type === "labor" ? `${item.quantity} hr` : String(item.quantity));
+  const rateText = (item: LineItem) =>
+    item.item_type === "labor" ? `${money(item.unit_price)}/hr` : money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price);
 
-  const renderJobRows = (group: DocumentGroup, inLine: boolean): ReactNode[] => {
+  // One job: the operation on one row (name + its labor), parts and other charges underneath.
+  const renderJobRows = (group: DocumentGroup, showJobTotal: boolean, inLine: boolean): ReactNode[] => {
     const isServiceJob = Boolean(group.title);
-    const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
     const separateAuthorization = ro.invoice_overrides?.[group.id];
     const decision = isServiceJob && hasCustomerResponse && !separateAuthorization && group.status !== "authorized" ? decisions[group.id] : undefined;
-    // When a job has one labor line named the same as the job, print it the way a dealer RO does:
-    // the operation once (name + hours + labor), parts underneath, then the job total.
     const laborLines = group.items.filter((item) => item.item_type === "labor");
     const opLabor = isServiceJob && laborLines.length === 1 && (!laborLines[0].description.trim() || sameText(laborLines[0].description, group.title)) ? laborLines[0] : null;
     const otherItems = opLabor ? group.items.filter((item) => item !== opLabor) : group.items;
-    return [
-      isServiceJob && (
-        <tr className={`document-job-heading ${decision ? `authorization-${decision}` : ""} ${group.status === "pending_review" ? "document-job-pending" : ""}`} key={`${group.id}-heading`}>
-          <td colSpan={opLabor ? 1 : 4}>
-            <div className="document-job-title">
-              <strong>{group.title}</strong>
+    const declinedClass = decision === "declined" ? "authorization-declined-line" : "";
+    const rows: ReactNode[] = [];
+    if (isServiceJob) {
+      rows.push(
+        <tr className={`document-op-row ${declinedClass} ${group.status === "pending_review" ? "document-job-pending" : ""}`} key={`${group.id}-op`}>
+          <td>
+            <div className="document-op-title">
+              <span>{group.title}</span>
               {decision && <span className={`authorization-mark ${decision}`}>{decision}</span>}
+              {isEstimate && group.status === "authorized" && <span className="authorization-mark approved">Already authorized</span>}
               {isWorkOrder && group.status === "pending_review" && <span className="authorization-mark pending">Pending advisor review</span>}
             </div>
-            {group.note && <p><span>Note:</span> {group.note}</p>}
-            {!inLine && isWorkOrder && group.recommendation && <p><span>Authorized scope:</span> {group.recommendation}</p>}
-            {isInvoice && separateAuthorization && <p><span>Separately authorized:</span> {separateAuthorization.note}</p>}
-            {!inLine && isInvoice && group.workPerformed && <p><span>Work performed:</span> {group.workPerformed}</p>}
+            {group.note && <p className="document-op-note">{group.note}</p>}
+            {!inLine && isWorkOrder && group.recommendation && <p className="document-op-note">Authorized scope: {group.recommendation}</p>}
+            {!inLine && isInvoice && group.workPerformed && <p className="document-op-note">Work performed: {group.workPerformed}</p>}
+            {isInvoice && separateAuthorization && <p className="document-op-note">Separately authorized: {separateAuthorization.note}</p>}
           </td>
-          {opLabor ? (
-            <>
-              <td>Labor</td>
-              <td>{opLabor.quantity}</td>
-              <td>{money(opLabor.unit_price)}</td>
-              <td><strong>{money(opLabor.quantity * opLabor.unit_price)}</strong></td>
-            </>
-          ) : (
-            <td><strong>{money(jobTotal)}</strong></td>
-          )}
+          <td>{opLabor ? qtyText(opLabor) : ""}</td>
+          <td>{opLabor ? rateText(opLabor) : ""}</td>
+          <td>{opLabor ? money(opLabor.quantity * opLabor.unit_price) : ""}</td>
         </tr>
-      ),
-      ...otherItems.map((item) => (
-        <tr key={item.id} className={`${item.item_type === "discount" ? "document-discount-row" : item.item_type === "part" && isServiceJob ? "document-associated-part" : ""} ${decision === "declined" ? "authorization-declined-line" : ""}`}>
+      );
+    }
+    for (const item of otherItems) {
+      const isDiscount = item.item_type === "discount";
+      rows.push(
+        <tr className={`document-item-row ${isServiceJob ? "is-sub" : ""} ${isDiscount ? "document-discount-row" : ""} ${declinedClass}`} key={item.id}>
           <td>
-            {item.item_type === "discount" && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}
+            {isDiscount && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}
             {item.description}
+            {item.item_type === "labor" && <span className="document-item-kind">labor</span>}
           </td>
-          <td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td>
-          <td>{item.quantity}</td>
-          <td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td>
-          <td className={item.item_type === "discount" ? "discount-amount" : ""}>{money(item.quantity * item.unit_price)}</td>
+          <td>{qtyText(item)}</td>
+          <td>{rateText(item)}</td>
+          <td className={isDiscount ? "discount-amount" : ""}>{money(item.quantity * item.unit_price)}</td>
         </tr>
-      )),
-      opLabor && otherItems.length > 0 && (
+      );
+    }
+    if (isServiceJob && showJobTotal) {
+      rows.push(
         <tr className="document-job-total" key={`${group.id}-total`}>
-          <td colSpan={4}>Job total</td>
-          <td><strong>{money(jobTotal)}</strong></td>
+          <td colSpan={3}>Job total</td>
+          <td>{money(groupTotal(group))}</td>
         </tr>
-      ),
-    ];
+      );
+    }
+    return rows;
   };
 
   const title = isEstimate ? "Estimate" : isWorkOrder ? "Work Order" : "Invoice";
@@ -6135,94 +6144,54 @@ function DocumentView({
           </section>
         )}
 
-        {isEstimate ? (
-          <div className="estimate-service-cards">
-            {documentSections.map((section) => (
-              <div className="estimate-line-block" key={section.key}>
-                {!section.line && documentLines.length > 0 && (
-                  <header className="estimate-line-header">
-                    <span>Other</span>
-                    <h3>Additional work</h3>
-                  </header>
-                )}
-                {section.line && (
-                  <header className="estimate-line-header">
-                    <span>Line {section.letter}{showsKindTag(section.line, section.groups) ? ` · ${LINE_KIND_LABEL[section.line.kind]}` : ""}</span>
-                    <h3>{lineHeading(section.line, section.groups)}</h3>
-                    {lineCause(section.line) && <p><strong>Findings:</strong> {lineCause(section.line)}</p>}
-                  </header>
-                )}
-                {section.groups.map((group, jobIndex) => {
-              const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-              const jobNote = group.note || (section.line ? "" : group.recommendation);
-              return (
-                <section className="estimate-service-card" key={group.id}>
-                  <header>
-                    <div>
-                      <span>{section.line ? `Job ${section.letter}${jobIndex + 1}` : "Recommended service"}{group.status === "authorized" ? " · Already authorized" : ""}</span>
-                      <h3>{group.title}</h3>
-                    </div>
-                    <strong>{money(jobTotal)}</strong>
-                  </header>
-                  {jobNote && <p className="estimate-recommendation">{jobNote}</p>}
-                  <details className="estimate-breakdown" open>
-                    <summary>Parts and labor breakdown</summary>
-                    <table className="document-table">
-                      <thead><tr><th>Description</th><th>Type</th><th>Qty/Hrs</th><th>Est. Rate/Price</th><th>Amount</th></tr></thead>
-                      <tbody>{group.items.map((item) => (
-                        <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : undefined}><td>{item.item_type === "labor" && (!item.description.trim() || sameText(item.description, group.title)) ? "Labor" : item.description}</td><td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
-                      ))}</tbody>
-                    </table>
-                  </details>
-                </section>
-              );
-                })}
-              </div>
-            ))}
-            {groupedDocumentItems.some((group) => !group.title) && (
-              <section className="estimate-service-card additional-charges">
-                <header><div><span>Estimate details</span><h3>Additional charges and discounts</h3></div></header>
-                <table className="document-table">
-                  <thead><tr><th>Description</th><th>Type</th><th>Qty/Hrs</th><th>Rate/Price</th><th>Amount</th></tr></thead>
-                  <tbody>{groupedDocumentItems.filter((group) => !group.title).flatMap((group) => group.items).map((item) => (
-                    <tr key={item.id} className={item.item_type === "discount" ? "document-discount-row" : undefined}><td>{item.description}</td><td>{item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1)}</td><td>{item.quantity}</td><td>{money(item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>
-                  ))}</tbody>
-                </table>
-              </section>
-            )}
-          </div>
-        ) : <table className="document-table">
+        <table className="document-table document-charges">
           <thead>
             <tr>
               <th>Description</th>
-              <th>Type</th>
               <th>Qty/Hrs</th>
-              <th>{isEstimate ? "Est. Rate/Price" : isInvoice ? "Final Rate/Price" : "Rate/Price"}</th>
+              <th>{isEstimate ? "Est. rate" : "Rate"}</th>
               <th>Amount</th>
             </tr>
           </thead>
           <tbody>
-            {documentSections.flatMap((section) => [
-              section.line ? (
-                <tr className="document-line-heading" key={`${section.key}-line`}>
-                  <td colSpan={5}>
-                    <div className="document-line-title"><span>Line {section.letter}</span><strong>{lineHeading(section.line, section.groups)}</strong>{showsKindTag(section.line, section.groups) && <em>{LINE_KIND_LABEL[section.line.kind]}</em>}</div>
-                    {lineCause(section.line) && <p><span>{section.line.kind === "inspection" ? "Findings:" : "Cause:"}</span> {lineCause(section.line)}</p>}
-                    {section.line.correction && <p><span>Correction:</span> {section.line.correction}</p>}
-                  </td>
-                </tr>
-              ) : documentLines.length > 0 && section.groups.length > 0 ? (
-                <tr className="document-line-heading" key={`${section.key}-line`}>
-                  <td colSpan={5}>
-                    <div className="document-line-title"><span>Other</span><strong>Additional work</strong></div>
-                  </td>
-                </tr>
-              ) : null,
-              ...section.groups.flatMap((group) => renderJobRows(group, Boolean(section.line))),
-            ])}
-            {groupedDocumentItems.filter((group) => !group.title).flatMap((group) => renderJobRows(group, false))}
+            {documentSections.flatMap((section) => {
+              const line = section.line;
+              const total = section.groups.reduce((sum, group) => sum + groupTotal(group), 0);
+              const cause = line ? lineCause(line) : "";
+              const correction = line && !isEstimate ? line.correction?.trim() ?? "" : "";
+              const showHeader = Boolean(line) || documentLines.length > 0;
+              return [
+                showHeader ? (
+                  <tr className="document-line-row" key={`${section.key}-line`}>
+                    <td colSpan={3}>
+                      <div className="document-line-head">
+                        <span className="document-line-letter">{line ? section.letter : "+"}</span>
+                        <strong>{line ? lineHeading(line, section.groups) : "Additional work"}</strong>
+                        {line && lineOwnText(line, section.groups) && <em>{LINE_KIND_LABEL[line.kind]}</em>}
+                      </div>
+                    </td>
+                    <td>{section.groups.length ? money(total) : ""}</td>
+                  </tr>
+                ) : null,
+                ...section.groups.flatMap((group) => renderJobRows(group, section.groups.length > 1, Boolean(line))),
+                line && (cause || correction) ? (
+                  <tr className="document-line-story" key={`${section.key}-story`}>
+                    <td colSpan={4}>
+                      {cause && <p><span>{line.kind === "inspection" ? "Findings" : "Cause"}:</span> {cause}</p>}
+                      {correction && <p><span>Correction:</span> {correction}</p>}
+                    </td>
+                  </tr>
+                ) : null,
+              ];
+            })}
+            {groupedDocumentItems.some((group) => !group.title) && documentLines.length > 0 && (
+              <tr className="document-line-row document-line-row-minor" key="fees-line">
+                <td colSpan={4}><div className="document-line-head"><strong>Shop fees &amp; discounts</strong></div></td>
+              </tr>
+            )}
+            {groupedDocumentItems.filter((group) => !group.title).flatMap((group) => renderJobRows(group, false, false))}
           </tbody>
-        </table>}
+        </table>
 
         {isInvoice && declinedGroups.length > 0 && (
           <section className="invoice-declined-work">

@@ -2042,3 +2042,43 @@ tbody tr:hover { background: var(--panel-header); }
 /* Keep totals and terms in one piece when printing, and trim the gap that pushed them onto page 2. */
 .document-bottom, .document-footer, .document-terms, .invoice-authorization-signature { break-inside: avoid; page-break-inside: avoid; }
 .document-footer { margin-top: 28px; }
+
+/* ===== Charges, dealer RO layout: Line (bold, with its total) → operation → parts → story ===== */
+.document-charges { table-layout: fixed; }
+.document-charges th:nth-child(1), .document-charges td:nth-child(1) { width: auto; }
+.document-charges th:nth-child(2), .document-charges td:nth-child(2) { width: 12%; text-align: right; }
+.document-charges th:nth-child(3), .document-charges td:nth-child(3) { width: 18%; text-align: right; }
+.document-charges th:nth-child(4), .document-charges td:nth-child(4) { width: 15%; text-align: right; }
+.document-charges td[colspan] { text-align: left; }
+.document-charges .document-job-total td[colspan] { text-align: right; }
+
+.document-line-row td { padding: 18px 12px 8px; border-top: 2px solid var(--navy); border-bottom: 0; background: #fff; color: var(--navy); }
+.document-line-row td:last-child { font-size: 15px; font-weight: 900; vertical-align: bottom; }
+.document-line-head { display: flex; align-items: baseline; gap: 10px; }
+.document-line-letter {
+  flex: 0 0 auto; display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px;
+  border-radius: 6px; background: var(--navy); color: #fff; font-size: 12px; font-weight: 900;
+}
+.document-line-head strong { font-size: 13.5px; font-weight: 900; text-transform: uppercase; letter-spacing: .02em; line-height: 1.35; }
+.document-line-head em { margin-left: auto; padding-left: 12px; color: #5b6b82; font-size: 10px; font-style: normal; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+.document-line-row-minor td { border-top-width: 1px; }
+.document-line-row-minor .document-line-head strong { font-size: 12px; }
+
+.document-op-row td { padding: 7px 12px 5px 46px; border-bottom: 0; color: #1d2b3f; font-size: 13.5px; }
+.document-op-row td:not(:first-child) { padding-left: 12px; }
+.document-op-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; font-weight: 700; }
+.document-op-note { margin: 3px 0 0; color: #4a5a70; font-size: 12px; line-height: 1.4; white-space: pre-wrap; }
+
+.document-item-row td { padding: 4px 12px; border-bottom: 0; color: #3a4a60; font-size: 13px; }
+.document-item-row.is-sub td:first-child { padding-left: 64px; }
+.document-item-kind { margin-left: 6px; color: #7a8799; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+
+.document-charges .document-job-total td { padding: 4px 12px 8px; border-bottom: 0; color: #4a5a70; font-size: 11px; font-weight: 800; }
+.document-charges .document-job-total td:last-child { font-size: 13px; color: var(--navy); }
+
+.document-line-story td { padding: 6px 12px 14px 46px; border-bottom: 0; }
+.document-line-story p { margin: 4px 0 0; color: #26354b; font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; }
+.document-line-story p span { font-weight: 900; text-transform: uppercase; margin-right: 4px; }
+
+.document-charges tbody tr:last-child td { border-bottom: 1px solid #cbd5e1; padding-bottom: 14px; }
+.document-page .document-line-story p, .document-page .document-op-note { color: #000 !important; }
