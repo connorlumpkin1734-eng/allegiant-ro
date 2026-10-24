@@ -1514,7 +1514,13 @@ function RepairOrderApp({ user }: { user: User }) {
           onClose={() => setShowPasswordChange(false)}
           onSuccess={async () => {
             if (currentStaff?.must_change_password) {
-              await supabase.from("staff").update({ must_change_password: false }).eq("id", currentStaff.id);
+              // Staff can't update their own staff row (so they can't change their own role);
+              // this database function clears only the signed-in user's own flag.
+              const { error: flagError } = await supabase.rpc("clear_my_password_change_flag");
+              if (flagError) {
+                setError("Your password was changed, but we couldn't record it. You may be asked again next time you sign in.");
+                return;
+              }
               setCurrentStaff({ ...currentStaff, must_change_password: false });
             }
           }}
