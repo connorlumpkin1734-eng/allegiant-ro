@@ -250,7 +250,7 @@ function dismissToast(id: number) {
   emitToasts();
 }
 const ERRORISH = /(could not|couldn't|can't|cannot|error|failed|missing|required|needs? |add the|add at least|before |invalid|expired|too many|not allowed|only the|doesn't look|denied|rejected|isn't|wasn't)/i;
-const SUCCESSISH = /\b(emailed|sent|saved|copied|recorded|approved|updated|added|removed|deleted|archived|restored|confirmed|ready)\b/i;
+const SUCCESSISH = /\b(emailed|sent|saved|copied|recorded|approved|updated|added|removed|deleted|archived|restored|confirmed|ready|marked|reopened|notified|done|complete|turned)\b/i;
 function guessToastKind(text: string): ToastKind {
   if (ERRORISH.test(text)) return "error";
   return SUCCESSISH.test(text) ? "success" : "info";
@@ -258,7 +258,9 @@ function guessToastKind(text: string): ToastKind {
 function notify(text: string, kind: ToastKind = guessToastKind(text)) {
   if (!text.trim()) return;
   const toast = { id: ++toastSeq, text, kind };
-  toastList = [...toastList.filter((entry) => entry.text !== text).slice(-3), toast];
+  // A success means whatever went wrong before is sorted out, so old errors go away.
+  const keep = kind === "success" ? toastList.filter((entry) => entry.kind !== "error") : toastList;
+  toastList = [...keep.filter((entry) => entry.text !== text).slice(-3), toast];
   emitToasts();
   if (kind !== "error") window.setTimeout(() => dismissToast(toast.id), 5000);
 }
@@ -298,9 +300,15 @@ function focusProblem(selector: string) {
     field.scrollIntoView({ behavior: "smooth", block: "center" });
     field.classList.add("field-problem");
     field.focus({ preventScroll: true });
-    const clear = () => { field.classList.remove("field-problem"); field.removeEventListener("input", clear); };
+    const clear = () => {
+      field.classList.remove("field-problem");
+      field.removeEventListener("input", clear);
+      // They're fixing it: the error it pointed at has done its job.
+      toastList = toastList.filter((toast) => toast.kind !== "error");
+      emitToasts();
+    };
     field.addEventListener("input", clear);
-    window.setTimeout(clear, 6000);
+    window.setTimeout(() => { field.classList.remove("field-problem"); field.removeEventListener("input", clear); }, 6000);
   }, 50);
 }
 
@@ -1226,6 +1234,9 @@ function pastDueDaysLeft(settings: Settings): number | null {
 
 type CurrentStaff = {
   id: string;
+  name?: string | null;
+  username?: string | null;
+  email?: string | null;
   owner_id: string;
   role: StaffRole;
   team_id: string | null;
@@ -1389,7 +1400,7 @@ function RepairOrderApp({ user }: { user: User }) {
     let cancelled = false;
     supabase
       .from("staff")
-      .select("id, owner_id, role, team_id, can_view_all_work, is_admin, must_change_password")
+      .select("id, owner_id, role, team_id, can_view_all_work, is_admin, must_change_password, name, username, email")
       .eq("auth_user_id", user.id)
       .maybeSingle()
       .then(({ data }) => {
@@ -1483,7 +1494,9 @@ function RepairOrderApp({ user }: { user: User }) {
   // Opening an RO clears your alerts about it.
   function markRoAlertsRead(id: string) {
     if (!settings.team_features_enabled) return;
-    void supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("repair_order_id", id).is("read_at", null);
+    // Supabase queries only run once awaited or .then()'d, so a bare `void` never sent this.
+    void supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("repair_order_id", id).is("read_at", null)
+      .then(({ error }) => { if (error) console.warn("Could not clear alerts:", error.message); });
   }
 
   async function openDocument(
@@ -1853,6 +1866,19 @@ function RepairOrderApp({ user }: { user: User }) {
             }}
           />
         )}
+        <div className="signed-in-as" title={user.email ?? undefined}>
+          <span className="signed-in-label">Signed in as</span>
+          <strong>
+            {currentStaff
+              ? currentStaff.name || currentStaff.username || currentStaff.email || user.email
+              : settings.business_name || user.email}
+          </strong>
+          <span className="signed-in-role">
+            {currentStaff
+              ? `${currentStaff.is_admin ? "Admin · " : ""}${currentStaff.role === "technician" ? "Technician" : "Service advisor"}${currentStaff.username ? ` · ${currentStaff.username}` : ""}`
+              : `Owner · ${user.email ?? ""}`}
+          </span>
+        </div>
         <label className="theme-picker">
           <select aria-label="Color theme" value={uiTheme} onChange={(event) => changeUiTheme(event.target.value as UiTheme)}>
             {UI_THEMES.map((theme) => (
@@ -3423,6 +3449,7 @@ function RepairOrderEditor({
       }
 
       setBusy(false);
+      if (!previewMode) notify(initialRo ? `RO #${padRo(initialRo.ro_number)} saved.` : "Work order saved.", "success");
       onSaved(roId, workspaceTab, previewMode, print);
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "The work order could not be saved.");
@@ -4554,6 +4581,23 @@ function AlertBell({ userId, onOpenRo }: { userId: string; onOpenRo: (repairOrde
   const [open, setOpen] = useState(false);
   const [emailAlerts, setEmailAlerts] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  // The panel is pinned to the window, under the bell, and never runs off either edge.
+  const placePanel = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const width = Math.min(380, window.innerWidth - 24);
+    const left = Math.min(Math.max(12, rect.right - width), window.innerWidth - width - 12);
+    setPanelPos({ top: rect.bottom + 8, left, width });
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    placePanel();
+    window.addEventListener("resize", placePanel);
+    window.addEventListener("scroll", placePanel, true);
+    return () => { window.removeEventListener("resize", placePanel); window.removeEventListener("scroll", placePanel, true); };
+  }, [open, placePanel]);
 
   const load = useCallback(async () => {
     const { data } = await supabase
@@ -4624,12 +4668,17 @@ function AlertBell({ userId, onOpenRo }: { userId: string; onOpenRo: (repairOrde
 
   return (
     <div className="alert-bell" ref={ref}>
-      <button type="button" className="button secondary alert-bell-button" aria-label={`Alerts${unread ? `, ${unread} unread` : ""}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <button ref={buttonRef} type="button" className="button secondary alert-bell-button" aria-label={`Alerts${unread ? `, ${unread} unread` : ""}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <span aria-hidden="true">🔔</span>
         {unread > 0 && <span className="alert-bell-count">{unread > 99 ? "99+" : unread}</span>}
       </button>
       {open && (
-        <div className="alert-panel" role="dialog" aria-label="Alerts">
+        <div
+          className="alert-panel"
+          role="dialog"
+          aria-label="Alerts"
+          style={panelPos ? { position: "fixed", top: panelPos.top, left: panelPos.left, right: "auto", width: panelPos.width } : undefined}
+        >
           <div className="alert-panel-head">
             <strong>Alerts</strong>
             {unread > 0 && <button type="button" className="link-button" onClick={() => void markAllRead()}>Mark all read</button>}
