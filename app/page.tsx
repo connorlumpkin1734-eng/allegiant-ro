@@ -2550,6 +2550,16 @@ function RepairOrderEditor({
   }, [focusLineId]);
   // Private shop notes stay tucked away until someone adds one.
   const [openShopNotes, setOpenShopNotes] = useState<Set<string>>(() => new Set());
+  // Whether this RO has a saved multipoint inspection that can go out with the estimate.
+  const [hasInspection, setHasInspection] = useState(false);
+  const [includeInspection, setIncludeInspection] = useState(true);
+  useEffect(() => {
+    if (!initialRo) return;
+    let cancelled = false;
+    void supabase.from("multipoint_inspections").select("id").eq("repair_order_id", initialRo.id).limit(1)
+      .then(({ data }) => { if (!cancelled) setHasInspection(Boolean(data?.length)); });
+    return () => { cancelled = true; };
+  }, [initialRo]);
   // Dispatch picks on a brand-new RO, saved with it (an existing RO saves dispatch as you click).
   const [dispatchDraft, setDispatchDraft] = useState<DispatchDraft>({ teamId: null, techIds: [] });
   const [busy, setBusy] = useState(false);
@@ -2651,7 +2661,7 @@ function RepairOrderEditor({
       const response = await fetch("/.netlify/functions/send-estimate", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ repairOrderId: initialRo.id }),
+        body: JSON.stringify({ repairOrderId: initialRo.id, includeInspection: hasInspection && includeInspection }),
       });
       const body = await response.json() as { error?: string; message?: string };
       if (!response.ok) throw new Error(body.error || "The estimate could not be emailed.");
@@ -3457,7 +3467,15 @@ function RepairOrderEditor({
               <>
                 <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Preview Estimate</button>
                 <button className="button ghost" onClick={() => save("work_order")} disabled={busy}>Preview Work Order</button>
-                <button className="button secondary" onClick={() => void emailEstimate()} disabled={busy}>Email Estimate</button>
+                <button className="button secondary" onClick={() => void emailEstimate()} disabled={busy}>
+                  {hasInspection && includeInspection ? "Email Estimate + Inspection" : "Email Estimate"}
+                </button>
+                {hasInspection && (
+                  <label className="checkbox-row compact include-inspection-toggle" title="Adds the inspection results and a link to the full report to the estimate email.">
+                    <input type="checkbox" checked={includeInspection} onChange={(event) => setIncludeInspection(event.target.checked)} />
+                    Include inspection
+                  </label>
+                )}
               </>
             )}
             {initialRo && workspaceTab === "invoice" && (

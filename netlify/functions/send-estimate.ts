@@ -11,6 +11,7 @@ type RepairOrderRow = {
   concern_lines: Array<{ id: string; sort_order: number; kind: string; concern: string | null; cause: string | null }> | null;
 };
 
+import { getInspectionShare, inspectionSummaryHtml, type InspectionShare } from "../../lib/inspection-share";
 import { amountBlock, brandFromSettings, emailButton, escapeHtml, lineTable, money, renderCustomerEmail, renderCustomerText, totalsTable, type LineRow } from "../../lib/customer-email";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -50,7 +51,7 @@ export default async (request: Request) => {
   });
   if (!userResponse.ok) return json({ error: "Sign in again before sending an estimate." }, 401);
   const user = await userResponse.json() as { id: string };
-  const body = await request.json().catch(() => ({})) as { repairOrderId?: string };
+  const body = await request.json().catch(() => ({})) as { repairOrderId?: string; includeInspection?: boolean };
   if (!body.repairOrderId) return json({ error: "Missing repair order." }, 400);
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
@@ -92,7 +93,19 @@ export default async (request: Request) => {
   const primaryColor = (settings.primary_color as string) || "#2459a9";
   const accentColor = (settings.accent_color as string) || "#b5222d";
   const secondaryColor = (settings.secondary_color as string) || "#10264d";
+  // Optional: the RO's multipoint inspection goes along with the estimate, using the same customer
+  // link the inspection always has (sending the inspection on its own reuses it too).
+  let inspectionShare: InspectionShare | null = null;
+  if (body.includeInspection) {
+    try {
+      inspectionShare = await getInspectionShare({ supabaseUrl, serviceHeaders, repairOrderId: ro.id, ownerId: user.id, siteUrl, customerEmail });
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : "Could not attach the inspection report." }, 500);
+    }
+    if (!inspectionShare) return json({ error: "This RO has no saved inspection to include. Uncheck \"Include inspection\" or save the inspection first." }, 400);
+  }
   const snapshot = {
+    inspectionUrl: inspectionShare?.url ?? null,
     roNumber: ro.ro_number,
     customerName: ro.customers?.name || "Customer",
     customerEmail,
@@ -197,16 +210,21 @@ export default async (request: Request) => {
       ...(tax > 0 ? [{ label: `Tax (${Number(ro.tax_rate)}%)`, amount: money(tax) }] : []),
       { label: "Estimated total", amount: money(total), strong: true },
     ]),
+    inspectionShare
+      ? `<div style="margin:26px 0 10px;padding-top:22px;border-top:1px solid #e5e7eb;font-family:Arial,sans-serif;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${brand.primaryColor}">Your inspection</div>`
+        + inspectionSummaryHtml(inspectionShare)
+        + `<div style="margin:0 0 22px">${emailButton("View full inspection", inspectionShare.url, brand.primaryColor, "outline")}</div>`
+      : "",
   ].join("");
 
   const html = renderCustomerEmail({
     brand,
-    preheader: `${money(total)} estimate for your ${vehicleText}. Approve the work you want with one tap.`,
+    preheader: `${money(total)} estimate${inspectionShare ? " and inspection" : ""} for your ${vehicleText}. Approve the work you want with one tap.`,
     documentLabel: estimateLabel,
     vehicle: snapshot.vehicle,
     greeting: `Hi ${firstName},`,
     intro: needsApproval
-      ? `Here&#039;s the estimate for your ${escapeHtml(vehicleText)}. Look it over and approve the work you&#039;d like us to do. You can say yes or no to each item.`
+      ? `Here&#039;s the estimate${inspectionShare ? " and inspection results" : ""} for your ${escapeHtml(vehicleText)}. Look it over and approve the work you&#039;d like us to do. You can say yes or no to each item.`
       : `Here&#039;s the estimate for your ${escapeHtml(vehicleText)}, with everything you&#039;ve approved.`,
     body: emailBody,
     primaryButton: jobs.size > 4 ? reviewButton : undefined,
@@ -226,6 +244,7 @@ export default async (request: Request) => {
     `Estimated total: ${money(total)}`,
     "",
     `Review and approve here: ${approvalUrl}`,
+    inspectionShare ? `\nYour inspection (needs attention: ${inspectionShare.needsWork}, keep an eye on: ${inspectionShare.watch}, looks good: ${inspectionShare.good}): ${inspectionShare.url}` : "",
   ], brand);
 
   const emailResponse = await fetch("https://api.resend.com/emails", {
@@ -235,7 +254,7 @@ export default async (request: Request) => {
       from: fromEmail,
       to: [customerEmail],
       ...(replyToEmail ? { reply_to: replyToEmail } : {}),
-      subject: `Your ${vehicleText} estimate from ${brand.name}: ${money(total)}`,
+      subject: `Your ${vehicleText} estimate${inspectionShare ? " and inspection" : ""} from ${brand.name}: ${money(total)}`,
       text,
       html,
     }),
@@ -249,5 +268,5 @@ export default async (request: Request) => {
   await fetch(`${supabaseUrl}/rest/v1/repair_orders?id=eq.${ro.id}`, {
     method: "PATCH", headers: serviceHeaders, body: JSON.stringify({ estimate_status: "sent", estimate_sent_at: now, estimate_responded_at: null }),
   });
-  return json({ message: `Estimate emailed to ${customerEmail}.` });
+  return json({ message: `Estimate${inspectionShare ? " and inspection" : ""} emailed to ${customerEmail}.` });
 };

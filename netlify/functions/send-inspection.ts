@@ -5,16 +5,12 @@
 // again reuses the same link unless the shop explicitly regenerates it.
 
 import { brandFromSettings, escapeHtml, paragraph, renderCustomerEmail, renderCustomerText } from "../../lib/customer-email";
+import { getInspectionShare, inspectionSummaryHtml } from "../../lib/inspection-share";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
 });
-
-async function hashToken(token: string) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
 
 export default async (request: Request) => {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
@@ -57,15 +53,14 @@ export default async (request: Request) => {
   const customerEmail = ro.customers?.email?.trim();
   if (!customerEmail) return json({ error: "Add the customer's email address before sending." }, 400);
 
-  const inspectionResponse = await fetch(
-    `${supabaseUrl}/rest/v1/multipoint_inspections?select=id,data,share_token_hash&repair_order_id=eq.${ro.id}&owner_id=eq.${user.id}&limit=1`,
-    { headers: serviceHeaders }
-  );
-  const inspectionRows = await inspectionResponse.json() as Array<{ id: string; data: Record<string, unknown>; share_token_hash: string | null }>;
-  const inspection = inspectionRows[0];
-  if (!inspection || !inspection.data || Object.keys(inspection.data).length === 0) {
-    return json({ error: "Save the inspection before sending it to the customer." }, 400);
+  // Same link every time this inspection is sent, alone or with the estimate.
+  let share;
+  try {
+    share = await getInspectionShare({ supabaseUrl, serviceHeaders, repairOrderId: ro.id, ownerId: user.id, siteUrl, customerEmail });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Could not create the inspection link." }, 500);
   }
+  if (!share) return json({ error: "Save the inspection before sending it to the customer." }, 400);
 
   const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=*&owner_id=eq.${user.id}&limit=1`, { headers: serviceHeaders });
   const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<Record<string, unknown>> : [])[0] || {};
@@ -77,43 +72,15 @@ export default async (request: Request) => {
   const fromEmail = `${businessName} <inspections@allegiantautocare.com>`;
   const replyToEmail = (settings.business_email as string) || undefined;
 
-  const token = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
-  const tokenHash = await hashToken(token);
-  const now = new Date().toISOString();
-  const updateResponse = await fetch(`${supabaseUrl}/rest/v1/multipoint_inspections?id=eq.${inspection.id}`, {
-    method: "PATCH",
-    headers: serviceHeaders,
-    body: JSON.stringify({ share_token_hash: tokenHash, shared_at: now, shared_to_email: customerEmail }),
-  });
-  if (!updateResponse.ok) return json({ error: `Could not create a share link: ${await updateResponse.text()}` }, 500);
-
-  const reportLink = new URL("/inspection-report/", siteUrl);
-  reportLink.searchParams.set("token", token);
-  const reportUrl = reportLink.toString();
+  const reportUrl = share.url;
 
   const roNumberLabel = `#${String(ro.ro_number).padStart(4, "0")}`;
   const vehicle = [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ");
   const firstName = (ro.customers?.name || "").trim().split(/\s+/)[0] || "there";
   const vehicleText = vehicle || "vehicle";
 
-  // Quick summary of the results: how many items need work, need watching, or are fine.
-  const values = Object.values((inspection.data.items ?? {}) as Record<string, { status?: string }>);
-  const count = (status: string) => values.filter((value) => value?.status === status).length;
-  const needsWork = count("service");
-  const watch = count("monitor");
-  const good = count("good");
-  const recommendations = String(inspection.data.recommendations ?? "").trim();
-  const stat = (number: number, label: string, color: string, tint: string) => `<td width="33%" align="center" style="padding:14px 6px;background:${tint};border-radius:10px">
-      <div style="font-family:Arial,sans-serif;font-size:28px;font-weight:800;color:${color}">${number}</div>
-      <div style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;color:${color}">${label}</div>
-    </td>`;
-  const summary = values.length
-    ? `<table role="presentation" width="100%" cellspacing="6" cellpadding="0" border="0" style="margin:0 0 18px"><tr>
-        ${stat(needsWork, "Needs attention", "#b91c1c", "#fef2f2")}
-        ${stat(watch, "Keep an eye on", "#b45309", "#fffbeb")}
-        ${stat(good, "Looks good", "#15803d", "#f0fdf4")}
-      </tr></table>`
-    : "";
+  const { needsWork, watch, recommendations } = share;
+  const summary = inspectionSummaryHtml(share);
   const recommendationBlock = recommendations
     ? paragraph(`<strong>Technician&#039;s notes:</strong> ${escapeHtml(recommendations.length > 400 ? `${recommendations.slice(0, 400).trimEnd()}…` : recommendations)}`)
     : "";
@@ -140,7 +107,7 @@ export default async (request: Request) => {
     `Hi ${firstName},`,
     "",
     `Your multipoint inspection for your ${vehicleText} (RO ${roNumberLabel}) is ready.`,
-    values.length ? `Needs attention: ${needsWork} · Keep an eye on: ${watch} · Looks good: ${good}` : "",
+    summary ? `Needs attention: ${needsWork} · Keep an eye on: ${watch} · Looks good: ${share.good}` : "",
     recommendations ? `\nTechnician's notes: ${recommendations}` : "",
     "",
     `View the full report: ${reportUrl}`,
