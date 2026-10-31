@@ -19,7 +19,7 @@ type Business = {
   accentColor: string;
 };
 
-const statusLabel = (value: string) => statusOptions.find((option) => option.value === value)?.label || "—";
+const statusLabel = (value: string) => statusOptions.find((option) => option.value === value)?.label || "Not checked";
 
 export default function InspectionReportPage() {
   const [data, setData] = useState<InspectionData | null>(null);

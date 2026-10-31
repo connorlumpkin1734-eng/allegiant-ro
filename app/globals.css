@@ -2246,3 +2246,85 @@ tbody tr:hover { background: var(--panel-header); }
 .signed-in-as .signed-in-label { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.7; }
 .signed-in-as strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .signed-in-as .signed-in-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: 0.75; }
+
+/* ---- Inspection: progress, section header, phone cards ---- */
+.inspection-progress-bar { margin: 0 0 16px; }
+.inspection-progress-text { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.inspection-progress-text span { color: var(--muted); font-size: 14px; }
+.inspection-progress-track { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.inspection-progress-track > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+.inspection-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 14px; }
+.inspection-section-head h2 { flex: 1; }
+.inspection-bottom-actions { align-items: center; }
+.inspection-bottom-progress { margin-right: auto; color: var(--muted); font-weight: 700; font-size: 14px; }
+
+@media (max-width: 760px) {
+  /* Each item becomes a card: name and measurements, then big status buttons, then a note. No sideways scrolling. */
+  .inspection-table-wrap { overflow: visible; }
+  .inspection-table, .inspection-table tbody { display: block; width: 100%; }
+  .inspection-table thead { display: none; }
+  .inspection-table tr.inspection-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 10px 12px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .inspection-table tr.inspection-row.is-service { border-color: #d52233; }
+  .inspection-table tr.inspection-row.is-monitor { border-color: #d59000; }
+  .inspection-table td { display: block; padding: 0; border: 0; }
+  .inspection-item-label { font-size: 16px; }
+  .inspection-table td:has(> .muted) { display: none; }
+  .inspection-measurements { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .inspection-table input { width: 100%; min-height: 44px; font-size: 16px; box-sizing: border-box; }
+  .inspection-statuses { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .inspection-status { justify-content: center; min-height: 48px; padding: 6px 4px !important; font-size: 13px; }
+  .inspection-status span { display: none; }
+  .inspection-section-head { padding-right: 10px; }
+  .inspection-toolbar .button-row { display: none; }
+  .inspection-bottom-actions { padding: 10px 12px; border-radius: 0; }
+  .inspection-bottom-actions .button { min-height: 48px; }
+  .inspection-bottom-progress { display: none; }
+  .inspection-bottom-actions .button.primary { flex: 1; }
+}
+
+/* ---- RO screen: stage pill + track, handoff banner, summary cards ---- */
+.ro-action-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.stage-pill { padding: 3px 11px; border-radius: 999px; background: var(--line); color: var(--ink); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.stage-pill.stage-ready { background: var(--accent-tint); color: var(--accent); }
+.stage-pill.stage-in_shop { background: rgba(242, 184, 75, 0.16); color: var(--warn-text); }
+.stage-pill.stage-waiting { background: rgba(139, 147, 166, 0.18); color: var(--ink); }
+.stage-pill.stage-invoiced { background: rgba(242, 184, 75, 0.16); color: var(--warn-text); }
+.stage-pill.stage-paid { background: var(--success-tint); color: var(--success-text); }
+.stage-pill.stage-voided { background: var(--danger-tint); color: var(--danger-text); }
+.stage-track { list-style: none; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin: 0 0 14px; padding: 0; }
+.stage-track li { padding: 9px 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 12px; font-weight: 700; text-align: center; }
+.stage-track li.done span { color: var(--success-text); }
+.stage-track li.current { border-color: var(--accent); background: var(--accent-tint); color: var(--ink); }
+.stage-track li.todo { border-style: dashed; background: transparent; }
+.stage-track.voided { display: block; padding: 10px 14px; border-radius: 9px; background: var(--danger-tint); color: var(--danger-text); font-weight: 800; }
+@media (max-width: 760px) {
+  .stage-track { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.handoff-banner { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 0 0 14px; padding: 12px 16px; border-radius: 12px; border: 1px solid rgba(52, 211, 153, 0.45); background: rgba(52, 211, 153, 0.1); }
+.handoff-banner span { color: var(--muted); }
+.handoff-banner.warn { border-color: rgba(242, 184, 75, 0.5); background: rgba(242, 184, 75, 0.1); }
+.ro-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.ro-summary-card { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow-wrap: anywhere; }
+.ro-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ro-summary-head > span { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.ro-summary-card .link-button, .details-done-row .link-button { padding: 0; border: 0; background: none; color: var(--accent); font-weight: 700; cursor: pointer; }
+.ro-summary-card a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.ro-summary-miles { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.ro-summary-miles label { display: flex; align-items: center; gap: 6px; margin: 0; }
+.ro-summary-miles input { width: 96px; min-height: 36px; padding: 4px 8px; }
+.details-done-row { display: flex; justify-content: flex-end; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* ---- Job cards: chip, title, media ---- */
+.service-job-title { flex: 1 1 260px; margin: 0; }
+.service-job-title input { font-size: 17px; font-weight: 700; }
+.job-approval-chip { position: relative; display: inline-flex; margin: 0; }
+.job-approval-chip select { appearance: none; -webkit-appearance: none; padding: 6px 28px 6px 12px; border-radius: 999px; border: 1px solid transparent; font-size: 12px; font-weight: 800; cursor: pointer; background: var(--line) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b93a6' stroke-width='3'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center; color: var(--ink); min-height: 0; }
+.job-approval-chip.authorized select, .job-approval-chip.decision-approved select { background-color: var(--success-tint); color: var(--success-text); }
+.job-approval-chip.needs_approval:not(.decision-approved) select { background-color: rgba(139, 147, 166, 0.18); }
+.job-approval-chip.decision-declined select { background-color: var(--danger-tint); color: var(--danger-text); }
+.job-approval-chip.pending_review select { background-color: rgba(242, 184, 75, 0.16); color: var(--warn-text); }
+.job-media { margin: 0 16px 12px; border-top: 1px solid var(--line); }
+.job-media > summary { padding: 10px 0; color: var(--muted); font-weight: 700; cursor: pointer; }
+.job-media[open] > summary { color: var(--ink); }
+.more-menu-list button.danger:first-child { margin-top: 0; border-top: 0; }

@@ -149,7 +149,9 @@ export const sections: InspectionSection[] = [
   },
 ];
 
-export const blankValue = (): InspectionValue => ({ status: "good", measurement1: "", measurement2: "", notes: "" });
+// Items start unchecked. Starting them as Good printed "Good" on the customer report for anything
+// the tech never looked at.
+export const blankValue = (): InspectionValue => ({ status: "", measurement1: "", measurement2: "", notes: "" });
 
 function blankInspection(): InspectionData {
   const items: Record<string, InspectionValue> = {};
@@ -168,7 +170,7 @@ export function normalizeInspection(value: unknown): InspectionData {
     normalizedItems[key] = {
       ...(blank.items[key] ?? blankValue()),
       ...item,
-      status: item.status || "good",
+      status: item.status ?? "",
     };
   }
   return {
@@ -192,10 +194,13 @@ export function MultipointInspection({
   ro,
   userId,
   onBack,
+  canShare = true,
 }: {
   ro: InspectionRo;
   userId: string;
   onBack: () => void;
+  /** Sending to the customer is the advisor's job; techs don't get the button. */
+  canShare?: boolean;
 }) {
   const [data, setData] = useState<InspectionData>(blankInspection);
   const [loading, setLoading] = useState(true);
@@ -235,6 +240,18 @@ export function MultipointInspection({
     [data.items]
   );
   const totalCount = Object.keys(data.items).length;
+
+  // "Rest of section good": every unchecked item in the section becomes Good, checked ones stay.
+  function markRestGood(sectionKey: string) {
+    setData((current: InspectionData) => {
+      const items: Record<string, InspectionValue> = { ...current.items };
+      for (const [key, value] of Object.entries(items) as Array<[string, InspectionValue]>) {
+        if (key.startsWith(`${sectionKey}_`) && !value.status) items[key] = { ...value, status: "good" };
+      }
+      return { ...current, items };
+    });
+    setMessage("");
+  }
 
   function changeItem(key: string, changes: Partial<InspectionValue>) {
     setData((current) => ({
@@ -378,17 +395,23 @@ export function MultipointInspection({
           <p>{customer?.name} · {[vehicle?.year, vehicle?.make, vehicle?.model].filter(Boolean).join(" ")}</p>
         </div>
         <div className="button-row">
-          <span className="inspection-progress">{completedCount}/{totalCount} checked</span>
           <button className="button secondary" onClick={exportPdf} disabled={exporting}>
             {exporting ? "Creating PDF…" : "Export PDF"}
           </button>
-          <button className="button secondary" onClick={sendToCustomer} disabled={sending || saving}>
-            {sending ? "Sending…" : "Share with customer"}
-          </button>
-          <button className="button primary" onClick={() => void saveInspection()} disabled={saving}>
-            {saving ? "Saving…" : "Save Inspection"}
-          </button>
+          {canShare && (
+            <button className="button secondary" onClick={sendToCustomer} disabled={sending || saving}>
+              {sending ? "Sending…" : "Share with customer"}
+            </button>
+          )}
         </div>
+      </div>
+
+      <div className="inspection-progress-bar" role="progressbar" aria-valuemin={0} aria-valuemax={totalCount} aria-valuenow={completedCount} aria-label="Items checked">
+        <div className="inspection-progress-text">
+          <strong>{completedCount} of {totalCount} checked</strong>
+          {completedCount < totalCount && <span>{totalCount - completedCount} to go</span>}
+        </div>
+        <div className="inspection-progress-track"><div style={{ width: `${totalCount ? (completedCount / totalCount) * 100 : 0}%` }} /></div>
       </div>
 
       {message && <div className={message.includes("saved") ? "notice" : "error-banner"}>{message}</div>}
@@ -415,7 +438,12 @@ export function MultipointInspection({
 
       {sections.map((section) => (
         <section className="panel inspection-section" key={section.key}>
-          <h2>{section.title}</h2>
+          <div className="inspection-section-head">
+            <h2>{section.title}</h2>
+            {section.items.some((item) => !data.items[`${section.key}_${item.id}`]?.status) && (
+              <button type="button" className="button small ghost" onClick={() => markRestGood(section.key)}>Rest of section good</button>
+            )}
+          </div>
           <div className="inspection-table-wrap">
             <table className="inspection-table">
               <thead>
@@ -431,7 +459,7 @@ export function MultipointInspection({
                   const key = `${section.key}_${item.id}`;
                   const value = data.items[key] ?? blankValue();
                   return (
-                    <tr key={key}>
+                    <tr key={key} className={`inspection-row ${value.status ? `is-${value.status}` : "is-unchecked"}`}>
                       <td className="inspection-item-label">{item.label}</td>
                       <td>
                         {(item.measurement1 || item.measurement2) ? (
@@ -490,10 +518,9 @@ export function MultipointInspection({
       </section>
 
       <div className="inspection-bottom-actions">
+        <span className="inspection-bottom-progress">{completedCount} of {totalCount} checked</span>
         <button className="button secondary" onClick={onBack}>Back to RO</button>
-        <button className="button secondary" onClick={exportPdf} disabled={exporting}>Export PDF</button>
-        <button className="button secondary" onClick={sendToCustomer} disabled={sending || saving}>{sending ? "Sending…" : "Share with customer"}</button>
-        <button className="button primary" onClick={() => void saveInspection()} disabled={saving}>{saving ? "Saving…" : "Save Inspection"}</button>
+        <button className="button primary" onClick={() => void saveInspection()} disabled={saving}>{saving ? "Saving…" : "Save inspection"}</button>
       </div>
     </section>
   );

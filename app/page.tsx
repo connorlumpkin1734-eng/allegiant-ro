@@ -169,6 +169,75 @@ const JOB_PROGRESS = [
 ] as const;
 type JobProgress = (typeof JOB_PROGRESS)[number]["value"];
 
+// ---- RO stages ---------------------------------------------------------------------------------
+// Where an RO stands, worked out from what's already recorded, so nobody picks a status from a
+// dropdown: Write-up → Waiting on customer → In the shop → Ready for advisor → Invoiced → Paid.
+type RoStage = "write_up" | "waiting" | "in_shop" | "ready" | "invoiced" | "paid" | "voided";
+const RO_STAGES: Array<{ id: Exclude<RoStage, "voided">; label: string }> = [
+  { id: "write_up", label: "Write-up" },
+  { id: "waiting", label: "Waiting on customer" },
+  { id: "in_shop", label: "In the shop" },
+  { id: "ready", label: "Ready for advisor" },
+  { id: "invoiced", label: "Invoiced" },
+  { id: "paid", label: "Paid" },
+];
+const RO_STAGE_LABEL: Record<RoStage, string> = {
+  write_up: "Write-up", waiting: "Waiting on customer", in_shop: "In the shop",
+  ready: "Ready for advisor", invoiced: "Invoiced", paid: "Paid", voided: "Voided",
+};
+type StageInput = {
+  status: "open" | "completed" | "voided";
+  paid: boolean;
+  work_complete_at?: string | null;
+  items: Array<Pick<LineItem, "service_group_id" | "job_status">>;
+  authorizationStatus?: EstimateAuthorization["status"] | null;
+  decisions?: Record<string, "approved" | "declined"> | null;
+  overrides?: InvoiceOverrides | null;
+};
+function roStage(input: StageInput): RoStage {
+  if (input.status === "voided") return "voided";
+  if (input.paid) return "paid";
+  if (input.status === "completed") return "invoiced";
+  if (input.work_complete_at) return "ready";
+  const decisions = input.decisions ?? {};
+  const workable = input.items.some((item) => item.service_group_id && (
+    item.job_status === "authorized" || decisions[item.service_group_id] === "approved" || Boolean(input.overrides?.[item.service_group_id])
+  ));
+  if (workable) return "in_shop";
+  if (input.authorizationStatus === "sent") return "waiting";
+  return "write_up";
+}
+function stageOfRo(ro: RepairOrder): RoStage {
+  const authorization = ro.latest_estimate_authorization;
+  return roStage({
+    status: ro.status,
+    paid: ro.paid,
+    work_complete_at: ro.work_complete_at,
+    items: ro.line_items ?? [],
+    authorizationStatus: authorization?.status ?? (ro.estimate_status === "sent" ? "sent" : null),
+    decisions: authorization?.line_decisions,
+    overrides: ro.invoice_overrides,
+  });
+}
+/** Tech recommendations still waiting for the advisor to price them. */
+function pendingRecommendationCount(items: Array<Pick<LineItem, "service_group_id" | "job_status">>): number {
+  return new Set(items.filter((item) => item.job_status === "pending_review" && item.service_group_id).map((item) => item.service_group_id)).size;
+}
+
+function StageTrack({ stage }: { stage: RoStage }) {
+  if (stage === "voided") return <div className="stage-track voided" aria-label="RO stage">Voided</div>;
+  const currentIndex = RO_STAGES.findIndex((entry) => entry.id === stage);
+  return (
+    <ol className="stage-track" aria-label="RO stage">
+      {RO_STAGES.map((entry, index) => (
+        <li key={entry.id} className={index < currentIndex ? "done" : index === currentIndex ? "current" : "todo"} aria-current={index === currentIndex ? "step" : undefined}>
+          {index < currentIndex && <span aria-hidden="true">✓ </span>}{entry.label}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 type TechWorkMode = "open" | "team" | "technician";
 type PartsPricingMode = "flat" | "matrix";
 /** One row of the parts matrix: a part costing `cost` gets `markup` percent. */
@@ -1320,6 +1389,8 @@ function RepairOrderApp({ user }: { user: User }) {
   // Which document the editor's switcher shows, and whether the next document opened should print.
   const [editorDocMode, setEditorDocMode] = useState<DocumentMode>("estimate");
   const [autoPrint, setAutoPrint] = useState(false);
+  // After Close & invoice the editor reopens with the Send invoice panel up.
+  const [pendingSend, setPendingSend] = useState<"invoice" | null>(null);
   const [editorReturnView, setEditorReturnView] = useState<"dashboard" | "customer_profile">("dashboard");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useToastMessage("error");
@@ -1993,11 +2064,14 @@ function RepairOrderApp({ user }: { user: User }) {
             initialTab={editorTab}
             initialDocMode={editorDocMode}
             onDocModeChange={setEditorDocMode}
+            initialSend={pendingSend}
+            onInitialSendShown={() => setPendingSend(null)}
             onInspection={editingRo ? () => openInspection(editingRo.id, "editor") : undefined}
             onCancel={returnFromEditor}
             onDelete={editingRo && !isTechnicianOnly ? () => deleteRo(editingRo) : undefined}
-            onSaved={async (id, tab, previewMode, print) => {
+            onSaved={async (id, tab, previewMode, print, openSend) => {
               setEditorTab(tab);
+              setPendingSend(openSend ?? null);
               await loadData(false);
               if (previewMode) {
                 setAutoPrint(Boolean(print));
@@ -2053,7 +2127,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onStripeStatusChanged={() => void loadData(false)}
           />
         ) : view === "inspection" && selectedRo ? (
-          <MultipointInspection ro={selectedRo} userId={ownerId} onBack={returnFromInspection} />
+          <MultipointInspection ro={selectedRo} userId={ownerId} onBack={returnFromInspection} canShare={!isTechnicianOnly} />
         ) : selectedRo ? (
           <DocumentView
             ro={selectedRo}
@@ -2354,7 +2428,8 @@ function Dashboard({
 }) {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
-  const [techScope, setTechScope] = useState<"mine" | "team" | "all">("all");
+  // Techs land on their own cars.
+  const [techScope, setTechScope] = useState<"mine" | "team" | "all">(techFilterFor ? "mine" : "all");
   const [savingId, setSavingId] = useState<string | null>(null);
   const normalized = search.toLowerCase().trim();
 
@@ -2624,11 +2699,16 @@ function RepairOrderEditor({
   initialTab,
   initialDocMode,
   onDocModeChange,
+  initialSend,
+  onInitialSendShown,
   onInspection,
   onCancel,
   onSaved,
   onDelete,
 }: {
+  /** Open the Send panel as soon as the editor shows (after Close & invoice). */
+  initialSend?: "estimate" | "invoice" | null;
+  onInitialSendShown?: () => void;
   user: User;
   ownerId: string;
   isTechnician: boolean;
@@ -2646,7 +2726,7 @@ function RepairOrderEditor({
   onDocModeChange?: (mode: DocumentMode) => void;
   onInspection?: () => void;
   onCancel: () => void;
-  onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode, print?: boolean) => void;
+  onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode, print?: boolean, openSend?: "invoice") => void;
   onDelete?: () => void;
 }) {
   const canWrite = shopCanWrite(settings);
@@ -2722,7 +2802,7 @@ function RepairOrderEditor({
   const [openShopNotes, setOpenShopNotes] = useState<Set<string>>(() => new Set());
   // Whether this RO has a saved multipoint inspection that can go out with the estimate.
   // The RO's multipoint inspection, for the status card and for sending it with the estimate.
-  const [inspectionSummary, setInspectionSummary] = useState<{ needs: number; watch: number; good: number } | null>(null);
+  const [inspectionSummary, setInspectionSummary] = useState<{ needs: number; watch: number; good: number; checked: number; total: number } | null>(null);
   const hasInspection = Boolean(inspectionSummary);
   useEffect(() => {
     if (!initialRo) return;
@@ -2734,15 +2814,21 @@ function RepairOrderEditor({
         const values = Object.values(row?.data?.items ?? {});
         if (!row || !values.length) { setInspectionSummary(null); return; }
         const count = (status: string) => values.filter((value) => value?.status === status).length;
-        setInspectionSummary({ needs: count("service"), watch: count("monitor"), good: count("good") });
+        setInspectionSummary({
+          needs: count("service"), watch: count("monitor"), good: count("good"),
+          checked: values.filter((value) => value?.status).length, total: values.length,
+        });
       });
     return () => { cancelled = true; };
   }, [initialRo]);
-  // Estimate / Work Order / Invoice switcher. Techs only ever get the work order.
-  const [docTab, setDocTabState] = useState<DocumentMode>(
-    isTechnician ? "work_order" : initialDocMode ?? (initialTab === "invoice" ? "invoice" : "estimate")
-  );
-  const [sendKind, setSendKind] = useState<"estimate" | "invoice" | null>(null);
+  void initialTab; void initialDocMode; void onDocModeChange;
+  const [sendKind, setSendKind] = useState<"estimate" | "invoice" | null>(initialRo ? initialSend ?? null : null);
+  useEffect(() => {
+    if (initialSend) onInitialSendShown?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Customer, vehicle and visit details show as summary cards on a saved RO; Edit opens the forms.
+  const [detailsOpen, setDetailsOpen] = useState(!initialRo);
   // Dispatch picks on a brand-new RO, saved with it (an existing RO saves dispatch as you click).
   const [dispatchDraft, setDispatchDraft] = useState<DispatchDraft>({ teamId: null, techIds: [] });
   const [busy, setBusy] = useState(false);
@@ -2751,12 +2837,8 @@ function RepairOrderEditor({
   const vinVideoRef = useRef<HTMLVideoElement>(null);
   const [vinScannerOpen, setVinScannerOpen] = useState(false);
   const [message, setMessage] = useToastMessage();
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(docTab === "invoice" ? "invoice" : "work_order");
-  function setDocTab(mode: DocumentMode) {
-    setDocTabState(mode);
-    setWorkspaceTab(mode === "invoice" ? "invoice" : "work_order");
-    onDocModeChange?.(mode);
-  }
+  // The invoice view (paid toggle, billed lines) once the RO is closed or paid; the work view before.
+  const workspaceTab: WorkspaceTab = !isTechnician && initialRo && (initialRo.status === "completed" || initialRo.paid) ? "invoice" : "work_order";
   // Technicians can price parts (if the shop allows it) but must never see or edit labor rate,
   // parts markup/cost, or shop profit figures — and can't restructure the RO (no adding
   // service jobs/fees/discounts/labor lines, no removing or deleting anything).
@@ -3082,7 +3164,9 @@ function RepairOrderEditor({
       return;
     }
     setWorkCompleteAt(complete ? new Date().toISOString() : null);
-    setMessage(complete ? "Marked work complete. The advisor has been notified." : "Reopened: this RO is no longer marked work complete.");
+    setMessage(complete
+      ? (isTechnician ? "Sent to the advisor." : "Marked ready for advisor.")
+      : (isTechnician ? "Taken back. It's yours to finish." : "Sent back to the shop."));
   }
 
   function setJobStatus(groupId: string, jobStatus: JobStatus) {
@@ -3237,7 +3321,11 @@ function RepairOrderEditor({
     }
   }
 
-  async function save(previewMode?: DocumentMode, print = false) {
+  async function save(
+    previewMode?: DocumentMode,
+    print = false,
+    options: { status?: "open" | "completed"; openSend?: "invoice"; doneMessage?: string } = {}
+  ) {
     if (!canWrite) {
       setMessage(
         initialRo
@@ -3246,17 +3334,19 @@ function RepairOrderEditor({
       );
       return;
     }
-    if ((initialRo?.status === "completed" || initialRo?.paid) && !finalEditConfirmed) {
+    if ((initialRo?.status === "completed" || initialRo?.paid) && !finalEditConfirmed && !options.status) {
       if (!window.confirm("Override this final invoice and save changes? This updates its charges and totals. The original customer estimate approval will remain unchanged.")) return;
       setFinalEditConfirmed(true);
     }
     if (!customerForm.name.trim()) {
       setMessage("Customer name is required.");
+      setDetailsOpen(true);
       focusProblem('[data-field="customer-name"]');
       return;
     }
     if (!vehicleForm.year.trim() && !vehicleForm.make.trim() && !vehicleForm.model.trim()) {
       setMessage("Enter at least the vehicle year, make, or model.");
+      setDetailsOpen(true);
       focusProblem('[data-field="vehicle-year"]');
       return;
     }
@@ -3349,7 +3439,7 @@ function RepairOrderEditor({
         vehicle_id: vehicleId,
         document_type: "repair_order" as DocumentType,
         ...(initialRo?.invoice_overrides !== undefined || Object.keys(invoiceOverrides).length ? { invoice_overrides: invoiceOverrides } : {}),
-        status,
+        status: options.status ?? status,
         mileage_in: numberOrNull(mileageIn),
         mileage_out: numberOrNull(mileageOut),
         customer_concern: valueOrNull(concern),
@@ -3452,8 +3542,8 @@ function RepairOrderEditor({
       }
 
       setBusy(false);
-      if (!previewMode) notify(initialRo ? `RO #${padRo(initialRo.ro_number)} saved.` : "Work order saved.", "success");
-      onSaved(roId, workspaceTab, previewMode, print);
+      if (!previewMode) notify(options.doneMessage ?? (initialRo ? `RO #${padRo(initialRo.ro_number)} saved.` : "Work order saved."), "success");
+      onSaved(roId, options.status === "completed" ? "invoice" : options.status === "open" ? "work_order" : workspaceTab, previewMode, print, options.openSend);
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "The work order could not be saved.");
       setBusy(false);
@@ -3466,30 +3556,56 @@ function RepairOrderEditor({
     !group.items[0].concern_line_id || !concernLines.some((line) => line.id === group.items[0].concern_line_id)
   );
 
-  const jobStatusLabel: Record<JobStatus, string> = {
-    authorized: "Authorized",
-    needs_approval: "Needs customer approval",
-    pending_review: "Pending advisor review",
-  };
+  // ---- Stage and the one main button that goes with it ----
+  const stage = roStage({
+    status: initialRo?.status ?? "open",
+    paid: initialRo?.paid ?? false,
+    work_complete_at: workCompleteAt,
+    items,
+    authorizationStatus: currentAuthorization?.status ?? (initialRo?.estimate_status === "sent" ? "sent" : null),
+    decisions: currentAuthorization?.line_decisions,
+    overrides: invoiceOverrides,
+  });
+  const pendingRecs = pendingRecommendationCount(items);
+  const previewDoc: DocumentMode = isTechnician
+    ? "work_order"
+    : stage === "invoiced" || stage === "paid" ? "invoice" : stage === "write_up" || stage === "waiting" || pendingRecs > 0 ? "estimate" : "work_order";
+  async function closeAndInvoice() {
+    if (!initialRo) return;
+    await save(undefined, false, { status: "completed", openSend: "invoice", doneMessage: `RO #${padRo(initialRo.ro_number)} closed. Send the invoice when you're ready.` });
+  }
+  async function reopenRo() {
+    if (!initialRo) return;
+    if (!window.confirm("Reopen this RO? It goes back to the shop and comes off Invoiced until you close it again.")) return;
+    await save(undefined, false, { status: "open", doneMessage: `RO #${padRo(initialRo.ro_number)} reopened.` });
+  }
+  const mainAction: { label: string; onClick: () => void } | null = !initialRo || stage === "voided"
+    ? null
+    : isTechnician
+      ? null
+      : stage === "ready"
+        ? { label: "Close & invoice", onClick: () => void closeAndInvoice() }
+        : stage === "invoiced"
+          ? { label: "Send invoice", onClick: () => setSendKind("invoice") }
+          : stage === "paid"
+            ? { label: "Print invoice", onClick: () => void save("invoice", true) }
+            : stage === "in_shop" && pendingRecs === 0
+              ? { label: "Print work order", onClick: () => void save("work_order", true) }
+              : { label: "Send estimate", onClick: () => setSendKind("estimate") };
 
   const renderJob = (group: { id: string; items: LineItem[] }, label: string) => {
     const first = group.items[0];
     const jobStatus: JobStatus = first.job_status ?? "needs_approval";
     const customerDecision = hasCustomerAuthorizationResponse ? currentDecisions[group.id] : undefined;
     const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-    const jobCost = group.items.reduce((sum, item) =>
-      sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0
-    );
-    const jobGrossProfit = jobTotal - jobCost;
-    const jobGrossMargin = jobTotal !== 0 ? (jobGrossProfit / jobTotal) * 100 : 0;
     const jobIsUnsaved = group.items.every((item) => !savedLineIds.has(item.id));
     const canDeleteJob = canRestructureRo || (isTechnician && jobIsUnsaved);
     return (
       <article className={`service-job-card job-status-${jobStatus} ${customerDecision ? `customer-${customerDecision}` : ""}`} key={group.id}>
         <header className="service-job-header">
           <div className="service-job-number">{label}</div>
-          <label>
-            Job
+          <label className="service-job-title">
+            <span className="sr-only">Job name</span>
             <input
               data-job-title={group.id}
               value={first.service_group_title ?? ""}
@@ -3500,41 +3616,42 @@ function RepairOrderEditor({
           <div className="service-job-total">
             {invoiceOverrides[group.id] && <span className="authorization-mark approved">Separately authorized</span>}
             {customerDecision && <span className={`authorization-mark ${customerDecision}`}>{invoiceOverrides[group.id] ? `Originally ${customerDecision}` : customerDecision}</span>}
-            <span>Job total</span><strong>{hideCostAndMargin ? "—" : money(jobTotal)}</strong>
+            {!hideCostAndMargin && <strong>{money(jobTotal)}</strong>}
           </div>
-          {canDeleteJob && (
-            <button className="button small danger" onClick={() => void deleteServiceJob(group.id)}>Delete job</button>
+          {(canRestructureRo || canDeleteJob) && (
+            <MoreMenu
+              ariaLabel={`Actions for job ${label}`}
+              items={[
+                ...(canRestructureRo
+                  ? concernLines
+                      .map((line, index) => ({ line, index }))
+                      .filter(({ line }) => line.id !== first.concern_line_id)
+                      .map(({ line, index }) => ({
+                        label: `Move to Line ${lineLetter(index)}`,
+                        onClick: () => setItems((current) => current.map((item) =>
+                          item.service_group_id === group.id ? { ...item, concern_line_id: line.id } : item)),
+                      }))
+                  : []),
+                !openShopNotes.has(group.id) && !first.internal_notes && { label: "Add shop note (private)", onClick: () => setOpenShopNotes((current) => new Set(current).add(group.id)) },
+                canDeleteJob && { label: "Delete job", onClick: () => void deleteServiceJob(group.id), danger: true },
+              ]}
+            />
           )}
         </header>
         <div className="job-status-row">
           {canRestructureRo ? (
-            <label className="job-status-select">
-              Status
+            <label className={`job-approval-chip ${jobStatus} ${customerDecision ? `decision-${customerDecision}` : ""}`}>
+              <span className="sr-only">Approval</span>
               <select value={jobStatus} onChange={(event) => setJobStatus(group.id, event.target.value as JobStatus)}>
-                <option value="authorized">Authorized (approved at write-up)</option>
-                <option value="needs_approval">Needs customer approval</option>
-                <option value="pending_review">Pending advisor review</option>
+                <option value="authorized">Approved</option>
+                <option value="needs_approval">{customerDecision === "approved" ? "Customer approved" : customerDecision === "declined" ? "Customer declined" : "Needs customer OK"}</option>
+                <option value="pending_review">Tech request · needs pricing</option>
               </select>
             </label>
           ) : (
-            <span className={`job-status-badge ${jobStatus}`}>{jobStatusLabel[jobStatus]}</span>
-          )}
-          {canRestructureRo && (concernLines.length > 1 || !concernLines.some((line) => line.id === first.concern_line_id)) && concernLines.length > 0 && (
-            <label className="job-status-select">
-              Line
-              <select
-                value={concernLines.some((line) => line.id === first.concern_line_id) ? first.concern_line_id ?? "" : ""}
-                onChange={(event) => setItems((current) => current.map((item) =>
-                  item.service_group_id === group.id ? { ...item, concern_line_id: event.target.value || null } : item))}
-              >
-                {!concernLines.some((line) => line.id === first.concern_line_id) && <option value="">Not on a line</option>}
-                {concernLines.map((line, index) => (
-                  <option key={line.id} value={line.id}>
-                    Line {lineLetter(index)} — {line.concern?.trim() ? line.concern.trim().slice(0, 40) : LINE_KIND_LABEL[line.kind]}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <span className={`job-status-badge ${jobStatus}`}>
+              {jobStatus === "pending_review" ? "Sent to advisor" : isJobWorkable(group.id, jobStatus) ? "Approved · go ahead" : "Waiting on customer"}
+            </span>
           )}
           {initialRo && workspaceTab === "work_order" && (
             isJobWorkable(group.id, jobStatus) ? (
@@ -3554,16 +3671,10 @@ function RepairOrderEditor({
                   );
                 })}
               </div>
-            ) : jobStatus !== "pending_review" ? (
-              <span className="job-progress-waiting">Waiting on customer approval</span>
             ) : null
           )}
-          {jobStatus === "pending_review" && (
-            <span className="job-status-hint">
-              {canRestructureRo
-                ? "Technician request: check the parts and labor, then set it to Needs customer approval (or Authorized). It isn't on estimates or invoices until you do."
-                : "Sent to the advisor for review. It won't reach the customer until the advisor prices and approves it."}
-            </span>
+          {jobStatus === "pending_review" && canRestructureRo && (
+            <span className="job-status-hint">Check the parts and labor, then set it to Needs customer OK or Approved. Customers don't see it until you do.</span>
           )}
         </div>
         {hasCustomerAuthorizationResponse && canRestructureRo && (
@@ -3607,19 +3718,6 @@ function RepairOrderEditor({
             )}
           </div>
         )}
-        {!hideCostAndMargin && (
-          <section className="job-profit-panel" aria-label="Internal job profitability">
-            <div className="job-profit-heading">
-              <strong>Internal job profit</strong>
-              <span>Private — never shown on customer documents</span>
-            </div>
-            <div><span>Job revenue</span><strong>{money(jobTotal)}</strong></div>
-            <div><span>Recorded cost</span><strong>{money(jobCost)}</strong></div>
-            <div className={jobGrossProfit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(jobGrossProfit)}</strong></div>
-            <div className={jobGrossMargin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{jobGrossMargin.toFixed(1)}%</strong></div>
-            <small>Uses customer price minus recorded part/sublet costs. Labor and shop overhead are not deducted.</small>
-          </section>
-        )}
         <div className="job-lines">
           {group.items.map((item) => (
             <ChargeLine
@@ -3637,19 +3735,17 @@ function RepairOrderEditor({
             />
           ))}
         </div>
-        {initialRo && workspaceTab === "work_order" && (
-          <>
-            <JobPhotos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
-            <JobVideos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
-          </>
-        )}
         <div className="job-add-actions">
           <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>
           {canAddPartLine && <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Part</button>}
-          {!openShopNotes.has(group.id) && !first.internal_notes && (
-            <button className="button small ghost" onClick={() => setOpenShopNotes((current) => new Set(current).add(group.id))}>+ Shop note</button>
-          )}
         </div>
+        {initialRo && workspaceTab === "work_order" && (
+          <details className="job-media">
+            <summary>Photos &amp; videos</summary>
+            <JobPhotos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
+            <JobVideos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
+          </details>
+        )}
       </article>
     );
   };
@@ -3682,74 +3778,58 @@ function RepairOrderEditor({
       <div className="ro-action-bar">
         <button className="button ghost" onClick={onCancel}>← Back</button>
         <div className="ro-action-title">
-          <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : "New Work Order"}</h1>
+          <div className="ro-action-title-row">
+            <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : "New Work Order"}</h1>
+            {initialRo && (
+              <span className={`stage-pill stage-${stage}`}>
+                {isTechnician
+                  ? workCompleteAt ? "Sent to advisor" : RO_STAGE_LABEL[stage]
+                  : stage === "ready" ? "Ready for you" : RO_STAGE_LABEL[stage]}
+              </span>
+            )}
+          </div>
           {initialRo && (customerForm.name || vehicleForm.make) && (
             <span className="muted">{[customerForm.name, [vehicleForm.year, vehicleForm.make, vehicleForm.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
           )}
         </div>
-        {initialRo && workCompleteAt && <span className="work-complete-badge">✓ Work complete</span>}
-        {initialRo && !isTechnician && (
-          <div className="document-mode-switch" role="tablist" aria-label="Document">
-            {(["estimate", "work_order", "invoice"] as DocumentMode[]).map((mode) => (
-              <button key={mode} type="button" role="tab" aria-selected={docTab === mode} className={docTab === mode ? "active" : ""} onClick={() => setDocTab(mode)}>
-                {DOC_MODE_LABEL[mode]}
-              </button>
-            ))}
-          </div>
-        )}
         {initialRo && (
           <div className="ro-action-bar-right">
-            <div className="segmented edit-preview" role="group" aria-label="Edit or preview">
-              <button type="button" className="active" aria-pressed="true">Edit</button>
-              <button type="button" disabled={busy} onClick={() => void save(docTab)}>Preview</button>
-            </div>
+            <button type="button" className="button secondary" disabled={busy} onClick={() => void save(previewDoc)}>Preview</button>
             {isTechnician && (
               workCompleteAt
-                ? <button className="button ghost" disabled={busy} onClick={() => void markWorkComplete(false)}>Reopen</button>
-                : <button className="button primary" disabled={busy} onClick={() => void markWorkComplete(true)}>Work complete</button>
+                ? <button className="button ghost" disabled={busy} onClick={() => void markWorkComplete(false)}>Take back</button>
+                : <button className="button primary" disabled={busy} onClick={() => void markWorkComplete(true)}>Send to advisor</button>
             )}
-            {!isTechnician && docTab === "estimate" && (
-              <button className="button primary" disabled={busy} onClick={() => setSendKind("estimate")}>Send estimate</button>
-            )}
-            {!isTechnician && docTab === "work_order" && (
-              <button className="button primary" disabled={busy} onClick={() => void save("work_order", true)}>Print</button>
-            )}
-            {!isTechnician && docTab === "invoice" && (
-              <button className="button primary" disabled={busy} onClick={() => setSendKind("invoice")}>Send invoice</button>
+            {mainAction && (
+              <button className="button primary" disabled={busy} onClick={mainAction.onClick}>{mainAction.label}</button>
             )}
             {!isTechnician && (
               <MoreMenu items={[
-                docTab !== "work_order" && { label: "Print / Save PDF", onClick: () => void save(docTab, true) },
-                workCompleteAt
-                  ? { label: "Reopen (not work complete)", onClick: () => void markWorkComplete(false) }
-                  : { label: "Mark work complete", onClick: () => void markWorkComplete(true) },
+                mainAction?.label !== "Send estimate" && stage !== "voided" && { label: "Send estimate", onClick: () => setSendKind("estimate") },
+                { label: "Print estimate", onClick: () => void save("estimate", true) },
+                mainAction?.label !== "Print work order" && { label: "Print work order", onClick: () => void save("work_order", true) },
+                (stage === "invoiced" || stage === "paid") && mainAction?.label !== "Print invoice" && { label: "Print invoice", onClick: () => void save("invoice", true) },
+                (stage === "in_shop" || stage === "write_up" || stage === "waiting") && { label: "Mark ready for advisor", onClick: () => void markWorkComplete(true) },
+                stage === "ready" && { label: "Send back to the shop", onClick: () => void markWorkComplete(false) },
+                stage === "invoiced" && { label: "Reopen RO", onClick: () => void reopenRo() },
                 onDelete && { label: "Delete RO", onClick: onDelete, danger: true },
               ]} />
             )}
           </div>
         )}
       </div>
-
-      {initialRo && (
-        <section className="inspection-status-card">
-          <div>
-            <span className="inspection-status-eyebrow">Multipoint inspection</span>
-            {inspectionSummary ? (
-              <div className="inspection-status-counts">
-                <span className="needs">{inspectionSummary.needs} need attention</span>
-                <span className="watch">{inspectionSummary.watch} to watch</span>
-                <span className="good">{inspectionSummary.good} good</span>
-              </div>
-            ) : (
-              <strong>Not started</strong>
-            )}
-          </div>
-          {onInspection && (
-            <button type="button" className="button small secondary" onClick={onInspection}>
-              {inspectionSummary ? "Open" : "Start inspection"}
-            </button>
-          )}
-        </section>
+      {initialRo && !isTechnician && <StageTrack stage={stage} />}
+      {initialRo && !isTechnician && stage === "ready" && (
+        <div className="handoff-banner">
+          <strong>The tech sent this to you.</strong>
+          <span>All approved jobs are done. Look over the corrections, then Close &amp; invoice.</span>
+        </div>
+      )}
+      {initialRo && !isTechnician && stage !== "ready" && pendingRecs > 0 && (
+        <div className="handoff-banner warn">
+          <strong>{pendingRecs} tech recommendation{pendingRecs === 1 ? "" : "s"} to price.</strong>
+          <span>Set each to Needs customer OK or Approved, then send the estimate.</span>
+        </div>
       )}
 
       {!initialRo && (
@@ -3788,6 +3868,55 @@ function RepairOrderEditor({
         <div className="stack">
           {workspaceTab === "work_order" ? (
           <>
+          {initialRo && (!detailsOpen || isTechnician) ? (
+          <section className="ro-summary-grid" aria-label="Customer, vehicle and inspection">
+            <div className="ro-summary-card">
+              <div className="ro-summary-head"><span>Customer</span>{!isTechnician && <button type="button" className="link-button" onClick={() => setDetailsOpen(true)}>Edit</button>}</div>
+              <strong>{customerForm.name || "—"}</strong>
+              {customerForm.phone && <a href={`tel:${customerForm.phone.replace(/[^\d+]/g, "")}`}>{customerForm.phone}</a>}
+              {!isTechnician && customerForm.email && <span className="muted">{customerForm.email}</span>}
+            </div>
+            <div className="ro-summary-card">
+              <div className="ro-summary-head"><span>Vehicle</span>{!isTechnician && <button type="button" className="link-button" onClick={() => setDetailsOpen(true)}>Edit</button>}</div>
+              <strong>{[vehicleForm.year, vehicleForm.make, vehicleForm.model, vehicleForm.trim].filter(Boolean).join(" ") || "—"}</strong>
+              <span className="muted">{[vehicleForm.vin ? `VIN ${vehicleForm.vin}` : "", vehicleForm.license_plate ? `Plate ${vehicleForm.license_plate}` : ""].filter(Boolean).join(" · ") || "No VIN or plate yet"}</span>
+              <div className="ro-summary-miles">
+                <span className="muted">Miles in {mileageIn || "—"}</span>
+                <label>
+                  <span className="muted">out</span>
+                  <input inputMode="numeric" aria-label="Mileage out" placeholder="—" value={mileageOut} onChange={(event) => setMileageOut(event.target.value)} />
+                </label>
+              </div>
+            </div>
+            <div className="ro-summary-card">
+              <div className="ro-summary-head"><span>Inspection</span>{onInspection && <button type="button" className="link-button" onClick={onInspection}>{inspectionSummary ? "Open" : "Start"}</button>}</div>
+              {inspectionSummary ? (
+                <>
+                  {inspectionSummary.checked < inspectionSummary.total && <strong>{inspectionSummary.checked} of {inspectionSummary.total} checked</strong>}
+                  <div className="inspection-status-counts">
+                    <span className="needs">{inspectionSummary.needs} need attention</span>
+                    <span className="watch">{inspectionSummary.watch} to watch</span>
+                    <span className="good">{inspectionSummary.good} good</span>
+                  </div>
+                </>
+              ) : <strong>Not started</strong>}
+            </div>
+            {(concern || notes) && (
+              <div className="ro-summary-card">
+                <div className="ro-summary-head"><span>Notes</span>{!isTechnician && <button type="button" className="link-button" onClick={() => setDetailsOpen(true)}>Edit</button>}</div>
+                {concern && <span>{concern}</span>}
+                {notes && !isTechnician && <span className="muted">Shop: {notes}</span>}
+                {notes && isTechnician && <span className="muted">{notes}</span>}
+              </div>
+            )}
+          </section>
+          ) : (
+          <>
+          {initialRo && (
+            <div className="details-done-row">
+              <button type="button" className="button small secondary" onClick={() => setDetailsOpen(false)}>Done editing details</button>
+            </div>
+          )}
           <section className="panel">
             <div className="section-heading">
               <h2>Customer</h2>
@@ -3907,16 +4036,8 @@ function RepairOrderEditor({
           </section>
 
           <section className="panel">
-            <h2>Job details</h2>
+            <h2>Visit details</h2>
             <div className="form-grid four">
-              <label>
-                Status
-                <select value={status} onChange={(event) => setStatus(event.target.value as "open" | "completed" | "voided")}>
-                  <option value="open">Open</option>
-                  <option value="completed">Completed</option>
-                  <option value="voided">Voided</option>
-                </select>
-              </label>
               <label>
                 Mileage in
                 <input inputMode="numeric" value={mileageIn} onChange={(event) => setMileageIn(event.target.value)} />
@@ -3941,6 +4062,8 @@ function RepairOrderEditor({
               </label>
             </div>
           </section>
+          </>
+          )}
           </>
           ) : (
             <>
@@ -3973,53 +4096,6 @@ function RepairOrderEditor({
               </section>
             </>
           )}
-        </div>
-
-        {!isTechnician && (
-        <aside className={`panel totals-sidebar ${workspaceTab === "invoice" ? "invoice-sidebar" : ""}`}>
-          <h2>{workspaceTab === "invoice" ? "Invoice & payment" : "Current totals"}</h2>
-          <label>
-            Sales-tax rate %
-            <NumberInput value={taxRate} maxDecimals={3} onChange={setTaxRate} />
-          </label>
-          {workspaceTab === "invoice" ? (
-            <>
-              <label className="checkbox-row invoice-paid-toggle">
-                <input type="checkbox" checked={paid} onChange={(event) => setPaid(event.target.checked)} />
-                Mark invoice paid
-              </label>
-              <p className="sidebar-help">The paid date is recorded automatically when this is saved.</p>
-            </>
-          ) : (
-            <p className="sidebar-help">Use Send estimate at the top to email pricing to the customer. Payment status lives under Invoice.</p>
-          )}
-          <div className="totals-box">
-            <div><span>Subtotal</span><strong>{money(displayedTotals.subtotal)}</strong></div>
-            <div><span>Tax</span><strong>{money(displayedTotals.tax)}</strong></div>
-            <div className="grand-total"><span>{workspaceTab === "invoice" ? "Billable total" : "Estimate total"}</span><strong>{money(displayedTotals.total)}</strong></div>
-          </div>
-          {workspaceTab === "invoice" && hasCustomerAuthorizationResponse && (
-            <p className="sidebar-help invoice-authorization-help">Approved services and jobs with separately recorded authorization are billed. Other declined recommendations are not charged.</p>
-          )}
-          {workspaceTab === "invoice" && authorizationOverage > 0.01 && (
-            <div className="invoice-authorization-warning" role="alert">
-              <strong>Invoice exceeds authorization by {money(authorizationOverage)}</strong>
-              <span>The original signed amount is unchanged. Record separate authorization for added work before billing it.</span>
-            </div>
-          )}
-          {!hideCostAndMargin && (
-            <section className="ro-profit-summary">
-              <div className="ro-profit-title"><strong>Internal RO profit</strong><span>Private</span></div>
-              <div><span>Revenue</span><strong>{money(profitSummary.revenue)}</strong></div>
-              <div><span>Recorded cost</span><strong>{money(profitSummary.cost)}</strong></div>
-              <div className={profitSummary.profit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(profitSummary.profit)}</strong></div>
-              <div className={profitSummary.margin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{profitSummary.margin.toFixed(1)}%</strong></div>
-              <small>{profitSummary.usesAuthorization ? "Includes separately authorized jobs." : "All currently listed services."} Labor and overhead are not deducted.</small>
-            </section>
-          )}
-        </aside>
-        )}
-      </div>
 
       {canRestructureRo && settings.team_features_enabled && (
         <TechnicianAssignment
@@ -4064,7 +4140,7 @@ function RepairOrderEditor({
             const canDeleteLine = canRestructureRo || (isTechnician && isInspection && lineIsUnsaved);
             const pendingCount = lineJobs.filter((group) => group.items[0].job_status === "pending_review").length;
             const lineTotal = lineJobs.reduce((sum, group) => sum + group.items.reduce((jobSum, item) => jobSum + item.quantity * item.unit_price, 0), 0);
-            const textLabel = line.kind === "request" ? "What the customer wants" : line.kind === "customer" ? "The customer's concern, in their words" : "Your recommendation";
+            const textLabel = line.kind === "request" ? "What the customer wants" : line.kind === "customer" ? "The customer's concern, in their words" : isTechnician ? "Your recommendation" : "Tech recommendation";
             const textPlaceholder = line.kind === "request"
               ? "Customer requests oil and filter change."
               : line.kind === "customer"
@@ -4084,17 +4160,18 @@ function RepairOrderEditor({
                     <strong>{LINE_KIND_LABEL[line.kind]}</strong>
                   </div>
                   <div className="concern-line-meta">
-                    {pendingCount > 0 && <span className="job-status-badge pending_review">{pendingCount} waiting on advisor</span>}
+                    {pendingCount > 0 && <span className="job-status-badge pending_review">{isTechnician ? "Sent to advisor" : "Needs your pricing"}</span>}
                     {lineJobs.length > 0 && <span className="muted">{lineJobs.length} job{lineJobs.length === 1 ? "" : "s"}{hideCostAndMargin ? "" : ` · ${money(lineTotal)}`}</span>}
                   </div>
-                  {canRestructureRo && !isInspection && (
-                    <div className="segmented" role="group" aria-label="Line type">
-                      <button type="button" className={line.kind === "request" ? "active" : ""} onClick={() => setLineKind(line.id, "request")}>Request</button>
-                      <button type="button" className={line.kind === "customer" ? "active" : ""} onClick={() => setLineKind(line.id, "customer")}>Concern</button>
-                    </div>
-                  )}
-                  {canDeleteLine && (
-                    <button className="button small danger" onClick={() => void deleteConcernLine(line.id)}>Delete line</button>
+                  {(canDeleteLine || (canRestructureRo && !isInspection)) && (
+                    <MoreMenu
+                      ariaLabel={`Actions for Line ${letter}`}
+                      items={[
+                        canRestructureRo && line.kind === "customer" && { label: "Change to customer request", onClick: () => setLineKind(line.id, "request") },
+                        canRestructureRo && line.kind === "request" && { label: "Change to customer concern", onClick: () => setLineKind(line.id, "customer") },
+                        canDeleteLine && { label: "Delete line", onClick: () => void deleteConcernLine(line.id), danger: true },
+                      ]}
+                    />
                   )}
                 </header>
                 <div className={`concern-line-3c cols-${fieldCount}`}>
@@ -4198,6 +4275,53 @@ function RepairOrderEditor({
           )}
         </div>
       </section>
+        </div>
+
+        {!isTechnician && (
+        <aside className={`panel totals-sidebar ${workspaceTab === "invoice" ? "invoice-sidebar" : ""}`}>
+          <h2>{workspaceTab === "invoice" ? "Invoice & payment" : "Current totals"}</h2>
+          <label>
+            Sales-tax rate %
+            <NumberInput value={taxRate} maxDecimals={3} onChange={setTaxRate} />
+          </label>
+          {workspaceTab === "invoice" ? (
+            <>
+              <label className="checkbox-row invoice-paid-toggle">
+                <input type="checkbox" checked={paid} onChange={(event) => setPaid(event.target.checked)} />
+                Mark invoice paid
+              </label>
+              <p className="sidebar-help">The paid date is recorded automatically when this is saved.</p>
+            </>
+          ) : (
+            <p className="sidebar-help">Use Send estimate at the top to email pricing to the customer. Payment status lives under Invoice.</p>
+          )}
+          <div className="totals-box">
+            <div><span>Subtotal</span><strong>{money(displayedTotals.subtotal)}</strong></div>
+            <div><span>Tax</span><strong>{money(displayedTotals.tax)}</strong></div>
+            <div className="grand-total"><span>{workspaceTab === "invoice" ? "Billable total" : "Estimate total"}</span><strong>{money(displayedTotals.total)}</strong></div>
+          </div>
+          {workspaceTab === "invoice" && hasCustomerAuthorizationResponse && (
+            <p className="sidebar-help invoice-authorization-help">Approved services and jobs with separately recorded authorization are billed. Other declined recommendations are not charged.</p>
+          )}
+          {workspaceTab === "invoice" && authorizationOverage > 0.01 && (
+            <div className="invoice-authorization-warning" role="alert">
+              <strong>Invoice exceeds authorization by {money(authorizationOverage)}</strong>
+              <span>The original signed amount is unchanged. Record separate authorization for added work before billing it.</span>
+            </div>
+          )}
+          {!hideCostAndMargin && (
+            <section className="ro-profit-summary">
+              <div className="ro-profit-title"><strong>Internal RO profit</strong><span>Private</span></div>
+              <div><span>Revenue</span><strong>{money(profitSummary.revenue)}</strong></div>
+              <div><span>Recorded cost</span><strong>{money(profitSummary.cost)}</strong></div>
+              <div className={profitSummary.profit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(profitSummary.profit)}</strong></div>
+              <div className={profitSummary.margin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{profitSummary.margin.toFixed(1)}%</strong></div>
+              <small>{profitSummary.usesAuthorization ? "Includes separately authorized jobs." : "All currently listed services."} Labor and overhead are not deducted.</small>
+            </section>
+          )}
+        </aside>
+        )}
+      </div>
 
       <div className="bottom-actions workspace-bottom-actions">
         <button className="button ghost" onClick={onCancel}>Cancel</button>
@@ -4836,7 +4960,13 @@ function SendPanel({
 
 // ---- ⋯ menu ----------------------------------------------------------------------------------
 type MoreMenuItem = { label: string; onClick: () => void; danger?: boolean; disabled?: boolean };
-function MoreMenu({ items }: { items: Array<MoreMenuItem | false | null | undefined> }) {
+function MoreMenu({ items, label, ariaLabel = "More actions", small = false }: {
+  items: Array<MoreMenuItem | false | null | undefined>;
+  /** Text button (e.g. "+ Add") instead of ⋯. */
+  label?: string;
+  ariaLabel?: string;
+  small?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -4851,7 +4981,14 @@ function MoreMenu({ items }: { items: Array<MoreMenuItem | false | null | undefi
   if (!visible.length) return null;
   return (
     <div className="more-menu" ref={ref}>
-      <button type="button" className="button ghost more-menu-button" aria-haspopup="menu" aria-expanded={open} aria-label="More actions" onClick={() => setOpen((value) => !value)}>⋯</button>
+      <button
+        type="button"
+        className={`button ${label ? "secondary" : "ghost"} ${small ? "small" : ""} ${label ? "" : "more-menu-button"}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={label ? undefined : ariaLabel}
+        onClick={() => setOpen((value) => !value)}
+      >{label ?? "⋯"}</button>
       {open && (
         <div className="more-menu-list" role="menu">
           {visible.map((item) => (
@@ -4932,20 +5069,19 @@ function ChargeLine({
             onChange={(value) => changeItem(item.id, "unit_price", value)}
           />
         </label>
-      ) : (
-        <label>
-          Rate
-          <input type="text" value="—" disabled title="Only the owner or an admin can view or change the labor rate." />
+      ) : null}
+      {!hideCostAndMargin && (
+        <label className="checkbox-row compact">
+          <input type="checkbox" checked={item.taxable} onChange={(event) => changeItem(item.id, "taxable", event.target.checked)} disabled={!priceEditable} />
+          Tax
         </label>
       )}
-      <label className="checkbox-row compact">
-        <input type="checkbox" checked={item.taxable} onChange={(event) => changeItem(item.id, "taxable", event.target.checked)} disabled={!priceEditable} />
-        Tax
-      </label>
-      <div className="line-total">
-        <span>{item.item_type === "discount" ? "You save" : "Total"}</span>
-        <strong>{hideCostAndMargin && item.item_type === "labor" ? "—" : money(item.item_type === "discount" ? Math.abs(item.quantity * item.unit_price) : item.quantity * item.unit_price)}</strong>
-      </div>
+      {!(hideCostAndMargin && item.item_type === "labor") && (
+        <div className="line-total">
+          <span>{item.item_type === "discount" ? "You save" : "Total"}</span>
+          <strong>{money(item.item_type === "discount" ? Math.abs(item.quantity * item.unit_price) : item.quantity * item.unit_price)}</strong>
+        </div>
+      )}
       {canRemove && <button className="icon-button" title="Remove line" onClick={removeItem}>×</button>}
       {isPart && item.price_manual && (
         <div className="price-manual-row">
