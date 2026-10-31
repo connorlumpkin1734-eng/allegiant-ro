@@ -4,14 +4,12 @@
 // inspection up by that hash. The inspection itself can keep being edited afterward — sharing
 // again reuses the same link unless the shop explicitly regenerates it.
 
+import { brandFromSettings, escapeHtml, paragraph, renderCustomerEmail, renderCustomerText } from "../../lib/customer-email";
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
 });
-
-const escapeHtml = (value: unknown) => String(value ?? "")
-  .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-  .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 
 async function hashToken(token: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
@@ -71,9 +69,8 @@ export default async (request: Request) => {
 
   const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=*&owner_id=eq.${user.id}&limit=1`, { headers: serviceHeaders });
   const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<Record<string, unknown>> : [])[0] || {};
-  const businessName = (settings.business_name as string) || "Your repair shop";
-  const primaryColor = (settings.primary_color as string) || "#2459a9";
-  const accentColor = (settings.accent_color as string) || "#b5222d";
+  const brand = brandFromSettings(settings, supabaseUrl);
+  const businessName = brand.name;
   // Shared platform sending domain, tenant display name, Reply-To back to the shop — same
   // pattern used for invoices and estimates so every tenant isn't starting sender reputation
   // from zero, while replies still land with the actual shop.
@@ -96,7 +93,58 @@ export default async (request: Request) => {
 
   const roNumberLabel = `#${String(ro.ro_number).padStart(4, "0")}`;
   const vehicle = [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ");
-  const customerName = ro.customers?.name || "there";
+  const firstName = (ro.customers?.name || "").trim().split(/\s+/)[0] || "there";
+  const vehicleText = vehicle || "vehicle";
+
+  // Quick summary of the results: how many items need work, need watching, or are fine.
+  const values = Object.values((inspection.data.items ?? {}) as Record<string, { status?: string }>);
+  const count = (status: string) => values.filter((value) => value?.status === status).length;
+  const needsWork = count("service");
+  const watch = count("monitor");
+  const good = count("good");
+  const recommendations = String(inspection.data.recommendations ?? "").trim();
+  const stat = (number: number, label: string, color: string, tint: string) => `<td width="33%" align="center" style="padding:14px 6px;background:${tint};border-radius:10px">
+      <div style="font-family:Arial,sans-serif;font-size:28px;font-weight:800;color:${color}">${number}</div>
+      <div style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;color:${color}">${label}</div>
+    </td>`;
+  const summary = values.length
+    ? `<table role="presentation" width="100%" cellspacing="6" cellpadding="0" border="0" style="margin:0 0 18px"><tr>
+        ${stat(needsWork, "Needs attention", "#b91c1c", "#fef2f2")}
+        ${stat(watch, "Keep an eye on", "#b45309", "#fffbeb")}
+        ${stat(good, "Looks good", "#15803d", "#f0fdf4")}
+      </tr></table>`
+    : "";
+  const recommendationBlock = recommendations
+    ? paragraph(`<strong>Technician&#039;s notes:</strong> ${escapeHtml(recommendations.length > 400 ? `${recommendations.slice(0, 400).trimEnd()}…` : recommendations)}`)
+    : "";
+  const intro = needsWork
+    ? `We gave your ${escapeHtml(vehicleText)} a full multipoint inspection and found ${needsWork === 1 ? "one thing" : `${needsWork} things`} that need attention. The full report has the details.`
+    : watch
+      ? `We gave your ${escapeHtml(vehicleText)} a full multipoint inspection. Nothing needs attention right now, but there ${watch === 1 ? "is one item" : `are ${watch} items`} we&#039;ll keep an eye on.`
+      : `Good news: we gave your ${escapeHtml(vehicleText)} a full multipoint inspection and everything checked out.`;
+
+  const html = renderCustomerEmail({
+    brand,
+    preheader: needsWork
+      ? `${needsWork} ${needsWork === 1 ? "item needs" : "items need"} attention on your ${vehicleText}. See the full inspection.`
+      : `Your ${vehicleText} inspection results are ready.`,
+    documentLabel: `Inspection ${roNumberLabel}`,
+    vehicle,
+    greeting: `Hi ${firstName},`,
+    intro,
+    body: summary + recommendationBlock,
+    primaryButton: { label: "View inspection report", url: reportUrl },
+    fallbackUrl: reportUrl,
+  });
+  const text = renderCustomerText([
+    `Hi ${firstName},`,
+    "",
+    `Your multipoint inspection for your ${vehicleText} (RO ${roNumberLabel}) is ready.`,
+    values.length ? `Needs attention: ${needsWork} · Keep an eye on: ${watch} · Looks good: ${good}` : "",
+    recommendations ? `\nTechnician's notes: ${recommendations}` : "",
+    "",
+    `View the full report: ${reportUrl}`,
+  ], brand);
 
   const emailResponse = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -105,18 +153,11 @@ export default async (request: Request) => {
       from: fromEmail,
       to: [customerEmail],
       ...(replyToEmail ? { reply_to: replyToEmail } : {}),
-      subject: `Vehicle inspection report from ${businessName}`,
-      text: `Hi ${customerName},\n\nYour multipoint inspection for ${vehicle} (RO ${roNumberLabel}) is ready to view:\n\n${reportUrl}\n\n${businessName}`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden">
-        <div style="padding:24px;border-bottom:5px solid ${escapeHtml(primaryColor)}"><h1 style="margin:0">${escapeHtml(businessName)}</h1><p style="margin:6px 0 0;color:#64748b">Inspection ${roNumberLabel} · ${escapeHtml(vehicle)}</p></div>
-        <div style="padding:24px">
-          <p>Hi ${escapeHtml(customerName)},</p>
-          <p>We finished a full multipoint inspection on your vehicle. You can view the complete results, including anything that needs attention, at the link below.</p>
-          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0"><tr><td bgcolor="${escapeHtml(accentColor)}" style="border-radius:8px"><a href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:${escapeHtml(accentColor)};color:#ffffff;text-decoration:none;padding:15px 22px;border-radius:8px;font-weight:700">View inspection report</a></td></tr></table>
-          <p style="color:#64748b;font-size:13px">If the button does not open, copy this link:</p>
-          <p style="font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-all"><a href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer" style="color:${escapeHtml(primaryColor)}">${escapeHtml(reportUrl)}</a></p>
-        </div>
-      </div>`,
+      subject: needsWork
+        ? `Inspection results for your ${vehicleText}: ${needsWork} ${needsWork === 1 ? "item needs" : "items need"} attention`
+        : `Inspection results for your ${vehicleText} from ${businessName}`,
+      text,
+      html,
     }),
   });
   if (!emailResponse.ok) {

@@ -42,6 +42,8 @@ type Settings = {
   business_address: string;
   business_phone: string;
   business_email: string;
+  /** Optional, free text ("Mon–Fri 8–6, Sat 9–1"); shown in the footer of customer emails. */
+  business_hours: string | null;
   default_labor_rate: number;
   default_parts_markup: number;
   sales_tax_rate: number;
@@ -496,6 +498,7 @@ const defaultSettings: Settings = {
   business_address: "",
   business_phone: "",
   business_email: "",
+  business_hours: null,
   default_labor_rate: 100,
   default_parts_markup: 15,
   sales_tax_rate: 0,
@@ -5534,6 +5537,14 @@ function SettingsPanel({
           <label>
             Business email
             <input type="email" value={form.business_email || ""} onChange={(event) => setForm({ ...form, business_email: event.target.value })} />
+          </label>
+          <label className="span-two">
+            Shop hours <span className="muted" style={{ fontWeight: 400 }}>(optional, shown at the bottom of customer emails)</span>
+            <input
+              value={form.business_hours || ""}
+              placeholder="e.g. Mon–Fri 8am–6pm, Sat 9am–1pm"
+              onChange={(event) => setForm({ ...form, business_hours: event.target.value || null })}
+            />
           </label>
           <label>
             Zelle phone or email <span className="muted" style={{ fontWeight: 400 }}>(optional)</span>

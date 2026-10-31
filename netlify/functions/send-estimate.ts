@@ -11,14 +11,12 @@ type RepairOrderRow = {
   concern_lines: Array<{ id: string; sort_order: number; kind: string; concern: string | null; cause: string | null }> | null;
 };
 
+import { amountBlock, brandFromSettings, emailButton, escapeHtml, lineTable, money, renderCustomerEmail, renderCustomerText, totalsTable, type LineRow } from "../../lib/customer-email";
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
 });
-
-const escapeHtml = (value: unknown) => String(value ?? "")
-  .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-  .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 
 async function hashToken(token: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
@@ -143,10 +141,93 @@ export default async (request: Request) => {
   });
   if (!insertResponse.ok) return json({ error: `Could not create approval request: ${await insertResponse.text()}` }, 500);
 
-  const money = (amount: number) => amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
-  const brandHeader = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(snapshot.businessName)}" style="max-height:48px;max-width:280px;display:block" />`
-    : `<h1 style="margin:0">${escapeHtml(snapshot.businessName)}</h1>`;
+  const brand = brandFromSettings(settings, supabaseUrl);
+  const estimateLabel = `Estimate #${String(ro.ro_number).padStart(4, "0")}`;
+  const firstName = snapshot.customerName.split(/\s+/)[0] || "there";
+  const vehicleText = snapshot.vehicle || "vehicle";
+
+  // Jobs grouped under the line they belong to (what the customer asked for / their concern / our
+  // recommendation), each with its price, so the customer sees what they're paying for up front.
+  const jobs = new Map<string, { title: string; total: number; lineId: string | null; authorized: boolean }>();
+  const otherCharges: LineRow[] = [];
+  for (const item of items) {
+    const amount = Number(item.quantity) * Number(item.unit_price);
+    if (!item.service_group_id) {
+      otherCharges.push({ label: item.description || (amount < 0 ? "Discount" : "Charge"), amount: money(amount) });
+      continue;
+    }
+    const job = jobs.get(item.service_group_id) ?? {
+      title: item.service_group_title?.trim() || "Recommended service",
+      total: 0,
+      lineId: item.concern_line_id,
+      authorized: item.job_status === "authorized",
+    };
+    job.total += amount;
+    jobs.set(item.service_group_id, job);
+  }
+  const kindHeading: Record<string, string> = { request: "You asked for", customer: "Your concern", inspection: "We recommend" };
+  const jobRow = (job: { title: string; total: number; authorized: boolean }): LineRow => ({
+    label: job.title,
+    amount: money(job.total),
+    tag: job.authorized ? "Approved" : undefined,
+  });
+  const groups: Array<{ heading?: string; subheading?: string; rows: LineRow[] }> = [];
+  for (const line of concernLines) {
+    const lineJobs = [...jobs.values()].filter((job) => job.lineId === line.id);
+    if (!lineJobs.length) continue;
+    groups.push({
+      heading: `${kindHeading[line.kind] ?? "Service"}`,
+      subheading: line.concern?.trim() && line.kind !== "inspection" ? line.concern.trim() : undefined,
+      rows: lineJobs.map(jobRow),
+    });
+  }
+  const knownLines = new Set(concernLines.map((line) => line.id));
+  const looseJobs = [...jobs.values()].filter((job) => !job.lineId || !knownLines.has(job.lineId));
+  if (looseJobs.length) groups.push({ heading: groups.length ? "Additional work" : undefined, rows: looseJobs.map(jobRow) });
+  if (otherCharges.length) groups.push({ heading: "Other charges", rows: otherCharges });
+
+  const needsApproval = [...jobs.values()].filter((job) => !job.authorized).length;
+  const reviewButton = { label: needsApproval ? "Review & approve" : "View your estimate", url: approvalUrl };
+  const emailBody = [
+    amountBlock("Estimated total", money(total), brand.primaryColor, `${jobs.size} ${jobs.size === 1 ? "service" : "services"}${tax > 0 ? " · tax included" : ""}`),
+    `<div style="margin:0 0 26px">${emailButton(reviewButton.label, reviewButton.url, brand.accentColor)}</div>`,
+    lineTable(groups, brand.primaryColor),
+    totalsTable([
+      { label: "Subtotal", amount: money(subtotal) },
+      ...(tax > 0 ? [{ label: `Tax (${Number(ro.tax_rate)}%)`, amount: money(tax) }] : []),
+      { label: "Estimated total", amount: money(total), strong: true },
+    ]),
+  ].join("");
+
+  const html = renderCustomerEmail({
+    brand,
+    preheader: `${money(total)} estimate for your ${vehicleText}. Approve the work you want with one tap.`,
+    documentLabel: estimateLabel,
+    vehicle: snapshot.vehicle,
+    greeting: `Hi ${firstName},`,
+    intro: needsApproval
+      ? `Here&#039;s the estimate for your ${escapeHtml(vehicleText)}. Look it over and approve the work you&#039;d like us to do. You can say yes or no to each item.`
+      : `Here&#039;s the estimate for your ${escapeHtml(vehicleText)}, with everything you&#039;ve approved.`,
+    body: emailBody,
+    primaryButton: jobs.size > 4 ? reviewButton : undefined,
+    finePrint: needsApproval
+      ? "Photos, videos and full details are on the estimate page. We won&#039;t start anything you haven&#039;t approved."
+      : "Photos, videos and full details are on the estimate page.",
+    fallbackUrl: approvalUrl,
+  });
+  const text = renderCustomerText([
+    `Hi ${firstName},`,
+    "",
+    `Here's the estimate for your ${vehicleText} (${estimateLabel}).`,
+    "",
+    ...[...jobs.values()].map((job) => `- ${job.title}: ${money(job.total)}${job.authorized ? " (approved)" : ""}`),
+    ...otherCharges.map((row) => `- ${row.label}: ${row.amount}`),
+    "",
+    `Estimated total: ${money(total)}`,
+    "",
+    `Review and approve here: ${approvalUrl}`,
+  ], brand);
+
   const emailResponse = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
@@ -154,9 +235,9 @@ export default async (request: Request) => {
       from: fromEmail,
       to: [customerEmail],
       ...(replyToEmail ? { reply_to: replyToEmail } : {}),
-      subject: `Estimate #${String(ro.ro_number).padStart(4, "0")} from ${snapshot.businessName}`,
-      text: `Hi ${snapshot.customerName},\n\nYour estimate #${String(ro.ro_number).padStart(4, "0")} for ${snapshot.vehicle} is ready. Review it and approve or decline each service here:\n\n${approvalUrl}\n\nEstimated total: ${money(total)}\n\n${snapshot.businessName}`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden"><div style="padding:24px;border-bottom:5px solid ${escapeHtml(primaryColor)}">${brandHeader}<p style="margin:6px 0 0;color:#64748b">Estimate #${String(ro.ro_number).padStart(4, "0")} · ${escapeHtml(snapshot.vehicle)}</p></div><div style="padding:24px"><p>Hi ${escapeHtml(snapshot.customerName)},</p><p>Your itemized estimate is ready. You can approve or decline each recommended service separately.</p><div style="background:#edf4ff;border-left:6px solid ${escapeHtml(primaryColor)};padding:18px;margin:22px 0"><div style="font-size:12px;font-weight:700;text-transform:uppercase">Estimated total</div><div style="font-size:30px;font-weight:800;margin-top:5px">${money(total)}</div></div><table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0"><tr><td bgcolor="${escapeHtml(accentColor)}" style="border-radius:8px"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:${escapeHtml(accentColor)};color:#ffffff;text-decoration:none;padding:15px 22px;border-radius:8px;font-weight:700">Review estimate and choose services</a></td></tr></table><p style="color:#64748b;font-size:13px">If the button does not open, tap or copy this secure link:</p><p style="font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-all"><a href="${escapeHtml(approvalUrl)}" target="_blank" rel="noopener noreferrer" style="color:${escapeHtml(primaryColor)}">${escapeHtml(approvalUrl)}</a></p><p style="color:#64748b;font-size:13px">The secure estimate includes the full itemization, repair photos and videos, and signature authorization. Additional repairs require separate approval.</p></div></div>`,
+      subject: `Your ${vehicleText} estimate from ${brand.name}: ${money(total)}`,
+      text,
+      html,
     }),
   });
   if (!emailResponse.ok) {

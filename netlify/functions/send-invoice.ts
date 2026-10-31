@@ -20,6 +20,7 @@
 // (invoice_overrides). Keep this in sync with that logic and with create-payment-session.ts /
 // request-zelle-payment.ts.
 
+import { amountBlock, brandFromSettings, emailButton, escapeHtml, lineTable, money, renderCustomerEmail, renderCustomerText, totalsTable, type LineRow } from "../../lib/customer-email";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -49,10 +50,6 @@ async function notifyError(functionName: string, error: unknown, request: Reques
   }
 }
 
-
-const escapeHtml = (value: unknown) => String(value ?? "")
-  .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-  .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 
 async function hashToken(token: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
@@ -258,10 +255,6 @@ async function handler(request: Request): Promise<Response> {
   // and Reply-To routes the customer's reply to the shop's real inbox, not this platform mailbox.
   const fromEmail = `${businessName} <invoices@allegiantautocare.com>`;
   const replyToEmail = (settings.business_email as string) || undefined;
-  const logoPath = settings.logo_path as string | null | undefined;
-  const logoUrl = logoPath ? `${supabaseUrl}/storage/v1/object/public/shop-branding/${logoPath}` : null;
-  const primaryColor = (settings.primary_color as string) || "#2459a9";
-  const accentColor = (settings.accent_color as string) || "#b5222d";
   const stripeAccountId = settings.stripe_account_id as string | null;
   const stripeChargesEnabled = Boolean(settings.stripe_charges_enabled);
   const zelleRecipient = settings.zelle_recipient as string | null;
@@ -292,64 +285,76 @@ async function handler(request: Request): Promise<Response> {
   }
   const payMethodsLabel = [canPayByCard && "card or bank transfer", canPayByZelle && "Zelle"].filter(Boolean).join(" or ");
 
-  const money = (amount: number) => amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
+  const brand = brandFromSettings(settings, supabaseUrl);
   const vehicle = [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ");
-  const customerName = ro.customers?.name || "Customer";
-  const brandHeader = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(businessName)}" style="max-height:48px;max-width:280px;display:block" />`
-    : `<h1 style="margin:0">${escapeHtml(businessName)}</h1>`;
+  const vehicleText = vehicle || "vehicle";
+  const firstName = (ro.customers?.name || "").trim().split(/\s+/)[0] || "there";
 
-  const itemRows = items.map((item) => `
-    <tr>
-      <td style="padding:8px 0;border-bottom:1px solid #eef1f6">${escapeHtml(item.service_group_title || item.description)}</td>
-      <td style="padding:8px 0;border-bottom:1px solid #eef1f6;text-align:right;white-space:nowrap">${money(Number(item.quantity) * Number(item.unit_price))}</td>
-    </tr>`).join("");
+  // One row per job (labor and parts added together), then fees/discounts on their own.
+  const jobs = new Map<string, { title: string; total: number }>();
+  const otherRows: LineRow[] = [];
+  for (const item of items) {
+    const amount = Number(item.quantity) * Number(item.unit_price);
+    if (item.service_group_id) {
+      const job = jobs.get(item.service_group_id) ?? { title: item.service_group_title?.trim() || item.description, total: 0 };
+      job.total += amount;
+      jobs.set(item.service_group_id, job);
+    } else {
+      otherRows.push({ label: item.description || (amount < 0 ? "Discount" : "Charge"), amount: money(amount) });
+    }
+  }
+  const groups = [
+    { heading: "Work performed", rows: [...jobs.values()].map((job) => ({ label: job.title, amount: money(job.total) })) },
+    ...(otherRows.length ? [{ heading: "Other charges", rows: otherRows }] : []),
+  ].filter((group) => group.rows.length);
 
-  const balanceSection = ro.paid
-    ? `<div style="background:#e7f7ee;border-left:6px solid #1c8a4f;padding:18px;margin:22px 0">
-         <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:#1c8a4f">Paid in full</div>
-         <div style="font-size:30px;font-weight:800;margin-top:5px">${money(total)}</div>
-       </div>`
-    : `<div style="background:#fff4e5;border-left:6px solid ${escapeHtml(accentColor)};padding:18px;margin:22px 0">
-         <div style="font-size:12px;font-weight:700;text-transform:uppercase">Balance due</div>
-         <div style="font-size:30px;font-weight:800;margin-top:5px">${money(total)}</div>
-       </div>`;
+  const emailBody = [
+    ro.paid
+      ? amountBlock("Paid in full", money(total), "#15803d", "Thank you!")
+      : amountBlock("Balance due", money(total), brand.primaryColor, payLinkUrl ? `Pay online by ${payMethodsLabel}` : ""),
+    payLinkUrl ? `<div style="margin:0 0 26px">${emailButton("Pay now", payLinkUrl, brand.accentColor)}</div>` : "",
+    lineTable(groups, brand.primaryColor),
+    totalsTable([
+      { label: "Subtotal", amount: money(subtotal) },
+      ...(tax > 0 ? [{ label: `Tax (${Number(ro.tax_rate)}%)`, amount: money(tax) }] : []),
+      { label: ro.paid ? "Total paid" : "Total due", amount: money(total), strong: true },
+    ]),
+  ].join("");
 
-  const payButton = payLinkUrl
-    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0 10px"><tr><td bgcolor="${escapeHtml(accentColor)}" style="border-radius:8px"><a href="${escapeHtml(payLinkUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:${escapeHtml(accentColor)};color:#ffffff;text-decoration:none;padding:15px 22px;border-radius:8px;font-weight:700">Pay this invoice</a></td></tr></table>
-       <p style="color:#64748b;font-size:13px">Pay by ${escapeHtml(payMethodsLabel)}. If the button does not open, tap or copy this secure link:</p>
-       <p style="font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-all"><a href="${escapeHtml(payLinkUrl)}" target="_blank" rel="noopener noreferrer" style="color:${escapeHtml(primaryColor)}">${escapeHtml(payLinkUrl)}</a></p>`
-    : "";
+  const html = renderCustomerEmail({
+    brand,
+    preheader: ro.paid
+      ? `Your paid invoice for your ${vehicleText}. Thanks for your business!`
+      : `${money(total)} due for the work on your ${vehicleText}.${payLinkUrl ? " Pay online in a minute." : ""}`,
+    documentLabel: `Invoice ${roNumberLabel}`,
+    vehicle,
+    greeting: `Hi ${firstName},`,
+    intro: ro.paid
+      ? `Thanks for trusting us with your ${escapeHtml(vehicleText)}. Here&#039;s a copy of your paid invoice for your records.`
+      : `Your ${escapeHtml(vehicleText)} is all set. Here&#039;s your invoice for the work we did.`,
+    body: emailBody,
+    secondaryButton: videosUrl ? { label: "Watch your repair videos", url: videosUrl } : undefined,
+    finePrint: [
+      !ro.paid && !payLinkUrl ? "Give us a call to arrange payment." : "",
+      wasAdjustedForDeclines ? "Services you declined aren&#039;t included in this total." : "",
+      videosUrl ? "Your technician recorded video of the work on your vehicle." : "",
+    ].filter(Boolean).join(" ") || undefined,
+    fallbackUrl: payLinkUrl ?? videosUrl ?? undefined,
+  });
 
-  const noPaymentLinkNote = !payLinkUrl && !ro.paid
-    ? `<p style="color:#64748b;font-size:13px">Please contact us to arrange payment.</p>`
-    : "";
-
-  const declinedNote = wasAdjustedForDeclines
-    ? `<p style="color:#64748b;font-size:13px">Some recommended services were declined and are not included in this total.</p>`
-    : "";
-
-  const videosButton = videosUrl
-    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:6px 0 14px"><tr><td bgcolor="#ffffff" style="border-radius:8px;border:2px solid ${escapeHtml(primaryColor)}"><a href="${escapeHtml(videosUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;color:${escapeHtml(primaryColor)};text-decoration:none;padding:13px 22px;border-radius:6px;font-weight:700">Watch your repair videos</a></td></tr></table>
-       <p style="color:#64748b;font-size:13px">Our technician recorded video of the work on your vehicle. If the button does not open, copy this link: <a href="${escapeHtml(videosUrl)}" target="_blank" rel="noopener noreferrer" style="color:${escapeHtml(primaryColor)};overflow-wrap:anywhere;word-break:break-all">${escapeHtml(videosUrl)}</a></p>`
-    : "";
-
-  const html = `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#102a4c;border:1px solid #d9e0ea;border-radius:12px;overflow:hidden">
-    <div style="padding:24px;border-bottom:5px solid ${escapeHtml(primaryColor)}">${brandHeader}<p style="margin:6px 0 0;color:#64748b">Invoice ${roNumberLabel} · ${escapeHtml(vehicle)}</p></div>
-    <div style="padding:24px">
-      <p>Hi ${escapeHtml(customerName)},</p>
-      <p>${ro.paid ? "Here's a copy of your paid invoice." : "Your invoice is ready."}</p>
-      ${balanceSection}
-      ${payButton}
-      ${noPaymentLinkNote}
-      <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:22px 0;font-size:14px">${itemRows}</table>
-      ${declinedNote}
-      ${videosButton}
-      <p style="color:#64748b;font-size:13px">${escapeHtml(businessName)}${settings.business_phone ? ` · ${escapeHtml(settings.business_phone as string)}` : ""}${settings.business_email ? ` · ${escapeHtml(settings.business_email as string)}` : ""}</p>
-    </div>
-  </div>`;
-
-  const text = `Hi ${customerName},\n\n${ro.paid ? "Here's a copy of your paid invoice" : "Your invoice is ready"} for ${vehicle} (Invoice ${roNumberLabel}).\n\n${ro.paid ? "Paid" : "Balance due"}: ${money(total)}\n${payLinkUrl ? `\nPay this invoice (${payMethodsLabel}): ${payLinkUrl}\n` : ""}${videosUrl ? `\nWatch your repair videos: ${videosUrl}\n` : ""}\n${businessName}`;
+  const text = renderCustomerText([
+    `Hi ${firstName},`,
+    "",
+    ro.paid ? `Here's a copy of your paid invoice for your ${vehicleText} (Invoice ${roNumberLabel}).` : `Your invoice for your ${vehicleText} is ready (Invoice ${roNumberLabel}).`,
+    "",
+    ...[...jobs.values()].map((job) => `- ${job.title}: ${money(job.total)}`),
+    ...otherRows.map((row) => `- ${row.label}: ${row.amount}`),
+    "",
+    `${ro.paid ? "Paid" : "Balance due"}: ${money(total)}`,
+    payLinkUrl ? `\nPay now (${payMethodsLabel}): ${payLinkUrl}` : "",
+    videosUrl ? `\nWatch your repair videos: ${videosUrl}` : "",
+    wasAdjustedForDeclines ? "\nServices you declined aren't included in this total." : "",
+  ], brand);
 
   const emailResponse = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -358,7 +363,9 @@ async function handler(request: Request): Promise<Response> {
       from: fromEmail,
       to: [customerEmail],
       ...(replyToEmail ? { reply_to: replyToEmail } : {}),
-      subject: `Invoice ${roNumberLabel} from ${businessName}${ro.paid ? " — Paid" : ""}`,
+      subject: ro.paid
+        ? `Paid invoice for your ${vehicleText} from ${brand.name}`
+        : `Your invoice from ${brand.name}: ${money(total)} due`,
       text,
       html,
     }),
