@@ -1910,7 +1910,7 @@ function RepairOrderApp({ user }: { user: User }) {
             <span className="topbar-logo-text">{settings.business_name}</span>
           )}
         </button>
-        <nav>
+        <nav className={isTechnicianOnly ? "nav-single" : undefined}>
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             {isTechnicianOnly ? "My jobs" : "Work orders"}
           </button>
@@ -2396,7 +2396,13 @@ function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, on
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({ top: 72, right: 12 });
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  function toggle() {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (rect) setPanelPos({ top: rect.bottom + 8, right: Math.max(8, window.innerWidth - rect.right) });
+    setOpen((value) => !value);
+  }
   useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent | KeyboardEvent) => {
@@ -2410,7 +2416,7 @@ function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, on
   const initial = (name.trim()[0] || "?").toUpperCase();
   return (
     <div className="account-menu" ref={wrapRef}>
-      <button type="button" className="account-button" aria-haspopup="true" aria-expanded={open} aria-label={`Account: ${name}`} onClick={() => setOpen((value) => !value)}>
+      <button type="button" className="account-button" aria-haspopup="true" aria-expanded={open} aria-label={`Account: ${name}`} onClick={toggle}>
         <span className="account-avatar" aria-hidden="true">{initial}</span>
         <span className="account-button-text">
           <strong>{name}</strong>
@@ -2418,7 +2424,7 @@ function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, on
         </span>
       </button>
       {open && (
-        <div className="account-panel" role="menu">
+        <div className="account-panel" role="menu" style={{ top: panelPos.top, right: panelPos.right }}>
           <div className="account-panel-who">
             <span className="signed-in-label">Signed in as</span>
             <strong>{name}</strong>
@@ -2430,7 +2436,7 @@ function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, on
               {UI_THEMES.map((entry) => (
                 <button key={entry.id} type="button" className={`theme-swatch${theme === entry.id ? " active" : ""}`} aria-pressed={theme === entry.id} onClick={() => onTheme(entry.id)}>
                   <span className={`theme-dot theme-dot-${entry.id}`} aria-hidden="true" />
-                  {entry.name}
+                  {entry.name.replace(/\s*\(.*\)$/, "")}
                 </button>
               ))}
             </div>

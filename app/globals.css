@@ -2337,7 +2337,7 @@ tbody tr:hover { background: var(--panel-header); }
 .account-button-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
 .account-button-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .account-button-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: 0.75; }
-.account-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 45; width: 300px; max-width: calc(100vw - 24px); display: flex; flex-direction: column; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); }
+.account-panel { position: fixed; z-index: 45; width: 300px; max-width: calc(100vw - 24px); display: flex; flex-direction: column; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); }
 .account-panel-who { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px 12px; border-bottom: 1px solid var(--line); }
 .account-panel-who .signed-in-label { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .account-panel-who small { color: var(--muted); overflow-wrap: anywhere; }
@@ -2422,3 +2422,7 @@ tbody tr:hover { background: var(--panel-header); }
   .ro-list-table tr.ro-empty { display: block; }
   .ro-list-table tr.ro-empty td { padding: 24px 8px; }
 }
+
+/* Techs only have one page: no tab strip needed. */
+.topbar nav.nav-single { visibility: hidden; }
+@media (max-width: 980px) { .topbar nav.nav-single { display: none; } }
