@@ -2213,3 +2213,30 @@ tbody tr:hover { background: var(--panel-header); }
 .hide-prices .document-job-total,
 .hide-prices .document-totals,
 .hide-prices .document-authorization-summary > div:nth-child(2) { display: none; }
+
+/* ---- Alerts bell ---- */
+.alert-bell { position: relative; }
+.alert-bell-button { position: relative; min-width: 44px; padding-left: 12px; padding-right: 12px; font-size: 16px; }
+.alert-bell-count { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: #e5484d; color: #fff; font-size: 11px; font-weight: 900; line-height: 20px; text-align: center; }
+.alert-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 70; width: min(380px, calc(100vw - 24px)); border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); overflow: hidden; }
+.alert-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.alert-panel .link-button { padding: 0; border: 0; background: none; color: var(--accent); font-weight: 700; cursor: pointer; }
+.alert-list { max-height: min(420px, 60vh); overflow-y: auto; }
+.alert-empty { margin: 0; padding: 16px 14px; font-size: 13px; }
+.alert-item { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 11px 14px 11px 18px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; cursor: pointer; position: relative; }
+.alert-item:hover { background: var(--panel-header); }
+.alert-item.unread::before { content: ""; position: absolute; left: 7px; top: 16px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.alert-item.unread .alert-title { font-weight: 800; }
+.alert-title { font-size: 14px; line-height: 1.35; }
+.alert-body { color: var(--muted); font-size: 13px; }
+.alert-time { color: var(--muted); font-size: 11px; }
+.alert-email-toggle { display: flex; align-items: center; gap: 8px; margin: 0; padding: 11px 14px; border-top: 1px solid var(--line); background: var(--panel-header); font-size: 13px; font-weight: 700; }
+
+/* ---- Job progress on each job ---- */
+.segmented.job-progress button { padding: 6px 11px; font-size: 12px; font-weight: 800; }
+.segmented.job-progress button.active.progress-in_progress { background: #f0a92f; color: #2b1a00; }
+.segmented.job-progress button.active.progress-done { background: #22a06b; color: #fff; }
+.job-progress-waiting { align-self: center; color: var(--muted); font-size: 12px; font-weight: 700; }
+.work-complete-badge { padding: 5px 10px; border-radius: 999px; background: rgba(34, 160, 107, 0.16); color: #34d399; font-size: 12px; font-weight: 900; white-space: nowrap; }
+.badge.work-complete { background: rgba(34, 160, 107, 0.16); color: #34d399; }
+.badge.recommendation { background: rgba(240, 169, 47, 0.16); color: #f0a92f; }

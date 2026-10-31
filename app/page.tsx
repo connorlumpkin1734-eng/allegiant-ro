@@ -155,9 +155,19 @@ type LineItem = {
   concern_line_id: string | null;
   job_status: JobStatus | null;
   job_note: string | null;
+  /** Where the job stands on the shop floor (see JOB_PROGRESS). */
+  job_progress?: JobProgress;
 };
 
 type JobStatus = "authorized" | "needs_approval" | "pending_review";
+// Shop-floor progress of a job. To add a step later (e.g. "waiting_parts"), add it here and to the
+// line_items_job_progress_check constraint in the database.
+const JOB_PROGRESS = [
+  { value: "not_started", label: "Not started" },
+  { value: "in_progress", label: "In progress" },
+  { value: "done", label: "Done" },
+] as const;
+type JobProgress = (typeof JOB_PROGRESS)[number]["value"];
 
 type TechWorkMode = "open" | "team" | "technician";
 type PartsPricingMode = "flat" | "matrix";
@@ -396,7 +406,7 @@ type ConcernLine = {
 // Fields every line of a service job carries (a job is all line items sharing service_group_id).
 type JobFields = Pick<LineItem,
   "service_group_id" | "service_group_title" | "technician_story" | "work_performed" | "internal_notes"
-  | "service_concern" | "concern_line_id" | "job_status" | "job_note">;
+  | "service_concern" | "concern_line_id" | "job_status" | "job_note" | "job_progress">;
 
 const NO_JOB: JobFields = {
   service_group_id: null, service_group_title: null, technician_story: null, work_performed: null,
@@ -410,6 +420,7 @@ function jobFieldsOf(item: LineItem | null | undefined): JobFields {
     technician_story: item.technician_story, work_performed: item.work_performed, internal_notes: item.internal_notes,
     service_concern: item.service_concern, concern_line_id: item.concern_line_id ?? null,
     job_status: item.job_status ?? null, job_note: item.job_note ?? null,
+    job_progress: item.job_progress ?? "not_started",
   };
 }
 
@@ -452,6 +463,8 @@ type InvoiceOverrides = Record<string, { note: string; recorded_at: string; reco
 
 type RepairOrder = {
   invoice_overrides?: InvoiceOverrides;
+  /** Set when the tech marks all approved work done; cleared if more work is approved. */
+  work_complete_at?: string | null;
   id: string;
   ro_number: number;
   customer_id: string;
@@ -1467,12 +1480,19 @@ function RepairOrderApp({ user }: { user: User }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
+  // Opening an RO clears your alerts about it.
+  function markRoAlertsRead(id: string) {
+    if (!settings.team_features_enabled) return;
+    void supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("repair_order_id", id).is("read_at", null);
+  }
+
   async function openDocument(
     id: string,
     mode: DocumentMode = "work_order",
     returnView: "dashboard" | "customer_profile" | "editor" = "dashboard"
   ) {
     setError("");
+    markRoAlertsRead(id);
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
@@ -1509,6 +1529,7 @@ function RepairOrderApp({ user }: { user: User }) {
     docMode?: DocumentMode
   ) {
     setError("");
+    markRoAlertsRead(id);
     if (docMode) setEditorDocMode(docMode);
     else if (tab === "invoice") setEditorDocMode("invoice");
     else setEditorDocMode((current) => (current === "invoice" ? "estimate" : current));
@@ -1822,6 +1843,16 @@ function RepairOrderApp({ user }: { user: User }) {
             </button>
           )}
         </nav>
+        {settings.team_features_enabled && (
+          <AlertBell
+            userId={user.id}
+            onOpenRo={(id) => {
+              const ro = repairOrders.find((entry) => entry.id === id);
+              if (ro?.archived_at) void openDocument(id, "work_order", "dashboard");
+              else void editDocument(id, "dashboard", "work_order", isTechnicianOnly ? "work_order" : "estimate");
+            }}
+          />
+        )}
         <label className="theme-picker">
           <select aria-label="Color theme" value={uiTheme} onChange={(event) => changeUiTheme(event.target.value as UiTheme)}>
             {UI_THEMES.map((theme) => (
@@ -2461,6 +2492,17 @@ function Dashboard({
                         </select>
                       )}
                       {ro.archived_at && <span className="badge archived">Archived</span>}
+                      {!ro.archived_at && ro.status === "open" && ro.work_complete_at && (
+                        <span className="badge work-complete" title="The tech marked all approved work done">Work complete</span>
+                      )}
+                      {(() => {
+                        const pending = new Set((ro.line_items ?? []).filter(isPendingReview).map((item) => item.service_group_id)).size;
+                        return !ro.archived_at && pending > 0 ? (
+                          <span className="badge recommendation" title="Technician recommendations waiting for the advisor">
+                            {pending} recommendation{pending === 1 ? "" : "s"}
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
                   </td>
                   {!isTechnician && (<td>
@@ -2957,6 +2999,63 @@ function RepairOrderEditor({
     setConcernLines((current) => current.filter((line) => line.id !== id));
   }
 
+  // ---- Shop-floor progress and "work complete" ----
+  const [workCompleteAt, setWorkCompleteAt] = useState<string | null>(initialRo?.work_complete_at ?? null);
+  /** A job the shop may work on: approved at write-up, by the customer, or separately authorized. */
+  function isJobWorkable(groupId: string, status: JobStatus) {
+    if (status === "pending_review") return false;
+    return status === "authorized" || currentDecisions[groupId] === "approved" || Boolean(invoiceOverrides[groupId]);
+  }
+
+  async function setJobProgress(groupId: string, progress: JobProgress) {
+    const first = items.find((item) => item.service_group_id === groupId);
+    const line = concernLines.find((entry) => entry.id === first?.concern_line_id);
+    if (progress === "done" && line && !line.correction?.trim()) {
+      setMessage("Write the Correction (what was done) on this line before marking the job Done.");
+      focusProblem(`[data-line-correction="${line.id}"]`);
+      return;
+    }
+    setItems((current) => current.map((item) => (item.service_group_id === groupId ? { ...item, job_progress: progress } : item)));
+    if (progress !== "done") setWorkCompleteAt(null);
+    // A job that's already saved updates right away; a new one saves with the RO.
+    if (!initialRo || !first || !(initialRo.line_items ?? []).some((entry) => entry.id === first.id)) return;
+    const savedLine = line && (initialRo.concern_lines ?? []).some((entry) => entry.id === line.id) ? line : null;
+    const [jobResult, lineResult] = await Promise.all([
+      supabase.from("line_items").update({ job_progress: progress }).eq("repair_order_id", initialRo.id).eq("service_group_id", groupId),
+      progress === "done" && savedLine
+        ? supabase.from("concern_lines").update({ correction: savedLine.correction }).eq("id", savedLine.id)
+        : Promise.resolve({ error: null }),
+    ]);
+    const failed = jobResult.error || lineResult.error;
+    if (failed) setMessage(`Couldn't save the job status: ${failed.message}`);
+  }
+
+  async function markWorkComplete(complete: boolean) {
+    if (!initialRo) return;
+    if (complete) {
+      const groups = new Map<string, LineItem>();
+      for (const item of items) if (item.service_group_id && !groups.has(item.service_group_id)) groups.set(item.service_group_id, item);
+      const workable = [...groups.entries()].filter(([id, item]) => isJobWorkable(id, item.job_status ?? "needs_approval"));
+      if (!workable.length) {
+        setMessage("There's no approved work on this RO yet.");
+        return;
+      }
+      const open = workable.filter(([, item]) => (item.job_progress ?? "not_started") !== "done");
+      if (open.length) {
+        setMessage(`${open.length} approved job${open.length === 1 ? " isn't" : "s aren't"} marked Done yet.`);
+        focusProblem(`[data-job-title="${open[0][0]}"]`);
+        return;
+      }
+    }
+    const { error } = await supabase.rpc("mark_work_complete", { p_ro: initialRo.id, p_complete: complete });
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setWorkCompleteAt(complete ? new Date().toISOString() : null);
+    setMessage(complete ? "Marked work complete. The advisor has been notified." : "Reopened: this RO is no longer marked work complete.");
+  }
+
   function setJobStatus(groupId: string, jobStatus: JobStatus) {
     setItems((current) => current.map((item) => (item.service_group_id === groupId ? { ...item, job_status: jobStatus } : item)));
   }
@@ -3305,6 +3404,7 @@ function RepairOrderEditor({
         concern_line_id: item.service_group_id ? item.concern_line_id : null,
         job_status: item.service_group_id ? (item.job_status ?? "needs_approval") : null,
         job_note: valueOrNull(item.job_note ?? ""),
+        job_progress: item.service_group_id ? item.job_progress ?? "not_started" : "not_started",
       }));
 
       if (linePayload.length) {
@@ -3405,6 +3505,28 @@ function RepairOrderEditor({
                 ))}
               </select>
             </label>
+          )}
+          {initialRo && workspaceTab === "work_order" && (
+            isJobWorkable(group.id, jobStatus) ? (
+              <div className="segmented job-progress" role="group" aria-label="Job progress">
+                {JOB_PROGRESS.map((step) => {
+                  const current = (first.job_progress ?? "not_started") === step.value;
+                  return (
+                    <button
+                      key={step.value}
+                      type="button"
+                      aria-pressed={current}
+                      className={current ? `active progress-${step.value}` : ""}
+                      onClick={() => void setJobProgress(group.id, step.value)}
+                    >
+                      {step.value === "done" && current ? "✓ Done" : step.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : jobStatus !== "pending_review" ? (
+              <span className="job-progress-waiting">Waiting on customer approval</span>
+            ) : null
           )}
           {jobStatus === "pending_review" && (
             <span className="job-status-hint">
@@ -3535,6 +3657,7 @@ function RepairOrderEditor({
             <span className="muted">{[customerForm.name, [vehicleForm.year, vehicleForm.make, vehicleForm.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
           )}
         </div>
+        {initialRo && workCompleteAt && <span className="work-complete-badge">✓ Work complete</span>}
         {initialRo && !isTechnician && (
           <div className="document-mode-switch" role="tablist" aria-label="Document">
             {(["estimate", "work_order", "invoice"] as DocumentMode[]).map((mode) => (
@@ -3550,6 +3673,11 @@ function RepairOrderEditor({
               <button type="button" className="active" aria-pressed="true">Edit</button>
               <button type="button" disabled={busy} onClick={() => void save(docTab)}>Preview</button>
             </div>
+            {isTechnician && (
+              workCompleteAt
+                ? <button className="button ghost" disabled={busy} onClick={() => void markWorkComplete(false)}>Reopen</button>
+                : <button className="button primary" disabled={busy} onClick={() => void markWorkComplete(true)}>Work complete</button>
+            )}
             {!isTechnician && docTab === "estimate" && (
               <button className="button primary" disabled={busy} onClick={() => setSendKind("estimate")}>Send estimate</button>
             )}
@@ -3562,6 +3690,9 @@ function RepairOrderEditor({
             {!isTechnician && (
               <MoreMenu items={[
                 docTab !== "work_order" && { label: "Print / Save PDF", onClick: () => void save(docTab, true) },
+                workCompleteAt
+                  ? { label: "Reopen (not work complete)", onClick: () => void markWorkComplete(false) }
+                  : { label: "Mark work complete", onClick: () => void markWorkComplete(true) },
                 onDelete && { label: "Delete RO", onClick: onDelete, danger: true },
               ]} />
             )}
@@ -3968,6 +4099,7 @@ function RepairOrderEditor({
                     <span className="visibility-tag invoice">Invoice</span>
                     <textarea
                       rows={2}
+                      data-line-correction={line.id}
                       placeholder={line.kind === "request" ? "Performed oil and filter change, reset maintenance reminder." : "Fill in after the work. Example: Replaced RF hub bearing, road tested, noise gone."}
                       value={line.correction ?? ""}
                       onChange={(event) => updateConcernLine(line.id, "correction", event.target.value)}
@@ -4401,6 +4533,124 @@ function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
       ))}</div>}
       {message && <div className="notice">{message}</div>}
     </section>
+  );
+}
+
+// ---- Alerts bell ---------------------------------------------------------------------------
+// Alerts are created by the database (tech finished a car, tech recommends work, advisor or
+// customer approved work). This shows them, live, and lets each person turn on email copies.
+type AlertRow = { id: string; repair_order_id: string | null; kind: string; title: string; body: string | null; created_at: string; read_at: string | null };
+
+function timeAgo(iso: string): string {
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function AlertBell({ userId, onOpenRo }: { userId: string; onOpenRo: (repairOrderId: string) => void }) {
+  const [alerts, setAlerts] = useState<AlertRow[]>([]);
+  const [open, setOpen] = useState(false);
+  const [emailAlerts, setEmailAlerts] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase
+      .from("notifications")
+      .select("id, repair_order_id, kind, title, body, created_at, read_at")
+      .order("created_at", { ascending: false })
+      .limit(30);
+    setAlerts((data ?? []) as AlertRow[]);
+  }, []);
+
+  useEffect(() => {
+    void load();
+    void supabase.from("user_preferences").select("email_alerts").eq("user_id", userId).maybeSingle()
+      .then(({ data }) => setEmailAlerts(Boolean((data as { email_alerts?: boolean } | null)?.email_alerts)));
+    const channel = supabase
+      .channel(`alerts-${userId}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient_user_id=eq.${userId}` }, (payload) => {
+        const row = payload.new as AlertRow;
+        setAlerts((current) => [row, ...current.filter((entry) => entry.id !== row.id)].slice(0, 30));
+        notify(row.title, "info");
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `recipient_user_id=eq.${userId}` }, (payload) => {
+        const row = payload.new as AlertRow;
+        setAlerts((current) => current.map((entry) => (entry.id === row.id ? { ...entry, ...row } : entry)));
+      })
+      .subscribe();
+    // Backup for when the live connection drops: refresh when the tab comes back into view.
+    const onFocus = () => { void load(); };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      void supabase.removeChannel(channel);
+    };
+  }, [userId, load]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  const unread = alerts.filter((alert) => !alert.read_at).length;
+
+  async function markAllRead() {
+    const now = new Date().toISOString();
+    setAlerts((current) => current.map((alert) => (alert.read_at ? alert : { ...alert, read_at: now })));
+    await supabase.from("notifications").update({ read_at: now }).is("read_at", null);
+  }
+
+  function openAlert(alert: AlertRow) {
+    setOpen(false);
+    if (alert.repair_order_id) onOpenRo(alert.repair_order_id);
+  }
+
+  async function toggleEmail(next: boolean) {
+    setEmailAlerts(next);
+    const { error } = await supabase.from("user_preferences").upsert({ user_id: userId, email_alerts: next }, { onConflict: "user_id" });
+    if (error) {
+      setEmailAlerts(!next);
+      notify(`Couldn't save the email setting: ${error.message}`, "error");
+    } else {
+      notify(next ? "You'll get these alerts by email too." : "Email alerts turned off.", "success");
+    }
+  }
+
+  return (
+    <div className="alert-bell" ref={ref}>
+      <button type="button" className="button secondary alert-bell-button" aria-label={`Alerts${unread ? `, ${unread} unread` : ""}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <span aria-hidden="true">🔔</span>
+        {unread > 0 && <span className="alert-bell-count">{unread > 99 ? "99+" : unread}</span>}
+      </button>
+      {open && (
+        <div className="alert-panel" role="dialog" aria-label="Alerts">
+          <div className="alert-panel-head">
+            <strong>Alerts</strong>
+            {unread > 0 && <button type="button" className="link-button" onClick={() => void markAllRead()}>Mark all read</button>}
+          </div>
+          <div className="alert-list">
+            {!alerts.length && <p className="muted alert-empty">Nothing yet. You&apos;ll see it here when a tech finishes a car, recommends work, or work gets approved.</p>}
+            {alerts.map((alert) => (
+              <button key={alert.id} type="button" className={`alert-item ${alert.read_at ? "" : "unread"} kind-${alert.kind}`} onClick={() => openAlert(alert)}>
+                <span className="alert-title">{alert.title}</span>
+                {alert.body && <span className="alert-body">{alert.body}</span>}
+                <span className="alert-time">{timeAgo(alert.created_at)}</span>
+              </button>
+            ))}
+          </div>
+          <label className="checkbox-row compact alert-email-toggle">
+            <input type="checkbox" checked={emailAlerts} onChange={(event) => void toggleEmail(event.target.checked)} />
+            Email me these alerts too
+          </label>
+        </div>
+      )}
+    </div>
   );
 }
 
