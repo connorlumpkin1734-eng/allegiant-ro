@@ -1765,6 +1765,9 @@ tbody tr:hover { background: var(--panel-header); }
 }
 /* Keep brand/status colors; darken only neutral document details. */
 .document-page { --ink: #000; --muted: #000; --line: #000; color: #000; }
+/* Row hover on documents (estimate, invoice, inspection, customer pages): a light highlight, never the
+   app theme's dark one, which turned rows black and hid the text. */
+.document-page tbody tr:hover { background: #f3f5f9; }
 .document-page.document-repair-order { --document-accent: #000; --document-accent-ink: #000; }
 .document-page .document-header p,
 .document-page .document-subtitle,
