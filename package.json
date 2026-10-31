@@ -8,8 +8,8 @@
     "start": "next start"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "latest",
-    "@aws-sdk/s3-request-presigner": "latest",
+    "@aws-sdk/client-s3": "3.1095.0",
+    "@aws-sdk/s3-request-presigner": "3.1095.0",
     "@netlify/blobs": "latest",
     "@supabase/supabase-js": "2.57.4",
     "next": "16.3.0",
