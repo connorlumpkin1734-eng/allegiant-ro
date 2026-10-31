@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type Dispatch, FormEvent, type SetStateAction, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { MultipointInspection } from "@/components/MultipointInspection";
 import { supabase } from "@/lib/supabase";
@@ -53,6 +53,13 @@ type Settings = {
   logo_path: string | null;
   team_features_enabled: boolean;
   techs_can_price: boolean;
+  /** Whether service advisors (not admins) may change the labor rate on a single line. */
+  advisors_can_change_labor_rate: boolean;
+  /** Parts pricing: one flat markup, or a cost-based matrix. */
+  parts_pricing_mode: PartsPricingMode;
+  parts_matrix: MatrixPoint[];
+  /** Sliding blends smoothly between matrix rows; off = classic steps. */
+  parts_matrix_sliding: boolean;
   /** How technicians get work: every RO, their team's ROs, or only ROs assigned to them. */
   tech_work_mode: TechWorkMode;
   stripe_account_id: string | null;
@@ -131,6 +138,8 @@ type LineItem = {
   unit_cost: number | null;
   markup_percent: number | null;
   unit_price: number;
+  /** Part price was typed by hand (markup or price), so shop pricing no longer fills it in. */
+  price_manual?: boolean;
   taxable: boolean;
   sort_order: number;
   service_group_id: string | null;
@@ -149,6 +158,148 @@ type LineItem = {
 type JobStatus = "authorized" | "needs_approval" | "pending_review";
 
 type TechWorkMode = "open" | "team" | "technician";
+type PartsPricingMode = "flat" | "matrix";
+/** One row of the parts matrix: a part costing `cost` gets `markup` percent. */
+type MatrixPoint = { cost: number; markup: number };
+
+const MATRIX_PRESETS: Array<{ id: string; name: string; blurb: string; points: MatrixPoint[] }> = [
+  {
+    id: "conservative",
+    name: "Conservative",
+    blurb: "Lighter markups. Competitive on price.",
+    points: [{ cost: 0, markup: 100 }, { cost: 10, markup: 80 }, { cost: 50, markup: 60 }, { cost: 150, markup: 45 }, { cost: 500, markup: 30 }, { cost: 1000, markup: 25 }],
+  },
+  {
+    id: "standard",
+    name: "Standard",
+    blurb: "A typical independent-shop matrix.",
+    points: [{ cost: 0, markup: 200 }, { cost: 10, markup: 150 }, { cost: 50, markup: 100 }, { cost: 150, markup: 70 }, { cost: 500, markup: 45 }, { cost: 1000, markup: 30 }],
+  },
+  {
+    id: "aggressive",
+    name: "Aggressive",
+    blurb: "Dealer-level markups on small parts.",
+    points: [{ cost: 0, markup: 300 }, { cost: 10, markup: 200 }, { cost: 50, markup: 130 }, { cost: 150, markup: 85 }, { cost: 500, markup: 55 }, { cost: 1000, markup: 40 }],
+  },
+];
+
+/** Clean up matrix rows: valid numbers only, sorted by cost, one row per cost. */
+function normalizeMatrix(points: MatrixPoint[] | null | undefined): MatrixPoint[] {
+  const clean = (points ?? [])
+    .map((point) => ({ cost: Number(point.cost), markup: Number(point.markup) }))
+    .filter((point) => Number.isFinite(point.cost) && point.cost >= 0 && Number.isFinite(point.markup))
+    .sort((a, b) => a.cost - b.cost);
+  return clean.filter((point, index) => index === 0 || point.cost !== clean[index - 1].cost);
+}
+
+/**
+ * Markup % for a part cost from the matrix.
+ * Stepped: the row with the highest cost at or below the part cost.
+ * Sliding: a straight line between the two rows around the part cost, so price never drops as cost rises.
+ */
+function matrixMarkup(cost: number, rawPoints: MatrixPoint[], sliding: boolean): number {
+  const points = normalizeMatrix(rawPoints);
+  if (!points.length) return 0;
+  if (cost <= points[0].cost) return points[0].markup;
+  const last = points[points.length - 1];
+  if (cost >= last.cost) return last.markup;
+  const upperIndex = points.findIndex((point) => point.cost > cost);
+  const lower = points[upperIndex - 1];
+  const upper = points[upperIndex];
+  if (!sliding) return lower.markup;
+  const share = (cost - lower.cost) / (upper.cost - lower.cost);
+  return lower.markup + (upper.markup - lower.markup) * share;
+}
+
+/** The shop's markup % for a part at this cost, from whichever pricing mode is on. */
+function shopPartMarkup(cost: number, settings: Settings): number {
+  if (settings.parts_pricing_mode === "matrix" && normalizeMatrix(settings.parts_matrix).length) {
+    return Math.round(matrixMarkup(cost, settings.parts_matrix, settings.parts_matrix_sliding) * 100) / 100;
+  }
+  return Number(settings.default_parts_markup || 0);
+}
+
+function roundCents(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** "money" always shows two decimals (12.50); "plain" shows only what's needed (1, 2.5, 12.75). */
+function formatNumberBox(value: number | null | undefined, format: "money" | "plain", maxDecimals: number): string {
+  if (value == null || !Number.isFinite(Number(value))) return "";
+  const number = Number(value);
+  if (format === "money") return number.toFixed(2);
+  return String(Number(number.toFixed(maxDecimals)));
+}
+
+/**
+ * A plain box for typing a number: no up/down arrows, the mouse wheel never changes it, a number pad
+ * on phones, and it doesn't reformat while you type. It tidies up when you click out of it.
+ */
+function NumberInput({
+  value,
+  onChange,
+  format = "plain",
+  maxDecimals = 2,
+  allowNegative = false,
+  emptyValue = 0,
+  disabled,
+  placeholder,
+  style,
+  className,
+  ariaLabel,
+}: {
+  value: number | null | undefined;
+  onChange: (value: number) => void;
+  format?: "money" | "plain";
+  maxDecimals?: number;
+  allowNegative?: boolean;
+  /** What an empty box means once you click out (usually 0). */
+  emptyValue?: number;
+  disabled?: boolean;
+  placeholder?: string;
+  style?: CSSProperties;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  const [text, setText] = useState(() => formatNumberBox(value, format, maxDecimals));
+  // When not being typed in, the box follows the value (e.g. price recalculated from cost).
+  useEffect(() => {
+    if (!focused) setText(formatNumberBox(value, format, maxDecimals));
+  }, [value, focused, format, maxDecimals]);
+  const pattern = allowNegative ? /^-?\d*\.?\d*$/ : /^\d*\.?\d*$/;
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      autoComplete="off"
+      className={className}
+      style={style}
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      disabled={disabled}
+      value={text}
+      onFocus={(event) => {
+        setFocused(true);
+        event.target.select();
+      }}
+      onChange={(event) => {
+        const next = event.target.value.replace(/[$,\s%]/g, "");
+        if (!pattern.test(next)) return;
+        setText(next);
+        const parsed = Number(next);
+        if (next !== "" && next !== "-" && next !== "." && next !== "-." && Number.isFinite(parsed)) onChange(parsed);
+      }}
+      onBlur={() => {
+        setFocused(false);
+        const parsed = Number(text);
+        const final = text === "" || text === "-" || text === "." || !Number.isFinite(parsed) ? emptyValue : parsed;
+        if (final !== Number(value)) onChange(final);
+        setText(formatNumberBox(final, format, maxDecimals));
+      }}
+    />
+  );
+}
 
 // Dealer-style line kinds. "customer" = customer concern (needs diagnosis).
 type LineKind = "request" | "customer" | "inspection";
@@ -356,6 +507,10 @@ const defaultSettings: Settings = {
   logo_path: null,
   team_features_enabled: false,
   techs_can_price: true,
+  advisors_can_change_labor_rate: false,
+  parts_pricing_mode: "flat",
+  parts_matrix: MATRIX_PRESETS[1].points,
+  parts_matrix_sliding: true,
   tech_work_mode: "open",
   stripe_account_id: null,
   stripe_account_type: null,
@@ -548,7 +703,7 @@ function emptyLine(type: ItemType, settings: Settings, index: number, job: JobFi
     return { ...base, description: "", quantity: 1, unit_cost: null, markup_percent: null, unit_price: settings.default_labor_rate, taxable: false };
   }
   if (type === "part") {
-    return { ...base, description: "", quantity: 1, unit_cost: 0, markup_percent: settings.default_parts_markup, unit_price: 0, taxable: true };
+    return { ...base, description: "", quantity: 1, unit_cost: 0, markup_percent: shopPartMarkup(0, settings), unit_price: 0, price_manual: false, taxable: true };
   }
   return {
     ...base,
@@ -1000,6 +1155,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const isOwner = !currentStaff;
   const isAdminAccess = isOwner || Boolean(currentStaff?.is_admin);
   const isTechnicianOnly = Boolean(currentStaff) && currentStaff!.role === "technician" && !currentStaff!.is_admin;
+  const isAdvisorOnly = Boolean(currentStaff) && currentStaff!.role === "service_advisor" && !currentStaff!.is_admin;
   const ownerId = currentStaff?.owner_id ?? user.id;
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   // Browser tab shows the shop's own name.
@@ -1684,6 +1840,7 @@ function RepairOrderApp({ user }: { user: User }) {
             user={user}
             ownerId={ownerId}
             isTechnician={isTechnicianOnly}
+            isAdvisor={isAdvisorOnly}
             settings={settings}
             customers={customers}
             vehicles={vehicles}
@@ -2289,6 +2446,7 @@ function RepairOrderEditor({
   user,
   ownerId,
   isTechnician,
+  isAdvisor = false,
   settings,
   customers,
   vehicles,
@@ -2304,6 +2462,8 @@ function RepairOrderEditor({
   user: User;
   ownerId: string;
   isTechnician: boolean;
+  /** A service advisor who isn't an admin (pricing permissions apply). */
+  isAdvisor?: boolean;
   settings: Settings;
   customers: Customer[];
   vehicles: Vehicle[];
@@ -2387,6 +2547,8 @@ function RepairOrderEditor({
   }, [focusLineId]);
   // Private shop notes stay tucked away until someone adds one.
   const [openShopNotes, setOpenShopNotes] = useState<Set<string>>(() => new Set());
+  // Dispatch picks on a brand-new RO, saved with it (an existing RO saves dispatch as you click).
+  const [dispatchDraft, setDispatchDraft] = useState<DispatchDraft>({ teamId: null, techIds: [] });
   const [busy, setBusy] = useState(false);
   const [vinBusy, setVinBusy] = useState(false);
   const vinPhotoRef = useRef<HTMLInputElement>(null);
@@ -2401,6 +2563,8 @@ function RepairOrderEditor({
   const partPriceEditable = !isTechnician || settings.techs_can_price;
   const canAddPartLine = !isTechnician || settings.techs_can_price;
   const canRestructureRo = !isTechnician;
+  // Labor rate on a single line: owner and admins always; service advisors only if the shop allows it.
+  const laborRateEditable = !isTechnician && (!isAdvisor || settings.advisors_can_change_labor_rate);
 
   useEffect(() => {
     if (!vinScannerOpen) return;
@@ -2769,11 +2933,24 @@ function RepairOrderEditor({
 
         if (next.item_type === "part") {
           const cost = Number(next.unit_cost || 0);
-          if (field === "unit_cost" || field === "markup_percent") {
-            next.unit_price = cost * (1 + Number(next.markup_percent || 0) / 100);
+          if (field === "unit_cost") {
+            // Shop pricing (flat or matrix) fills the markup unless someone priced this line by hand.
+            if (!next.price_manual) next.markup_percent = shopPartMarkup(cost, settings);
+            next.unit_price = roundCents(cost * (1 + Number(next.markup_percent || 0) / 100));
           }
-          if (field === "unit_price" && cost > 0) {
-            next.markup_percent = (next.unit_price / cost - 1) * 100;
+          if (field === "markup_percent") {
+            next.price_manual = true;
+            next.unit_price = roundCents(cost * (1 + Number(next.markup_percent || 0) / 100));
+          }
+          if (field === "unit_price") {
+            next.price_manual = true;
+            if (cost > 0) next.markup_percent = roundCents((next.unit_price / cost - 1) * 100);
+          }
+          if (field === "price_manual" && !rawValue) {
+            // "Use shop pricing": back to the flat markup or matrix for this cost.
+            next.price_manual = false;
+            next.markup_percent = shopPartMarkup(cost, settings);
+            next.unit_price = roundCents(cost * (1 + next.markup_percent / 100));
           }
         }
 
@@ -2982,9 +3159,19 @@ function RepairOrderEditor({
         const { error } = await supabase.from("repair_orders").update(roPayload).eq("id", initialRo.id);
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.from("repair_orders").insert(roPayload).select("id").single();
+        const newRoPayload = canRestructureRo && settings.team_features_enabled && dispatchDraft.teamId
+          ? { ...roPayload, team_id: dispatchDraft.teamId }
+          : roPayload;
+        const { data, error } = await supabase.from("repair_orders").insert(newRoPayload).select("id").single();
         if (error) throw error;
         roId = data.id as string;
+        if (canRestructureRo && settings.team_features_enabled && dispatchDraft.techIds.length) {
+          const { error: dispatchError } = await supabase.from("repair_order_technicians").insert(
+            dispatchDraft.techIds.map((staffId) => ({ owner_id: ownerId, repair_order_id: roId, staff_id: staffId }))
+          );
+          // Don't stop the save here: the RO already exists, and retrying would create a second copy.
+          if (dispatchError) window.alert(`The repair order was saved, but the technician assignment didn't go through (${dispatchError.message}). Open the RO and dispatch it again.`);
+        }
       }
 
       // Upsert by id (each line already has a stable client-generated uuid, whether it's an
@@ -3029,6 +3216,7 @@ function RepairOrderEditor({
         unit_cost: item.item_type === "part" ? item.unit_cost : null,
         markup_percent: item.item_type === "part" ? item.markup_percent : null,
         unit_price: item.unit_price,
+        price_manual: item.item_type === "part" ? Boolean(item.price_manual) : false,
         taxable: item.taxable,
         sort_order: index,
         service_group_id: item.service_group_id,
@@ -3211,6 +3399,7 @@ function RepairOrderEditor({
               removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}
               hideCostAndMargin={hideCostAndMargin}
               priceEditable={item.item_type === "part" ? partPriceEditable : canRestructureRo}
+              laborRateEditable={laborRateEditable}
               canRemove={canRestructureRo || (isTechnician && !savedLineIds.has(item.id))}
               descriptionHint={item.item_type === "labor"
                 ? `Optional — same as job${first.service_group_title?.trim() ? `: ${first.service_group_title.trim()}` : ""}`
@@ -3532,7 +3721,7 @@ function RepairOrderEditor({
           <h2>{workspaceTab === "invoice" ? "Invoice & payment" : "Current totals"}</h2>
           <label>
             Sales-tax rate %
-            <input type="number" step="0.001" value={taxRate} onChange={(event) => setTaxRate(Number(event.target.value) || 0)} />
+            <NumberInput value={taxRate} maxDecimals={3} onChange={setTaxRate} />
           </label>
           {workspaceTab === "invoice" ? (
             <>
@@ -3572,12 +3761,14 @@ function RepairOrderEditor({
         </aside>
       </div>
 
-      {canRestructureRo && settings.team_features_enabled && initialRo && (
+      {canRestructureRo && settings.team_features_enabled && (
         <TechnicianAssignment
           ownerId={ownerId}
-          repairOrderId={initialRo.id}
+          repairOrderId={initialRo?.id ?? null}
           workMode={settings.tech_work_mode ?? "technician"}
-          initialTeamId={initialRo.team_id ?? null}
+          initialTeamId={initialRo?.team_id ?? null}
+          draft={dispatchDraft}
+          onDraftChange={setDispatchDraft}
         />
       )}
 
@@ -3590,7 +3781,7 @@ function RepairOrderEditor({
                 ? "Declined jobs stay uncharged unless you record a separate authorization. Pending technician requests are never billed."
                 : isTechnician
                   ? "Write what you found in Cause. Found something the customer didn't mention? Recommend a repair — it goes to the advisor to price and send."
-                  : `One line per thing the customer asked for, jobs underneath. Labor defaults to ${money(settings.default_labor_rate)}/hr, parts to ${settings.default_parts_markup}% markup.`}
+                  : `One line per thing the customer asked for, jobs underneath. Labor defaults to ${money(settings.default_labor_rate)}/hr, parts ${settings.parts_pricing_mode === "matrix" ? "price from your parts matrix" : `to ${settings.default_parts_markup}% markup`}.`}
             </p>
           </div>
           <div className="button-row">
@@ -3733,6 +3924,7 @@ function RepairOrderEditor({
                     removeItem={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}
                     hideCostAndMargin={hideCostAndMargin}
                     priceEditable={canRestructureRo}
+                    laborRateEditable={laborRateEditable}
                     canRemove={canRestructureRo}
                   />
                 ))}
@@ -3765,28 +3957,40 @@ function RepairOrderEditor({
 
 // Dispatch box on an RO: which team has it, and which techs are on it. What it does for techs depends
 // on the shop's "How do technicians get work?" setting (enforced in the database by staff_can_work_ro).
+type DispatchDraft = { teamId: string | null; techIds: string[] };
+
 function TechnicianAssignment({
   ownerId,
   repairOrderId,
   workMode,
   initialTeamId,
+  draft,
+  onDraftChange,
 }: {
   ownerId: string;
-  repairOrderId: string;
+  /** Null while writing up a new RO: picks are held here and saved along with the RO. */
+  repairOrderId: string | null;
   workMode: TechWorkMode;
   initialTeamId: string | null;
+  draft?: DispatchDraft;
+  onDraftChange?: (draft: DispatchDraft) => void;
 }) {
+  const isDraft = !repairOrderId;
   const [technicians, setTechnicians] = useState<StaffMember[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [teamId, setTeamId] = useState<string | null>(initialTeamId);
-  const [assignedIds, setAssignedIds] = useState<string[]>([]);
+  const [savedTeamId, setTeamId] = useState<string | null>(initialTeamId);
+  const [savedAssignedIds, setAssignedIds] = useState<string[]>([]);
+  const teamId = isDraft ? draft?.teamId ?? null : savedTeamId;
+  const assignedIds = isDraft ? draft?.techIds ?? [] : savedAssignedIds;
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   async function loadAll() {
     const [staffResult, assignmentsResult, teamsResult] = await Promise.all([
       supabase.from("staff").select("*").eq("role", "technician").eq("active", true).order("name"),
-      supabase.from("repair_order_technicians").select("staff_id").eq("repair_order_id", repairOrderId),
+      repairOrderId
+        ? supabase.from("repair_order_technicians").select("staff_id").eq("repair_order_id", repairOrderId)
+        : Promise.resolve({ data: [] as Array<{ staff_id: string }>, error: null }),
       supabase.from("teams").select("id, name").order("name"),
     ]);
     if (staffResult.error) setMessage(staffResult.error.message);
@@ -3801,6 +4005,13 @@ function TechnicianAssignment({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repairOrderId]);
   async function toggle(staffId: string, assign: boolean) {
+    if (isDraft) {
+      onDraftChange?.({
+        teamId,
+        techIds: assign ? [...assignedIds, staffId] : assignedIds.filter((id) => id !== staffId),
+      });
+      return;
+    }
     setBusy(true);
     setMessage("");
     const { error } = assign
@@ -3811,6 +4022,10 @@ function TechnicianAssignment({
     setBusy(false);
   }
   async function chooseTeam(nextTeamId: string | null) {
+    if (isDraft) {
+      onDraftChange?.({ teamId: nextTeamId, techIds: assignedIds });
+      return;
+    }
     setBusy(true);
     setMessage("");
     const previous = teamId;
@@ -3835,7 +4050,7 @@ function TechnicianAssignment({
     <section className="panel dispatch-panel">
       <div className="dispatch-heading">
         <h3>Dispatch</h3>
-        <span className="muted">{help}</span>
+        <span className="muted">{help}{isDraft ? " Saved with the repair order." : ""}</span>
       </div>
       {message && <div className="notice">{message}</div>}
       {loading ? (
@@ -4105,6 +4320,7 @@ function ChargeLine({
   removeItem,
   hideCostAndMargin = false,
   priceEditable = true,
+  laborRateEditable,
   canRemove = true,
   descriptionHint,
 }: {
@@ -4114,9 +4330,13 @@ function ChargeLine({
   removeItem: () => void;
   hideCostAndMargin?: boolean;
   priceEditable?: boolean;
+  /** Labor lines only: whether this person may change the rate on this line (defaults to priceEditable). */
+  laborRateEditable?: boolean;
   canRemove?: boolean;
 }) {
   const showRate = item.item_type !== "labor" || !hideCostAndMargin;
+  const rateLocked = item.item_type === "labor" ? !(laborRateEditable ?? priceEditable) : !priceEditable;
+  const isPart = item.item_type === "part";
   return (
     <div className={`charge-line ${item.item_type} ${item.item_type === "part" ? "associated-part" : ""}`}>
       <span className="charge-type-label">
@@ -4128,29 +4348,28 @@ function ChargeLine({
       </label>
       <label>
         {item.item_type === "labor" ? "Hours" : "Qty"}
-        <input type="number" step="0.01" value={item.quantity} onChange={(event) => changeItem(item.id, "quantity", event.target.value)} />
+        <NumberInput value={item.quantity} maxDecimals={2} onChange={(value) => changeItem(item.id, "quantity", value)} />
       </label>
-      {item.item_type === "part" && !hideCostAndMargin && (
+      {isPart && !hideCostAndMargin && (
         <>
           <label>
             Your cost
-            <input type="number" step="0.01" value={item.unit_cost ?? 0} onChange={(event) => changeItem(item.id, "unit_cost", event.target.value)} />
+            <NumberInput format="money" value={item.unit_cost ?? 0} disabled={!priceEditable} onChange={(value) => changeItem(item.id, "unit_cost", value)} />
           </label>
           <label>
             Markup %
-            <input type="number" step="0.01" value={Number(item.markup_percent ?? 0).toFixed(2)} onChange={(event) => changeItem(item.id, "markup_percent", event.target.value)} />
+            <NumberInput value={item.markup_percent ?? 0} maxDecimals={2} disabled={!priceEditable} onChange={(value) => changeItem(item.id, "markup_percent", value)} />
           </label>
         </>
       )}
       {showRate ? (
-        <label>
+        <label title={item.item_type === "labor" && rateLocked ? "The labor rate on a line is set by the shop. Ask the owner to change it." : undefined}>
           {item.item_type === "labor" ? "Rate" : item.item_type === "discount" ? "Discount amount" : "Unit price"}
-          <input
-            type="number"
-            step="0.01"
-            value={item.item_type === "discount" ? Math.abs(item.unit_price) : Number(item.unit_price.toFixed(2))}
-            disabled={!priceEditable}
-            onChange={(event) => changeItem(item.id, "unit_price", event.target.value)}
+          <NumberInput
+            format="money"
+            value={item.item_type === "discount" ? Math.abs(item.unit_price) : item.unit_price}
+            disabled={rateLocked}
+            onChange={(value) => changeItem(item.id, "unit_price", value)}
           />
         </label>
       ) : (
@@ -4168,6 +4387,16 @@ function ChargeLine({
         <strong>{hideCostAndMargin && item.item_type === "labor" ? "—" : money(item.item_type === "discount" ? Math.abs(item.quantity * item.unit_price) : item.quantity * item.unit_price)}</strong>
       </div>
       {canRemove && <button className="icon-button" title="Remove line" onClick={removeItem}>×</button>}
+      {isPart && item.price_manual && (
+        <div className="price-manual-row">
+          <span className="price-manual-tag" title="This part was priced by hand, so shop pricing won't change it.">Manual price</span>
+          {priceEditable && (
+            <button type="button" className="link-button" onClick={() => changeItem(item.id, "price_manual", false)}>
+              Use shop pricing
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -4888,7 +5117,7 @@ function PlatformAdminPanel() {
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span className="muted" style={{ fontSize: 13 }}>Default price for new shops ($/mo)</span>
             <input
-              type="number" min="0" step="0.01" style={{ width: 100 }}
+              type="text" inputMode="decimal" autoComplete="off" style={{ width: 100 }}
               value={defaultPriceInput}
               onChange={(event) => setDefaultPriceInput(event.target.value)}
             />
@@ -4947,7 +5176,7 @@ function PlatformAdminPanel() {
                     <td>{tenant.trial_ro_created_count} / {tenant.trial_ro_limit} ROs</td>
                     <td>
                       <input
-                        type="number" min="0" step="0.01" style={{ width: 90 }}
+                        type="text" inputMode="decimal" autoComplete="off" style={{ width: 90 }}
                         value={priceInputs[tenant.owner_id] ?? ""}
                         onChange={(event) => setPriceInputs((current) => ({ ...current, [tenant.owner_id]: event.target.value }))}
                       />
@@ -5019,6 +5248,183 @@ function PlatformAdminPanel() {
   );
 }
 
+const MATRIX_SAMPLE_COSTS = [5, 25, 75, 250, 750];
+
+function marginFromMarkup(markup: number): number {
+  return markup <= -100 ? 0 : (markup / (100 + markup)) * 100;
+}
+
+/** Settings → Parts pricing: one flat markup, or a cost-based matrix (sliding or stepped). */
+function PartsPricingPanel({
+  form,
+  setForm,
+}: {
+  form: Settings;
+  setForm: Dispatch<SetStateAction<Settings>>;
+}) {
+  const [testCost, setTestCost] = useState(40);
+  const rows = form.parts_matrix?.length ? form.parts_matrix : MATRIX_PRESETS[1].points;
+  const setRows = (next: MatrixPoint[]) => setForm((current) => ({ ...current, parts_matrix: next }));
+  const preview: Settings = { ...form, parts_matrix: rows };
+  const testMarkup = shopPartMarkup(testCost, preview);
+  const testPrice = roundCents(testCost * (1 + testMarkup / 100));
+  const costs = rows.map((row) => Number(row.cost));
+  const hasDuplicateCost = costs.some((cost, index) => costs.indexOf(cost) !== index);
+  const isMatrix = form.parts_pricing_mode === "matrix";
+
+  return (
+    <div className="panel settings-panel parts-pricing-panel">
+      <h2 style={{ marginTop: 0 }}>Parts pricing</h2>
+      <p className="muted" style={{ fontSize: 13, margin: "0 0 14px" }}>
+        How a part&apos;s price fills in when you enter your cost. You can always change the markup or price on any part line; that line is then marked &quot;Manual price&quot; and keeps it. Changing this only affects new part lines.
+      </p>
+      <div className="work-mode-picker" role="radiogroup" aria-label="Parts pricing" style={{ marginTop: 0 }}>
+        {([
+          ["flat", "Flat markup", "Every part gets the same markup."],
+          ["matrix", "Parts matrix", "Markup depends on part cost: cheap parts take a bigger markup, expensive parts a smaller one."],
+        ] as Array<[PartsPricingMode, string, string]>).map(([value, label, help]) => (
+          <label key={value} className={`work-mode-option ${form.parts_pricing_mode === value ? "selected" : ""}`}>
+            <input
+              type="radio"
+              name="parts_pricing_mode"
+              checked={form.parts_pricing_mode === value}
+              onChange={() => setForm((current) => ({
+                ...current,
+                parts_pricing_mode: value,
+                parts_matrix: current.parts_matrix?.length ? current.parts_matrix : MATRIX_PRESETS[1].points,
+              }))}
+            />
+            <span><strong>{label}</strong><small>{help}</small></span>
+          </label>
+        ))}
+      </div>
+
+      {!isMatrix ? (
+        <div className="form-grid two" style={{ marginTop: 14 }}>
+          <label>
+            Parts markup %
+            <NumberInput value={form.default_parts_markup} onChange={(value) => setForm((current) => ({ ...current, default_parts_markup: value }))} />
+          </label>
+          <p className="muted matrix-flat-example">
+            A $40.00 part sells for {money(roundCents(40 * (1 + Number(form.default_parts_markup || 0) / 100)))} ({marginFromMarkup(Number(form.default_parts_markup || 0)).toFixed(1)}% margin).
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="matrix-presets">
+            <span className="muted">Start from:</span>
+            {MATRIX_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="button small secondary"
+                title={preset.blurb}
+                onClick={() => {
+                  if (window.confirm(`Replace your matrix rows with the ${preset.name} preset?`)) setRows(preset.points.map((point) => ({ ...point })));
+                }}
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+
+          <table className="matrix-table">
+            <thead>
+              <tr>
+                <th>{form.parts_matrix_sliding ? "Part cost" : "Parts costing at least"}</th>
+                <th>Markup %</th>
+                <th>Margin</th>
+                <th>Sells for</th>
+                <th aria-label="Remove" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr key={index}>
+                  <td>
+                    <NumberInput
+                      format="money"
+                      ariaLabel="Part cost"
+                      value={row.cost}
+                      onChange={(value) => setRows(rows.map((entry, i) => (i === index ? { ...entry, cost: value } : entry)))}
+                    />
+                  </td>
+                  <td>
+                    <NumberInput
+                      ariaLabel="Markup percent"
+                      value={row.markup}
+                      onChange={(value) => setRows(rows.map((entry, i) => (i === index ? { ...entry, markup: value } : entry)))}
+                    />
+                  </td>
+                  <td className="muted">{marginFromMarkup(Number(row.markup)).toFixed(1)}%</td>
+                  <td>{money(roundCents(Number(row.cost) * (1 + Number(row.markup) / 100)))}</td>
+                  <td>
+                    {rows.length > 1 && (
+                      <button type="button" className="icon-button" title="Remove row" onClick={() => setRows(rows.filter((_, i) => i !== index))}>×</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {hasDuplicateCost && <div className="notice">Two rows have the same cost. Only one of them will be used.</div>}
+          <div className="matrix-actions">
+            <button
+              type="button"
+              className="button small secondary"
+              disabled={rows.length >= 20}
+              onClick={() => {
+                const last = normalizeMatrix(rows).at(-1);
+                setRows([...rows, { cost: last ? Math.max(1, last.cost * 2) : 0, markup: last ? last.markup : 100 }]);
+              }}
+            >
+              + Add row
+            </button>
+            <button type="button" className="button small ghost" onClick={() => setRows(normalizeMatrix(rows))}>Sort by cost</button>
+          </div>
+
+          <label className="checkbox-row" style={{ marginTop: 14 }}>
+            <input
+              type="checkbox"
+              checked={form.parts_matrix_sliding}
+              onChange={(event) => setForm((current) => ({ ...current, parts_matrix_sliding: event.target.checked }))}
+            />
+            <span>
+              <strong>Sliding (recommended)</strong>
+              <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+                {form.parts_matrix_sliding
+                  ? "Markup blends smoothly between rows, so a more expensive part never sells for less than a cheaper one. Parts below the first row or above the last use that row's markup."
+                  : "Stepped: every part from one row's cost up to the next row's cost gets that row's markup. A part just over a step can sell for less than one just under it."}
+              </p>
+            </span>
+          </label>
+        </>
+      )}
+
+      <div className="matrix-test">
+        <label>
+          Test a part cost
+          <NumberInput format="money" value={testCost} onChange={setTestCost} />
+        </label>
+        <div><span className="muted">Markup</span><strong>{testMarkup.toFixed(1)}%</strong></div>
+        <div><span className="muted">Sells for</span><strong>{money(testPrice)}</strong></div>
+        <div><span className="muted">Profit</span><strong>{money(roundCents(testPrice - testCost))}</strong></div>
+        <div><span className="muted">Margin</span><strong>{marginFromMarkup(testMarkup).toFixed(1)}%</strong></div>
+      </div>
+      {isMatrix && (
+        <div className="matrix-samples">
+          {MATRIX_SAMPLE_COSTS.map((cost) => {
+            const markup = shopPartMarkup(cost, preview);
+            return (
+              <span key={cost}>{money(cost)} → <strong>{money(roundCents(cost * (1 + markup / 100)))}</strong></span>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsPanel({
   user,
   ownerId,
@@ -5058,7 +5464,13 @@ function SettingsPanel({
   async function save() {
     setBusy(true);
     setMessage("");
-    const payload = { ...form, owner_id: ownerId };
+    const matrix = normalizeMatrix(form.parts_matrix);
+    if (form.parts_pricing_mode === "matrix" && !matrix.length) {
+      setMessage("Your parts matrix needs at least one row with a cost and markup.");
+      setBusy(false);
+      return;
+    }
+    const payload = { ...form, parts_matrix: matrix.length ? matrix : MATRIX_PRESETS[1].points, owner_id: ownerId };
     const { error } = await supabase.from("settings").upsert(payload, { onConflict: "owner_id" });
     if (error) {
       setMessage(error.message);
@@ -5136,15 +5548,11 @@ function SettingsPanel({
           </label>
           <label>
             Default labor rate
-            <input type="number" step="0.01" value={form.default_labor_rate} onChange={(event) => setForm({ ...form, default_labor_rate: Number(event.target.value) || 0 })} />
-          </label>
-          <label>
-            Default parts markup %
-            <input type="number" step="0.01" value={form.default_parts_markup} onChange={(event) => setForm({ ...form, default_parts_markup: Number(event.target.value) || 0 })} />
+            <NumberInput format="money" value={form.default_labor_rate} onChange={(value) => setForm((current) => ({ ...current, default_labor_rate: value }))} />
           </label>
           <label>
             Default sales-tax rate %
-            <input type="number" step="0.001" value={form.sales_tax_rate} onChange={(event) => setForm({ ...form, sales_tax_rate: Number(event.target.value) || 0 })} />
+            <NumberInput value={form.sales_tax_rate} maxDecimals={3} onChange={(value) => setForm((current) => ({ ...current, sales_tax_rate: value }))} />
           </label>
           <label className="span-two">
             Document footer <span className="muted" style={{ fontWeight: 400 }}>— type {"{shop}"} anywhere to print your shop name</span>
@@ -5152,6 +5560,8 @@ function SettingsPanel({
           </label>
         </div>
       </div>
+
+      <PartsPricingPanel form={form} setForm={setForm} />
 
       <div className="panel settings-panel">
         <h2 style={{ marginTop: 0 }}>Branding</h2>
@@ -5281,19 +5691,38 @@ function SettingsPanel({
           </span>
         </label>
         {form.team_features_enabled && (
-          <label className="checkbox-row" style={{ marginTop: 14 }}>
-            <input
-              type="checkbox"
-              checked={form.techs_can_price}
-              onChange={(event) => setForm({ ...form, techs_can_price: event.target.checked })}
-            />
-            <span>
-              <strong>Technicians can price the parts they add</strong>
-              <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
-                Technicians never see or change the labor rate or parts markup. This only controls whether they can enter a price on parts they log.
-              </p>
-            </span>
-          </label>
+          <fieldset className="pricing-permissions">
+            <legend>Pricing permissions</legend>
+            <p className="muted" style={{ margin: "0 0 10px", fontSize: 13 }}>
+              Who can change prices on a repair order. You and any admin can always change everything.
+            </p>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={form.techs_can_price}
+                onChange={(event) => setForm({ ...form, techs_can_price: event.target.checked })}
+              />
+              <span>
+                <strong>Technicians can price the parts they add</strong>
+                <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+                  Techs never see your cost, markup or the labor rate. This only lets them type a price on parts they log.
+                </p>
+              </span>
+            </label>
+            <label className="checkbox-row" style={{ marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={form.advisors_can_change_labor_rate}
+                onChange={(event) => setForm({ ...form, advisors_can_change_labor_rate: event.target.checked })}
+              />
+              <span>
+                <strong>Service advisors can change the labor rate on a line</strong>
+                <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+                  Off: advisors set hours, and every labor line uses your shop rate ({money(form.default_labor_rate)}/hr). Give a customer a break with a discount line instead, so it shows in Reports.
+                </p>
+              </span>
+            </label>
+          </fieldset>
         )}
         {form.team_features_enabled && (
           <fieldset className="work-mode-picker">

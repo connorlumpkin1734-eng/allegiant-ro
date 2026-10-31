@@ -2107,3 +2107,26 @@ tbody tr:hover { background: var(--panel-header); }
 .dispatch-label { color: var(--ink); font-size: 13px; font-weight: 700; }
 .dispatch-tech-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .dispatch-team-tag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--accent-tint); color: var(--accent); font-size: 10px; text-transform: uppercase; }
+
+/* Parts pricing (flat markup or matrix) */
+.parts-pricing-panel .matrix-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0 10px; }
+.matrix-table { width: 100%; max-width: 620px; border-collapse: collapse; }
+.matrix-table th { padding: 6px 8px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: 0.04em; text-align: left; text-transform: uppercase; }
+.matrix-table td { padding: 4px 8px; border-top: 1px solid var(--line); vertical-align: middle; }
+.matrix-table td input { width: 100%; max-width: 130px; }
+.matrix-table .icon-button { width: 32px; height: 32px; font-size: 20px; }
+.matrix-actions { display: flex; gap: 8px; margin-top: 10px; }
+.matrix-flat-example { align-self: end; margin: 0 0 10px; font-size: 13px; }
+.matrix-test { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 22px; margin-top: 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-header); }
+.matrix-test label { max-width: 160px; }
+.matrix-test > div span, .matrix-test > div strong { display: block; }
+.matrix-test > div span { font-size: 11px; font-weight: 700; }
+.matrix-samples { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; color: var(--muted); font-size: 13px; }
+.matrix-samples strong { color: var(--ink); }
+.pricing-permissions { margin: 18px 0 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.pricing-permissions legend { padding: 0 6px; color: var(--ink); font-weight: 800; }
+
+/* Part priced by hand */
+.price-manual-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; margin-top: -2px; }
+.price-manual-tag { padding: 1px 8px; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); font-size: 11px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
+.price-manual-row .link-button { padding: 0; border: 0; background: none; color: var(--accent); font-size: 12px; font-weight: 700; text-decoration: underline; cursor: pointer; }
