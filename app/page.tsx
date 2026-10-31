@@ -1496,7 +1496,10 @@ function RepairOrderApp({ user }: { user: User }) {
     if (!settings.team_features_enabled) return;
     // Supabase queries only run once awaited or .then()'d, so a bare `void` never sent this.
     void supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("repair_order_id", id).is("read_at", null)
-      .then(({ error }) => { if (error) console.warn("Could not clear alerts:", error.message); });
+      .then(({ error }) => {
+        if (error) console.warn("Could not clear alerts:", error.message);
+        else window.dispatchEvent(new Event(ALERTS_CHANGED_EVENT));
+      });
   }
 
   async function openDocument(
@@ -4566,6 +4569,7 @@ function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
 // ---- Alerts bell ---------------------------------------------------------------------------
 // Alerts are created by the database (tech finished a car, tech recommends work, advisor or
 // customer approved work). This shows them, live, and lets each person turn on email copies.
+const ALERTS_CHANGED_EVENT = "ro-alerts-changed";
 type AlertRow = { id: string; repair_order_id: string | null; kind: string; title: string; body: string | null; created_at: string; read_at: string | null };
 
 function timeAgo(iso: string): string {
@@ -4624,11 +4628,16 @@ function AlertBell({ userId, onOpenRo }: { userId: string; onOpenRo: (repairOrde
         setAlerts((current) => current.map((entry) => (entry.id === row.id ? { ...entry, ...row } : entry)));
       })
       .subscribe();
-    // Backup for when the live connection drops: refresh when the tab comes back into view.
+    // Backups for when the live connection drops (sleeping phones, spotty Wi-Fi, background tabs):
+    // refresh when the tab comes back, when the app says alerts changed, and every 30 seconds.
     const onFocus = () => { void load(); };
     window.addEventListener("focus", onFocus);
+    window.addEventListener(ALERTS_CHANGED_EVENT, onFocus);
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 30000);
     return () => {
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener(ALERTS_CHANGED_EVENT, onFocus);
+      window.clearInterval(timer);
       void supabase.removeChannel(channel);
     };
   }, [userId, load]);
@@ -4652,6 +4661,9 @@ function AlertBell({ userId, onOpenRo }: { userId: string; onOpenRo: (repairOrde
 
   function openAlert(alert: AlertRow) {
     setOpen(false);
+    // Show it as read right away; the database update happens when the RO opens.
+    const now = new Date().toISOString();
+    setAlerts((current) => current.map((entry) => (entry.repair_order_id === alert.repair_order_id && !entry.read_at ? { ...entry, read_at: now } : entry)));
     if (alert.repair_order_id) onOpenRo(alert.repair_order_id);
   }
 
