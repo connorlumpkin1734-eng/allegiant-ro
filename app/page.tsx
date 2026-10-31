@@ -2400,7 +2400,10 @@ function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, on
   const wrapRef = useRef<HTMLDivElement | null>(null);
   function toggle() {
     const rect = wrapRef.current?.getBoundingClientRect();
-    if (rect) setPanelPos({ top: rect.bottom + 8, right: Math.max(8, window.innerWidth - rect.right) });
+    if (rect) {
+      const width = Math.min(300, window.innerWidth - 24);
+      setPanelPos({ top: rect.bottom + 8, right: Math.max(8, Math.min(window.innerWidth - rect.right, window.innerWidth - width - 8)) });
+    }
     setOpen((value) => !value);
   }
   useEffect(() => {
