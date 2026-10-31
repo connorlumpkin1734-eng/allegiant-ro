@@ -11,6 +11,7 @@ type RepairOrderRow = {
   concern_lines: Array<{ id: string; sort_order: number; kind: string; concern: string | null; cause: string | null }> | null;
 };
 
+import { pickRecipient, resolveCustomerSender } from "../../lib/shop-caller";
 import { getInspectionShare, inspectionSummaryHtml, type InspectionShare } from "../../lib/inspection-share";
 import { amountBlock, brandFromSettings, emailButton, escapeHtml, lineTable, money, renderCustomerEmail, renderCustomerText, totalsTable, type LineRow } from "../../lib/customer-email";
 
@@ -51,21 +52,27 @@ export default async (request: Request) => {
   });
   if (!userResponse.ok) return json({ error: "Sign in again before sending an estimate." }, 401);
   const user = await userResponse.json() as { id: string };
-  const body = await request.json().catch(() => ({})) as { repairOrderId?: string; includeInspection?: boolean };
+  const body = await request.json().catch(() => ({})) as { repairOrderId?: string; includeInspection?: boolean; toEmail?: string };
   if (!body.repairOrderId) return json({ error: "Missing repair order." }, 400);
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
+  // Owner, service advisor or admin may send; technicians may not.
+  const sender = await resolveCustomerSender(supabaseUrl, serviceHeaders, user.id);
+  if ("error" in sender) return json({ error: sender.error }, sender.status);
+  const ownerId = sender.ownerId;
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=*,customers(name,email),vehicles(year,make,model,vin),line_items(item_type,description,quantity,unit_price,taxable,sort_order,service_group_id,service_group_title,technician_story,service_concern,concern_line_id,job_status,job_note),concern_lines(id,sort_order,kind,concern,cause)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${user.id}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=*,customers(name,email),vehicles(year,make,model,vin),line_items(item_type,description,quantity,unit_price,taxable,sort_order,service_group_id,service_group_title,technician_story,service_concern,concern_line_id,job_status,job_note),concern_lines(id,sort_order,kind,concern,cause)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
     { headers: serviceHeaders }
   );
   const rows = await roResponse.json() as RepairOrderRow[];
   const ro = rows[0];
   if (!ro) return json({ error: "Repair order not found." }, 404);
-  const customerEmail = ro.customers?.email?.trim();
-  if (!customerEmail) return json({ error: "Add the customer's email address before sending." }, 400);
+  // The Send panel can send to a different address than the one on file.
+  const recipient = pickRecipient(body.toEmail, ro.customers?.email);
+  if ("error" in recipient) return json({ error: recipient.error }, 400);
+  const customerEmail = recipient.email;
 
-  const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=*&owner_id=eq.${user.id}&limit=1`, { headers: serviceHeaders });
+  const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=*&owner_id=eq.${ownerId}&limit=1`, { headers: serviceHeaders });
   const settings = (await settingsResponse.json() as Array<Record<string, unknown>>)[0] || {};
   const photoResponse = await fetch(`${supabaseUrl}/rest/v1/estimate_photos?select=service_group_id,storage_path,caption,sort_order&repair_order_id=eq.${ro.id}&order=sort_order.asc`, { headers: serviceHeaders });
   const photos = photoResponse.ok ? await photoResponse.json() as Array<Record<string, unknown>> : [];
@@ -98,7 +105,7 @@ export default async (request: Request) => {
   let inspectionShare: InspectionShare | null = null;
   if (body.includeInspection) {
     try {
-      inspectionShare = await getInspectionShare({ supabaseUrl, serviceHeaders, repairOrderId: ro.id, ownerId: user.id, siteUrl, customerEmail });
+      inspectionShare = await getInspectionShare({ supabaseUrl, serviceHeaders, repairOrderId: ro.id, ownerId, siteUrl, customerEmail });
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "Could not attach the inspection report." }, 500);
     }
@@ -150,7 +157,7 @@ export default async (request: Request) => {
   });
   const insertResponse = await fetch(`${supabaseUrl}/rest/v1/estimate_authorizations`, {
     method: "POST", headers: { ...serviceHeaders, Prefer: "return=representation" },
-    body: JSON.stringify({ owner_id: user.id, repair_order_id: ro.id, token_hash: tokenHash, customer_email: customerEmail, estimate_snapshot: snapshot }),
+    body: JSON.stringify({ owner_id: ownerId, repair_order_id: ro.id, token_hash: tokenHash, customer_email: customerEmail, estimate_snapshot: snapshot }),
   });
   if (!insertResponse.ok) return json({ error: `Could not create approval request: ${await insertResponse.text()}` }, 500);
 

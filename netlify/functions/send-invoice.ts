@@ -20,6 +20,7 @@
 // (invoice_overrides). Keep this in sync with that logic and with create-payment-session.ts /
 // request-zelle-payment.ts.
 
+import { pickRecipient } from "../../lib/shop-caller";
 import { amountBlock, brandFromSettings, emailButton, escapeHtml, lineTable, money, renderCustomerEmail, renderCustomerText, totalsTable, type LineRow } from "../../lib/customer-email";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -145,7 +146,7 @@ async function handler(request: Request): Promise<Response> {
   });
   if (!userResponse.ok) return json({ error: "Sign in again before emailing the invoice." }, 401);
   const caller = await userResponse.json() as { id: string };
-  const body = await request.json().catch(() => ({})) as { repairOrderId?: string };
+  const body = await request.json().catch(() => ({})) as { repairOrderId?: string; toEmail?: string };
   if (!body.repairOrderId) return json({ error: "Missing repair order." }, 400);
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
@@ -178,8 +179,10 @@ async function handler(request: Request): Promise<Response> {
   const roRows = roResponse.ok ? await roResponse.json() as RepairOrderRow[] : [];
   const ro = roRows[0];
   if (!ro) return json({ error: "Repair order not found." }, 404);
-  const customerEmail = ro.customers?.email?.trim();
-  if (!customerEmail) return json({ error: "Add the customer's email address before sending." }, 400);
+  // The Send panel can send to a different address than the one on file.
+  const recipient = pickRecipient(body.toEmail, ro.customers?.email);
+  if ("error" in recipient) return json({ error: recipient.error }, 400);
+  const customerEmail = recipient.email;
 
   const authorizationResponse = await fetch(
     `${supabaseUrl}/rest/v1/estimate_authorizations?select=status,line_decisions&repair_order_id=eq.${encodeURIComponent(ro.id)}&order=sent_at.desc&limit=1`,

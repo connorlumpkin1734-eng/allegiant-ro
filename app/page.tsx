@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, type Dispatch, FormEvent, type SetStateAction, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type Dispatch, FormEvent, type SetStateAction, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { MultipointInspection } from "@/components/MultipointInspection";
 import { supabase } from "@/lib/supabase";
@@ -223,6 +223,75 @@ function shopPartMarkup(cost: number, settings: Settings): number {
 
 function roundCents(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+// ---- Pop-up messages -------------------------------------------------------------------------
+// Messages used to land in a box at the top of the page, so you had to scroll up to find out a
+// save failed. Now every message also pops up where you're looking: green success fades on its
+// own, red errors stay until closed.
+type ToastKind = "success" | "error" | "info";
+type Toast = { id: number; text: string; kind: ToastKind };
+let toastList: Toast[] = [];
+let toastSeq = 0;
+const toastListeners = new Set<(toasts: Toast[]) => void>();
+function emitToasts() { toastListeners.forEach((listener) => listener(toastList)); }
+function dismissToast(id: number) {
+  toastList = toastList.filter((toast) => toast.id !== id);
+  emitToasts();
+}
+const ERRORISH = /(could not|couldn't|can't|cannot|error|failed|missing|required|needs? |add the|add at least|before |invalid|expired|too many|not allowed|only the|doesn't look|denied|rejected|isn't|wasn't)/i;
+const SUCCESSISH = /\b(emailed|sent|saved|copied|recorded|approved|updated|added|removed|deleted|archived|restored|confirmed|ready)\b/i;
+function guessToastKind(text: string): ToastKind {
+  if (ERRORISH.test(text)) return "error";
+  return SUCCESSISH.test(text) ? "success" : "info";
+}
+function notify(text: string, kind: ToastKind = guessToastKind(text)) {
+  if (!text.trim()) return;
+  const toast = { id: ++toastSeq, text, kind };
+  toastList = [...toastList.filter((entry) => entry.text !== text).slice(-3), toast];
+  emitToasts();
+  if (kind !== "error") window.setTimeout(() => dismissToast(toast.id), 5000);
+}
+function Toaster() {
+  const [toasts, setToasts] = useState<Toast[]>(toastList);
+  useEffect(() => {
+    toastListeners.add(setToasts);
+    return () => { toastListeners.delete(setToasts); };
+  }, []);
+  if (!toasts.length) return null;
+  return (
+    <div className="toast-region no-print" role="status" aria-live="polite">
+      {toasts.map((toast) => (
+        <div key={toast.id} className={`toast toast-${toast.kind}`} role={toast.kind === "error" ? "alert" : undefined}>
+          <span className="toast-icon" aria-hidden="true">{toast.kind === "error" ? "!" : toast.kind === "success" ? "✓" : "i"}</span>
+          <span className="toast-text">{toast.text}</span>
+          <button type="button" className="toast-close" aria-label="Close message" onClick={() => dismissToast(toast.id)}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+/** Like useState("") for a component's message, but every message also pops up. */
+function useToastMessage(kind?: ToastKind): [string, (text: string) => void] {
+  const [message, setMessageState] = useState("");
+  const setMessage = useCallback((text: string) => {
+    setMessageState(text);
+    if (text) notify(text, kind);
+  }, [kind]);
+  return [message, setMessage];
+}
+/** Scroll to the field that has the problem, put the cursor in it and outline it in red. */
+function focusProblem(selector: string) {
+  window.setTimeout(() => {
+    const field = document.querySelector<HTMLElement>(selector);
+    if (!field) return;
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+    field.classList.add("field-problem");
+    field.focus({ preventScroll: true });
+    const clear = () => { field.classList.remove("field-problem"); field.removeEventListener("input", clear); };
+    field.addEventListener("input", clear);
+    window.setTimeout(clear, 6000);
+  }, 50);
 }
 
 /** "money" always shows two decimals (12.50); "plain" shows only what's needed (1, 2.5, 12.75). */
@@ -833,6 +902,7 @@ function PlatformAdminOnlyApp() {
           Sign out
         </button>
       </header>
+      <Toaster />
       <main className="main-area">
         <PlatformAdminPanel />
       </main>
@@ -844,7 +914,7 @@ function AuthScreen() {
   const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [identifier, setIdentifier] = useState(""); // shop owner's email (signup), or username/email (login, forgot)
   const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
   const [busy, setBusy] = useState(false);
 
   // Lightweight, privacy-light visit counter for the god-mode traffic view: a random id generated
@@ -1037,7 +1107,7 @@ function ChangePasswordModal({
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
   const [done, setDone] = useState(false);
 
   async function submit(event: FormEvent) {
@@ -1223,9 +1293,12 @@ function RepairOrderApp({ user }: { user: User }) {
   const [documentReturnView, setDocumentReturnView] = useState<"dashboard" | "customer_profile" | "editor">("dashboard");
   const [inspectionReturnView, setInspectionReturnView] = useState<"dashboard" | "customer_profile" | "editor" | "document">("dashboard");
   const [editorTab, setEditorTab] = useState<WorkspaceTab>("work_order");
+  // Which document the editor's switcher shows, and whether the next document opened should print.
+  const [editorDocMode, setEditorDocMode] = useState<DocumentMode>("estimate");
+  const [autoPrint, setAutoPrint] = useState(false);
   const [editorReturnView, setEditorReturnView] = useState<"dashboard" | "customer_profile">("dashboard");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useToastMessage("error");
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [stripeOAuthCode, setStripeOAuthCode] = useState<string | null>(null);
   const [stripeReturnPending, setStripeReturnPending] = useState(false);
@@ -1432,9 +1505,13 @@ function RepairOrderApp({ user }: { user: User }) {
   async function editDocument(
     id: string,
     returnView: "dashboard" | "customer_profile" = "dashboard",
-    tab: WorkspaceTab = "work_order"
+    tab: WorkspaceTab = "work_order",
+    docMode?: DocumentMode
   ) {
     setError("");
+    if (docMode) setEditorDocMode(docMode);
+    else if (tab === "invoice") setEditorDocMode("invoice");
+    else setEditorDocMode((current) => (current === "invoice" ? "estimate" : current));
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
@@ -1495,6 +1572,7 @@ function RepairOrderApp({ user }: { user: User }) {
     setNewContext({ customerId, vehicleId });
     setEditorReturnView(returnView);
     setEditorTab("work_order");
+    setEditorDocMode("estimate");
     setView("editor");
   }
 
@@ -1777,6 +1855,7 @@ function RepairOrderApp({ user }: { user: User }) {
         />
       )}
 
+      <Toaster />
       <main className="main-area">
         {error && <div className="error-banner no-print">{error}</div>}
         {isOwner && staffResolved && !loading && !settings.business_name?.trim() && (
@@ -1827,7 +1906,7 @@ function RepairOrderApp({ user }: { user: User }) {
               if (ro?.archived_at) {
                 void openDocument(id, mode, "dashboard");
               } else {
-                void editDocument(id, "dashboard", mode === "invoice" ? "invoice" : "work_order");
+                void editDocument(id, "dashboard", mode === "invoice" ? "invoice" : "work_order", mode);
               }
             }}
             onInspection={(id) => openInspection(id, "dashboard")}
@@ -1835,6 +1914,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onStatusChange={updateRoStatus}
             onPaidChange={updateRoPaidStatus}
             canCreate={!isTechnicianOnly}
+            isTechnician={isTechnicianOnly}
             techFilterFor={isTechnicianOnly && currentStaff ? { staffId: currentStaff.id, teamId: currentStaff.team_id } : null}
           />
         ) : view === "editor" ? (
@@ -1851,13 +1931,16 @@ function RepairOrderApp({ user }: { user: User }) {
             initialCustomerId={newContext.customerId}
             initialVehicleId={newContext.vehicleId}
             initialTab={editorTab}
+            initialDocMode={editorDocMode}
+            onDocModeChange={setEditorDocMode}
             onInspection={editingRo ? () => openInspection(editingRo.id, "editor") : undefined}
             onCancel={returnFromEditor}
             onDelete={editingRo && !isTechnicianOnly ? () => deleteRo(editingRo) : undefined}
-            onSaved={async (id, tab, previewMode) => {
+            onSaved={async (id, tab, previewMode, print) => {
               setEditorTab(tab);
               await loadData(false);
               if (previewMode) {
+                setAutoPrint(Boolean(print));
                 await openDocument(id, previewMode, "editor");
               } else {
                 await editDocument(id, editorReturnView, tab);
@@ -1884,7 +1967,7 @@ function RepairOrderApp({ user }: { user: User }) {
               if (ro?.archived_at) {
                 void openDocument(id, mode, "customer_profile");
               } else {
-                void editDocument(id, "customer_profile", mode === "invoice" ? "invoice" : "work_order");
+                void editDocument(id, "customer_profile", mode === "invoice" ? "invoice" : "work_order", mode);
               }
             }}
             onNew={(customerId, vehicleId) => startNew(customerId, vehicleId, "customer_profile")}
@@ -1921,13 +2004,17 @@ function RepairOrderApp({ user }: { user: User }) {
             onEdit={() => editDocument(
               selectedRo.id,
               documentReturnView === "customer_profile" ? "customer_profile" : editorReturnView,
-              documentMode === "invoice" ? "invoice" : "work_order"
+              documentMode === "invoice" ? "invoice" : "work_order",
+              documentMode
             )}
             onInspection={() => openInspection(selectedRo.id, "document")}
             onVoid={() => toggleVoid(selectedRo)}
             onArchive={() => toggleArchiveRo(selectedRo)}
             onDelete={() => deleteRo(selectedRo)}
             onPaid={() => refreshCurrentDocument(selectedRo.id)}
+            isTechnician={isTechnicianOnly}
+            autoPrint={autoPrint}
+            onAutoPrintDone={() => setAutoPrint(false)}
           />
         ) : null}
       </main>
@@ -2190,7 +2277,10 @@ function Dashboard({
   onPaidChange,
   canCreate = true,
   techFilterFor = null,
+  isTechnician = false,
 }: {
+  /** Techs see the work, not the money: no estimate, invoice or total columns. */
+  isTechnician?: boolean;
   /** Set for technicians: enables the My jobs / My team / Everything I can work filter. */
   techFilterFor?: { staffId: string; teamId: string | null } | null;
   repairOrders: RepairOrder[];
@@ -2288,10 +2378,12 @@ function Dashboard({
           <span>Open jobs</span>
           <strong>{openCount}</strong>
         </div>
-        <div className="summary-card">
-          <span>Completed & unpaid</span>
-          <strong>{unpaidCount}</strong>
-        </div>
+        {!isTechnician && (
+          <div className="summary-card">
+            <span>Completed & unpaid</span>
+            <strong>{unpaidCount}</strong>
+          </div>
+        )}
       </div>
 
       <div className="panel">
@@ -2327,9 +2419,9 @@ function Dashboard({
                 <th>Customer</th>
                 <th>Vehicle</th>
                 <th>Job status</th>
-                <th>Estimate</th>
-                <th>Invoice</th>
-                <th>Billable total</th>
+                {!isTechnician && <th>Estimate</th>}
+                {!isTechnician && <th>Invoice</th>}
+                {!isTechnician && <th>Billable total</th>}
                 <th></th>
               </tr>
             </thead>
@@ -2371,7 +2463,7 @@ function Dashboard({
                       {ro.archived_at && <span className="badge archived">Archived</span>}
                     </div>
                   </td>
-                  <td>
+                  {!isTechnician && (<td>
                     <div className="estimate-dashboard-status">
                     <span className={`badge estimate-${displayedEstimateStatus}`}>
                       {displayedEstimateStatus === "sent"
@@ -2397,8 +2489,8 @@ function Dashboard({
                       </div>
                     )}
                     </div>
-                  </td>
-                  <td>
+                  </td>)}
+                  {!isTechnician && (<td>
                     {ro.archived_at || ro.status === "voided" ? (
                       <span className={`badge ${ro.paid ? "paid" : ro.status === "completed" ? "unpaid" : "neutral"}`}>
                         {ro.paid ? "Paid" : ro.status === "completed" ? "Unpaid" : "Not final"}
@@ -2415,8 +2507,8 @@ function Dashboard({
                         <option value="paid">Paid</option>
                       </select>
                     )}
-                  </td>
-                  <td>{money(repairOrderTotal(ro))}</td>
+                  </td>)}
+                  {!isTechnician && <td>{money(repairOrderTotal(ro))}</td>}
                   <td className="actions-cell">
                     <button className="button small primary" onClick={() => onInspection(ro.id)}>
                       Inspection
@@ -2424,15 +2516,17 @@ function Dashboard({
                     <button className="button small secondary" onClick={() => onOpen(ro.id, "work_order")}>
                       Work order
                     </button>
-                    <button className="button small ghost" onClick={() => onOpen(ro.id, "invoice")}>
-                      Invoice
-                    </button>
+                    {!isTechnician && (
+                      <button className="button small ghost" onClick={() => onOpen(ro.id, "invoice")}>
+                        Invoice
+                      </button>
+                    )}
                   </td>
                 </tr>
               );})}
               {!filtered.length && (
                 <tr>
-                  <td colSpan={9} className="empty-state">
+                  <td colSpan={isTechnician ? 6 : 9} className="empty-state">
                     {showArchived ? "No matching work orders." : "No matching active work orders."}
                   </td>
                 </tr>
@@ -2457,6 +2551,8 @@ function RepairOrderEditor({
   initialCustomerId,
   initialVehicleId,
   initialTab,
+  initialDocMode,
+  onDocModeChange,
   onInspection,
   onCancel,
   onSaved,
@@ -2474,9 +2570,12 @@ function RepairOrderEditor({
   initialCustomerId: string;
   initialVehicleId: string;
   initialTab: WorkspaceTab;
+  /** Which document the switcher starts on (Estimate / Work Order / Invoice). */
+  initialDocMode?: DocumentMode;
+  onDocModeChange?: (mode: DocumentMode) => void;
   onInspection?: () => void;
   onCancel: () => void;
-  onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode) => void;
+  onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode, print?: boolean) => void;
   onDelete?: () => void;
 }) {
   const canWrite = shopCanWrite(settings);
@@ -2551,15 +2650,28 @@ function RepairOrderEditor({
   // Private shop notes stay tucked away until someone adds one.
   const [openShopNotes, setOpenShopNotes] = useState<Set<string>>(() => new Set());
   // Whether this RO has a saved multipoint inspection that can go out with the estimate.
-  const [hasInspection, setHasInspection] = useState(false);
-  const [includeInspection, setIncludeInspection] = useState(true);
+  // The RO's multipoint inspection, for the status card and for sending it with the estimate.
+  const [inspectionSummary, setInspectionSummary] = useState<{ needs: number; watch: number; good: number } | null>(null);
+  const hasInspection = Boolean(inspectionSummary);
   useEffect(() => {
     if (!initialRo) return;
     let cancelled = false;
-    void supabase.from("multipoint_inspections").select("id").eq("repair_order_id", initialRo.id).limit(1)
-      .then(({ data }) => { if (!cancelled) setHasInspection(Boolean(data?.length)); });
+    void supabase.from("multipoint_inspections").select("id, data").eq("repair_order_id", initialRo.id).limit(1)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const row = (data ?? [])[0] as { data?: { items?: Record<string, { status?: string }> } } | undefined;
+        const values = Object.values(row?.data?.items ?? {});
+        if (!row || !values.length) { setInspectionSummary(null); return; }
+        const count = (status: string) => values.filter((value) => value?.status === status).length;
+        setInspectionSummary({ needs: count("service"), watch: count("monitor"), good: count("good") });
+      });
     return () => { cancelled = true; };
   }, [initialRo]);
+  // Estimate / Work Order / Invoice switcher. Techs only ever get the work order.
+  const [docTab, setDocTabState] = useState<DocumentMode>(
+    isTechnician ? "work_order" : initialDocMode ?? (initialTab === "invoice" ? "invoice" : "estimate")
+  );
+  const [sendKind, setSendKind] = useState<"estimate" | "invoice" | null>(null);
   // Dispatch picks on a brand-new RO, saved with it (an existing RO saves dispatch as you click).
   const [dispatchDraft, setDispatchDraft] = useState<DispatchDraft>({ teamId: null, techIds: [] });
   const [busy, setBusy] = useState(false);
@@ -2567,8 +2679,13 @@ function RepairOrderEditor({
   const vinPhotoRef = useRef<HTMLInputElement>(null);
   const vinVideoRef = useRef<HTMLVideoElement>(null);
   const [vinScannerOpen, setVinScannerOpen] = useState(false);
-  const [message, setMessage] = useState("");
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(initialTab);
+  const [message, setMessage] = useToastMessage();
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(docTab === "invoice" ? "invoice" : "work_order");
+  function setDocTab(mode: DocumentMode) {
+    setDocTabState(mode);
+    setWorkspaceTab(mode === "invoice" ? "invoice" : "work_order");
+    onDocModeChange?.(mode);
+  }
   // Technicians can price parts (if the shop allows it) but must never see or edit labor rate,
   // parts markup/cost, or shop profit figures — and can't restructure the RO (no adding
   // service jobs/fees/discounts/labor lines, no removing or deleting anything).
@@ -2643,64 +2760,6 @@ function RepairOrderEditor({
     // The scanner intentionally owns its camera/worker lifecycle only while the modal is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vinScannerOpen]);
-
-  async function emailEstimate() {
-    if (!initialRo) return;
-    if (!customerForm.email.trim()) {
-      setMessage("Add the customer's email address before sending the estimate.");
-      return;
-    }
-
-    setBusy(true);
-    setMessage("");
-    try {
-      const { data } = await supabase.auth.getSession();
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("Your session expired. Sign in again before sending.");
-
-      const response = await fetch("/.netlify/functions/send-estimate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ repairOrderId: initialRo.id, includeInspection: hasInspection && includeInspection }),
-      });
-      const body = await response.json() as { error?: string; message?: string };
-      if (!response.ok) throw new Error(body.error || "The estimate could not be emailed.");
-      setMessage(body.message || `Estimate emailed to ${customerForm.email.trim()}.`);
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "The estimate could not be emailed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function emailInvoice() {
-    if (!initialRo) return;
-    if (!customerForm.email.trim()) {
-      setMessage("Add the customer's email address before sending the invoice.");
-      return;
-    }
-
-    setBusy(true);
-    setMessage("");
-    try {
-      const { data } = await supabase.auth.getSession();
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("Your session expired. Sign in again before sending.");
-
-      const response = await fetch("/.netlify/functions/send-invoice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ repairOrderId: initialRo.id }),
-      });
-      const body = await response.json() as { error?: string; message?: string; payNowIncluded?: boolean };
-      if (!response.ok) throw new Error(body.error || "The invoice could not be emailed.");
-      setMessage(body.message || `Invoice emailed to ${customerForm.email.trim()}.`);
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "The invoice could not be emailed.");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   const selectableCustomers = useMemo(
     () => customers.filter((customer) => !customer.archived_at || customer.id === initialRo?.customer_id),
@@ -3050,7 +3109,7 @@ function RepairOrderEditor({
     }
   }
 
-  async function save(previewMode?: DocumentMode) {
+  async function save(previewMode?: DocumentMode, print = false) {
     if (!canWrite) {
       setMessage(
         initialRo
@@ -3065,10 +3124,12 @@ function RepairOrderEditor({
     }
     if (!customerForm.name.trim()) {
       setMessage("Customer name is required.");
+      focusProblem('[data-field="customer-name"]');
       return;
     }
     if (!vehicleForm.year.trim() && !vehicleForm.make.trim() && !vehicleForm.model.trim()) {
       setMessage("Enter at least the vehicle year, make, or model.");
+      focusProblem('[data-field="vehicle-year"]');
       return;
     }
     // A write-up can be just concerns (jobs come after the tech inspects), so charge lines are optional
@@ -3076,11 +3137,13 @@ function RepairOrderEditor({
     const hasConcern = concernLines.some((line) => Boolean(line.concern?.trim()));
     if (!items.length && !hasConcern) {
       setMessage("Write at least one customer request or concern, or add a job.");
+      focusProblem("[data-line-text]");
       return;
     }
     const untitledJob = items.find((item) => item.service_group_id && !item.service_group_title?.trim());
     if (untitledJob) {
       setMessage("Every job needs a name (the Job box at the top of the job).");
+      focusProblem(`[data-job-title="${untitledJob.service_group_id}"]`);
       return;
     }
     // Labor left blank takes the job's name, the way a dealer op reads ("Replace front pads and rotors").
@@ -3095,6 +3158,7 @@ function RepairOrderEditor({
         ? `the "${missingDescription.service_group_title?.trim() || "untitled"}" job`
         : "Fees & Discounts";
       setMessage(`A ${missingDescription.item_type} line in ${where} needs a description (the box next to Hours/Qty).`);
+      focusProblem(`[data-line-desc="${missingDescription.id}"]`);
       return;
     }
 
@@ -3259,7 +3323,7 @@ function RepairOrderEditor({
       }
 
       setBusy(false);
-      onSaved(roId, workspaceTab, previewMode);
+      onSaved(roId, workspaceTab, previewMode, print);
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "The work order could not be saved.");
       setBusy(false);
@@ -3297,6 +3361,7 @@ function RepairOrderEditor({
           <label>
             Job
             <input
+              data-job-title={group.id}
               value={first.service_group_title ?? ""}
               placeholder="Name this job (e.g. Replace front pads and rotors)"
               onChange={(event) => updateServiceJob(group.id, "service_group_title", event.target.value)}
@@ -3447,78 +3512,88 @@ function RepairOrderEditor({
           <button className="button secondary" type="button" onClick={() => { setVinScannerOpen(false); window.setTimeout(() => vinPhotoRef.current?.click(), 0); }}>Take VIN photo instead</button>
         </div>
       </div>}
-      <div className="workspace-heading">
-        <div>
+      {sendKind && initialRo && (
+        <SendPanel
+          kind={sendKind}
+          repairOrderId={initialRo.id}
+          customerId={selectedCustomerId || null}
+          customerName={customerForm.name}
+          customerEmail={customerForm.email}
+          hasInspection={hasInspection}
+          savedVersionNote
+          onClose={() => setSendKind(null)}
+          onSent={(sentTo, savedToCustomer) => {
+            if (savedToCustomer) setCustomerForm((current) => ({ ...current, email: sentTo }));
+          }}
+        />
+      )}
+      <div className="ro-action-bar">
+        <button className="button ghost" onClick={onCancel}>← Back</button>
+        <div className="ro-action-title">
           <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : "New Work Order"}</h1>
-          <p>One editable job. The estimate, shop work order, and invoice all use this same set of charges.</p>
+          {initialRo && (customerForm.name || vehicleForm.make) && (
+            <span className="muted">{[customerForm.name, [vehicleForm.year, vehicleForm.make, vehicleForm.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
+          )}
         </div>
-        <div className="workspace-actions">
-          <div className="button-row button-row-muted">
-            <button className="button ghost" onClick={onCancel}>Close</button>
-            {initialRo && onDelete && (
-              <button className="button ghost danger-text" onClick={onDelete}>Delete RO</button>
+        {initialRo && !isTechnician && (
+          <div className="document-mode-switch" role="tablist" aria-label="Document">
+            {(["estimate", "work_order", "invoice"] as DocumentMode[]).map((mode) => (
+              <button key={mode} type="button" role="tab" aria-selected={docTab === mode} className={docTab === mode ? "active" : ""} onClick={() => setDocTab(mode)}>
+                {DOC_MODE_LABEL[mode]}
+              </button>
+            ))}
+          </div>
+        )}
+        {initialRo && (
+          <div className="ro-action-bar-right">
+            <div className="segmented edit-preview" role="group" aria-label="Edit or preview">
+              <button type="button" className="active" aria-pressed="true">Edit</button>
+              <button type="button" disabled={busy} onClick={() => void save(docTab)}>Preview</button>
+            </div>
+            {!isTechnician && docTab === "estimate" && (
+              <button className="button primary" disabled={busy} onClick={() => setSendKind("estimate")}>Send estimate</button>
+            )}
+            {!isTechnician && docTab === "work_order" && (
+              <button className="button primary" disabled={busy} onClick={() => void save("work_order", true)}>Print</button>
+            )}
+            {!isTechnician && docTab === "invoice" && (
+              <button className="button primary" disabled={busy} onClick={() => setSendKind("invoice")}>Send invoice</button>
+            )}
+            {!isTechnician && (
+              <MoreMenu items={[
+                docTab !== "work_order" && { label: "Print / Save PDF", onClick: () => void save(docTab, true) },
+                onDelete && { label: "Delete RO", onClick: onDelete, danger: true },
+              ]} />
             )}
           </div>
-          <div className="button-row">
-            {initialRo && workspaceTab === "work_order" && onInspection && (
-              <button className="button secondary" onClick={onInspection}>Multipoint Inspection</button>
-            )}
-            {initialRo && workspaceTab === "work_order" && (
-              <>
-                <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Preview Estimate</button>
-                <button className="button ghost" onClick={() => save("work_order")} disabled={busy}>Preview Work Order</button>
-                <button className="button secondary" onClick={() => void emailEstimate()} disabled={busy}>
-                  {hasInspection && includeInspection ? "Email Estimate + Inspection" : "Email Estimate"}
-                </button>
-                {hasInspection && (
-                  <label className="checkbox-row compact include-inspection-toggle" title="Adds the inspection results and a link to the full report to the estimate email.">
-                    <input type="checkbox" checked={includeInspection} onChange={(event) => setIncludeInspection(event.target.checked)} />
-                    Include inspection
-                  </label>
-                )}
-              </>
-            )}
-            {initialRo && workspaceTab === "invoice" && (
-              <>
-                <button className="button ghost" onClick={() => save("invoice")} disabled={busy}>Preview Invoice</button>
-                <button className="button secondary" onClick={() => void emailInvoice()} disabled={busy}>Email Invoice</button>
-              </>
-            )}
-            <button className="button primary" onClick={() => save()} disabled={busy}>
-              {busy ? "Saving…" : "Save Changes"}
-            </button>
-          </div>
-        </div>
+        )}
       </div>
 
-      <div className="workspace-tabs" role="tablist" aria-label="RO workspace">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={workspaceTab === "work_order"}
-          className={workspaceTab === "work_order" ? "active" : ""}
-          onClick={() => setWorkspaceTab("work_order")}
-        >
-          <span>Work Order</span>
-          <small>Edit the job and print the customer estimate or shop copy</small>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={workspaceTab === "invoice"}
-          className={workspaceTab === "invoice" ? "active" : ""}
-          onClick={() => setWorkspaceTab("invoice")}
-        >
-          <span>Invoice</span>
-          <small>Same editable charges, plus payment status and final billing</small>
-        </button>
-      </div>
+      {initialRo && (
+        <section className="inspection-status-card">
+          <div>
+            <span className="inspection-status-eyebrow">Multipoint inspection</span>
+            {inspectionSummary ? (
+              <div className="inspection-status-counts">
+                <span className="needs">{inspectionSummary.needs} need attention</span>
+                <span className="watch">{inspectionSummary.watch} to watch</span>
+                <span className="good">{inspectionSummary.good} good</span>
+              </div>
+            ) : (
+              <strong>Not started</strong>
+            )}
+          </div>
+          {onInspection && (
+            <button type="button" className="button small secondary" onClick={onInspection}>
+              {inspectionSummary ? "Open" : "Start inspection"}
+            </button>
+          )}
+        </section>
+      )}
 
       {!initialRo && (
         <div className="notice workspace-notice">Save this new work order once before previewing or printing documents.</div>
       )}
-      {message && <div className="notice">{message}</div>}
-
       {hasCustomerAuthorizationResponse && currentAuthorization && (
         <section className={`approval-overview ${currentAuthorization.status}`} aria-label="Customer estimate decisions">
           <div className="approval-overview-heading">
@@ -3548,7 +3623,7 @@ function RepairOrderEditor({
         </section>
       )}
 
-      <div className="editor-grid">
+      <div className={`editor-grid ${isTechnician ? "editor-grid-single" : ""}`}>
         <div className="stack">
           {workspaceTab === "work_order" ? (
           <>
@@ -3568,6 +3643,7 @@ function RepairOrderEditor({
               <label className="span-two">
                 Name
                 <input
+                  data-field="customer-name"
                   value={customerForm.name}
                   onChange={(event) => setCustomerForm({ ...customerForm, name: event.target.value })}
                   required
@@ -3640,7 +3716,7 @@ function RepairOrderEditor({
             <div className="form-grid four">
               <label>
                 Year
-                <input inputMode="numeric" value={vehicleForm.year} onChange={(event) => setVehicleForm({ ...vehicleForm, year: event.target.value })} />
+                <input data-field="vehicle-year" inputMode="numeric" value={vehicleForm.year} onChange={(event) => setVehicleForm({ ...vehicleForm, year: event.target.value })} />
               </label>
               <label>
                 Make
@@ -3738,6 +3814,7 @@ function RepairOrderEditor({
           )}
         </div>
 
+        {!isTechnician && (
         <aside className={`panel totals-sidebar ${workspaceTab === "invoice" ? "invoice-sidebar" : ""}`}>
           <h2>{workspaceTab === "invoice" ? "Invoice & payment" : "Current totals"}</h2>
           <label>
@@ -3753,7 +3830,7 @@ function RepairOrderEditor({
               <p className="sidebar-help">The paid date is recorded automatically when this is saved.</p>
             </>
           ) : (
-            <p className="sidebar-help">Use Preview Estimate to send proposed pricing to the customer. Payment status lives on the Invoice tab.</p>
+            <p className="sidebar-help">Use Send estimate at the top to email pricing to the customer. Payment status lives under Invoice.</p>
           )}
           <div className="totals-box">
             <div><span>Subtotal</span><strong>{money(displayedTotals.subtotal)}</strong></div>
@@ -3780,6 +3857,7 @@ function RepairOrderEditor({
             </section>
           )}
         </aside>
+        )}
       </div>
 
       {canRestructureRo && settings.team_features_enabled && (
@@ -3960,17 +4038,8 @@ function RepairOrderEditor({
       </section>
 
       <div className="bottom-actions workspace-bottom-actions">
-        <button className="button secondary" onClick={onCancel}>Close</button>
-        {initialRo && workspaceTab === "work_order" && onInspection && (
-          <button className="button primary" onClick={onInspection}>Multipoint Inspection</button>
-        )}
-        {initialRo && workspaceTab === "work_order" && (
-          <button className="button ghost" onClick={() => save("estimate")} disabled={busy}>Save & Preview Estimate</button>
-        )}
-        {initialRo && workspaceTab === "invoice" && (
-          <button className="button ghost" onClick={() => save("invoice")} disabled={busy}>Save & Preview Invoice</button>
-        )}
-        <button className="button primary" onClick={() => save()} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
+        <button className="button ghost" onClick={onCancel}>Cancel</button>
+        <button className="button primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
       </div>
     </section>
   );
@@ -4005,7 +4074,7 @@ function TechnicianAssignment({
   const assignedIds = isDraft ? draft?.techIds ?? [] : savedAssignedIds;
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
   async function loadAll() {
     const [staffResult, assignmentsResult, teamsResult] = await Promise.all([
       supabase.from("staff").select("*").eq("role", "technician").eq("active", true).order("name"),
@@ -4137,7 +4206,7 @@ async function compressPhoto(file: File): Promise<Blob> {
 function JobPhotos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string; repairOrderId: string; serviceGroupId: string }) {
   const [photos, setPhotos] = useState<EstimatePhoto[]>([]);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
 
   async function loadPhotos() {
     const { data, error } = await supabase.from("estimate_photos").select("*")
@@ -4221,7 +4290,7 @@ const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // 200MB — generous for a 1-2 minut
 function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string; repairOrderId: string; serviceGroupId: string }) {
   const [videos, setVideos] = useState<EstimateVideo[]>([]);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
   const [playing, setPlaying] = useState<{ id: string; url: string } | null>(null);
 
   async function authHeader() {
@@ -4335,6 +4404,165 @@ function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
   );
 }
 
+// ---- Send panel ------------------------------------------------------------------------------
+// Sending to a customer opens this first: the address can be checked/corrected (and saved to the
+// customer), and the estimate can include the inspection. Then Send.
+function SendPanel({
+  kind,
+  repairOrderId,
+  customerId,
+  customerName,
+  customerEmail,
+  hasInspection = false,
+  savedVersionNote = false,
+  onClose,
+  onSent,
+}: {
+  kind: "estimate" | "invoice";
+  repairOrderId: string;
+  customerId: string | null;
+  customerName: string;
+  customerEmail: string;
+  hasInspection?: boolean;
+  /** Show "sends the last saved version" (when opened from the editor). */
+  savedVersionNote?: boolean;
+  onClose: () => void;
+  /** Called after a successful send, with the address used and whether it was saved to the customer. */
+  onSent?: (sentTo: string, savedToCustomer: boolean) => void;
+}) {
+  const [to, setTo] = useState(customerEmail);
+  const [updateOnFile, setUpdateOnFile] = useState(true);
+  const [includeInspection, setIncludeInspection] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const changed = to.trim().toLowerCase() !== customerEmail.trim().toLowerCase();
+  const label = kind === "estimate" ? "estimate" : "invoice";
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
+
+  async function send() {
+    const address = to.trim();
+    if (!address) {
+      setError("Enter the customer's email address.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again before sending.");
+      const response = await fetch(`/.netlify/functions/send-${kind}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          repairOrderId,
+          toEmail: address,
+          includeInspection: kind === "estimate" && hasInspection && includeInspection,
+        }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
+      if (!response.ok) throw new Error(body.error || `The ${label} could not be sent.`);
+      let savedToCustomer = false;
+      if (changed && updateOnFile && customerId) {
+        const { error: updateError } = await supabase.from("customers").update({ email: address }).eq("id", customerId);
+        if (updateError) notify(`Sent, but the customer's email on file wasn't updated: ${updateError.message}`, "error");
+        else savedToCustomer = true;
+      }
+      notify(body.message || `${kind === "estimate" ? "Estimate" : "Invoice"} sent to ${address}.`, "success");
+      onSent?.(address, savedToCustomer);
+      onClose();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : `The ${label} could not be sent.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="send-panel-backdrop no-print" role="presentation" onClick={() => { if (!busy) onClose(); }}>
+      <div className="send-panel" role="dialog" aria-modal="true" aria-labelledby="send-panel-title" onClick={(event) => event.stopPropagation()}>
+        <h2 id="send-panel-title">Send {label}</h2>
+        <p className="muted">To {customerName || "the customer"}</p>
+        <label>
+          Email
+          <input
+            type="email"
+            autoFocus
+            value={to}
+            placeholder="customer@example.com"
+            onChange={(event) => setTo(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") void send(); }}
+          />
+        </label>
+        {changed && customerId && to.trim() && (
+          <label className="checkbox-row compact">
+            <input type="checkbox" checked={updateOnFile} onChange={(event) => setUpdateOnFile(event.target.checked)} />
+            Also save this as {customerName ? `${customerName}'s` : "the customer's"} email
+          </label>
+        )}
+        {kind === "estimate" && hasInspection && (
+          <label className="checkbox-row compact">
+            <input type="checkbox" checked={includeInspection} onChange={(event) => setIncludeInspection(event.target.checked)} />
+            Include the multipoint inspection
+          </label>
+        )}
+        {savedVersionNote && <p className="muted send-panel-note">Sends the last saved version. Save first if you&apos;ve made changes.</p>}
+        {error && <div className="send-panel-error" role="alert">{error}</div>}
+        <div className="send-panel-actions">
+          <button type="button" className="button ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className="button primary" onClick={() => void send()} disabled={busy}>
+            {busy ? "Sending…" : `Send ${label}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- ⋯ menu ----------------------------------------------------------------------------------
+type MoreMenuItem = { label: string; onClick: () => void; danger?: boolean; disabled?: boolean };
+function MoreMenu({ items }: { items: Array<MoreMenuItem | false | null | undefined> }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey); };
+  }, [open]);
+  const visible = items.filter((item): item is MoreMenuItem => Boolean(item));
+  if (!visible.length) return null;
+  return (
+    <div className="more-menu" ref={ref}>
+      <button type="button" className="button ghost more-menu-button" aria-haspopup="menu" aria-expanded={open} aria-label="More actions" onClick={() => setOpen((value) => !value)}>⋯</button>
+      {open && (
+        <div className="more-menu-list" role="menu">
+          {visible.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              className={item.danger ? "danger" : ""}
+              disabled={item.disabled}
+              onClick={() => { setOpen(false); item.onClick(); }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DOC_MODE_LABEL: Record<DocumentMode, string> = { estimate: "Estimate", work_order: "Work Order", invoice: "Invoice" };
+
 function ChargeLine({
   item,
   changeItem,
@@ -4365,7 +4593,7 @@ function ChargeLine({
       </span>
       <label className="description-field">
         Description
-        <input value={item.description} placeholder={descriptionHint} onChange={(event) => changeItem(item.id, "description", event.target.value)} />
+        <input data-line-desc={item.id} value={item.description} placeholder={descriptionHint} onChange={(event) => changeItem(item.id, "description", event.target.value)} />
       </label>
       <label>
         {item.item_type === "labor" ? "Hours" : "Qty"}
@@ -4737,7 +4965,7 @@ function PaymentsPanel({
     payoutsEnabled: settings.stripe_payouts_enabled,
   });
   const [busy, setBusy] = useState<"" | "express" | "standard" | "refresh">("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
 
   useEffect(() => {
     setStatus({
@@ -4898,7 +5126,7 @@ function PaymentsPanel({
 
 function BillingPanel({ settings }: { settings: Settings }) {
   const [busy, setBusy] = useState<"" | "subscribe" | "portal">("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
 
   async function authHeader() {
     const { data } = await supabase.auth.getSession();
@@ -5022,7 +5250,7 @@ function PlatformAdminPanel() {
   const [loading, setLoading] = useState(true);
   const [busyOwnerId, setBusyOwnerId] = useState("");
   const [busyDefault, setBusyDefault] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
   const [traffic, setTraffic] = useState<{ totalVisits: number; uniqueVisitors: number; daily: Array<{ date: string; visits: number; uniqueVisitors: number }> } | null>(null);
   const [trafficLoading, setTrafficLoading] = useState(true);
   const [trafficMessage, setTrafficMessage] = useState("");
@@ -5471,7 +5699,7 @@ function SettingsPanel({
 }) {
   const [form, setForm] = useState<Settings>(initialSettings);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
   const [logoUploading, setLogoUploading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
@@ -5794,7 +6022,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage();
   const [newTeamName, setNewTeamName] = useState("");
   const [teamBusy, setTeamBusy] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -6169,7 +6397,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
 function DocumentView({
   ro,
   settings,
-  mode,
+  mode: requestedMode,
   onModeChange,
   onBack,
   onEdit,
@@ -6178,7 +6406,15 @@ function DocumentView({
   onArchive,
   onDelete,
   onPaid,
+  isTechnician = false,
+  autoPrint = false,
+  onAutoPrintDone,
 }: {
+  /** Techs only ever see the work order, with no prices or totals. */
+  isTechnician?: boolean;
+  /** Print as soon as the document (and its photos) are ready. */
+  autoPrint?: boolean;
+  onAutoPrintDone?: () => void;
   ro: RepairOrder;
   settings: Settings;
   mode: DocumentMode;
@@ -6202,31 +6438,16 @@ function DocumentView({
   const [pendingZellePayment, setPendingZellePayment] = useState<{ id: string; amount: number; status: string } | null>(null);
   const [zelleConfirmBusy, setZelleConfirmBusy] = useState(false);
   const [zelleConfirmNote, setZelleConfirmNote] = useState("");
-  const [invoiceEmailBusy, setInvoiceEmailBusy] = useState(false);
-  const [invoiceEmailMessage, setInvoiceEmailMessage] = useState("");
+  const mode: DocumentMode = isTechnician ? "work_order" : requestedMode;
+  const [sendKind, setSendKind] = useState<"estimate" | "invoice" | null>(null);
+  const [hasInspection, setHasInspection] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void supabase.from("multipoint_inspections").select("id").eq("repair_order_id", ro.id).limit(1)
+      .then(({ data }) => { if (!cancelled) setHasInspection(Boolean(data?.length)); });
+    return () => { cancelled = true; };
+  }, [ro.id]);
   const documentRef = useRef<HTMLElement>(null);
-
-  async function emailInvoiceNow() {
-    setInvoiceEmailBusy(true);
-    setInvoiceEmailMessage("");
-    try {
-      const { data } = await supabase.auth.getSession();
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("Your session expired. Sign in again.");
-      const response = await fetch("/.netlify/functions/send-invoice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ repairOrderId: ro.id }),
-      });
-      const body = await response.json() as { message?: string; error?: string };
-      if (!response.ok) throw new Error(body.error || "The invoice could not be emailed.");
-      setInvoiceEmailMessage(body.message || "Invoice emailed.");
-    } catch (caught) {
-      setInvoiceEmailMessage(caught instanceof Error ? caught.message : "The invoice could not be emailed.");
-    } finally {
-      setInvoiceEmailBusy(false);
-    }
-  }
 
   async function collectPayment() {
     setPaymentBusy(true);
@@ -6339,6 +6560,16 @@ function DocumentView({
       setPrinting(false);
     }
   }
+
+  // "Print" from the editor opens this view and prints once photos are ready.
+  const autoPrintStarted = useRef(false);
+  useEffect(() => {
+    if (!autoPrint || autoPrintStarted.current || photosLoading) return;
+    autoPrintStarted.current = true;
+    onAutoPrintDone?.();
+    void printDocument();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPrint, photosLoading]);
 
   const items = ro.line_items ?? [];
   const customer = ro.customers;
@@ -6507,45 +6738,63 @@ function DocumentView({
   const className = isEstimate ? "document-estimate" : isWorkOrder ? "document-repair-order" : "document-invoice";
   return (
     <section className="document-shell">
-      <div className="document-actions no-print">
-        <button className="button secondary" onClick={onBack}>← Back</button>
-        <div className="document-mode-switch" aria-label="Document view">
-          <button className={mode === "estimate" ? "active" : ""} onClick={() => onModeChange("estimate")}>Estimate</button>
-          <button className={mode === "work_order" ? "active" : ""} onClick={() => onModeChange("work_order")}>Work Order</button>
-          <button className={mode === "invoice" ? "active" : ""} onClick={() => onModeChange("invoice")}>Invoice</button>
+      {sendKind && (
+        <SendPanel
+          kind={sendKind}
+          repairOrderId={ro.id}
+          customerId={ro.customer_id || null}
+          customerName={ro.customers?.name ?? ""}
+          customerEmail={ro.customers?.email ?? ""}
+          hasInspection={hasInspection}
+          onClose={() => setSendKind(null)}
+          onSent={() => onPaid()}
+        />
+      )}
+      <div className="ro-action-bar document-actions no-print">
+        <button className="button ghost" onClick={onBack}>← Back</button>
+        <div className="ro-action-title">
+          <h1>RO #{padRo(ro.ro_number)}</h1>
+          <span className="muted">{[ro.customers?.name, [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
         </div>
-        <div className="workspace-actions">
-          <div className="button-row button-row-muted">
-            {!ro.archived_at && <button className="button ghost" onClick={onEdit}>Edit Work Order</button>}
-            <button className="button ghost" onClick={onInspection}>Multipoint Inspection</button>
-            <button className="button ghost" onClick={onArchive}>
-              {ro.archived_at ? "Restore" : "Archive"}
-            </button>
-            <button className={`button ghost ${ro.status === "voided" ? "" : "warning-text"}`} onClick={onVoid}>
-              {ro.status === "voided" ? "Reopen" : "Void"}
-            </button>
-            <button className="button ghost danger-text" onClick={onDelete}>Delete permanently</button>
-          </div>
-          <div className="button-row">
-            {isInvoice && ro.status !== "voided" && (
-              <button className="button secondary" disabled={invoiceEmailBusy} onClick={() => void emailInvoiceNow()}>
-                {invoiceEmailBusy ? "Sending…" : "Email Invoice"}
+        {!isTechnician && (
+          <div className="document-mode-switch" role="tablist" aria-label="Document">
+            {(["estimate", "work_order", "invoice"] as DocumentMode[]).map((entry) => (
+              <button key={entry} type="button" role="tab" aria-selected={mode === entry} className={mode === entry ? "active" : ""} onClick={() => onModeChange(entry)}>
+                {DOC_MODE_LABEL[entry]}
               </button>
-            )}
-            {isInvoice && !ro.paid && ro.status !== "voided" && (settings.stripe_charges_enabled || settings.zelle_recipient) && settings.subscription_status !== "trialing" && (
-              <button className="button success" disabled={paymentBusy} onClick={() => void collectPayment()}>
-                {paymentBusy ? "Starting…" : "Collect payment"}
-              </button>
-            )}
-            <button className="button primary" disabled={photosLoading || printing || Boolean(photoError)} onClick={() => void printDocument()}>{photosLoading || printing ? "Loading images…" : "Print / Save PDF"}</button>
+            ))}
           </div>
+        )}
+        <div className="ro-action-bar-right">
+          <div className="segmented edit-preview" role="group" aria-label="Edit or preview">
+            <button type="button" disabled={Boolean(ro.archived_at)} title={ro.archived_at ? "Restore this RO to edit it." : undefined} onClick={onEdit}>Edit</button>
+            <button type="button" className="active" aria-pressed="true">Preview</button>
+          </div>
+          {isEstimate && ro.status !== "voided" && (
+            <button className="button primary" onClick={() => setSendKind("estimate")}>Send estimate</button>
+          )}
+          {isInvoice && !ro.paid && ro.status !== "voided" && (settings.stripe_charges_enabled || settings.zelle_recipient) && settings.subscription_status !== "trialing" && (
+            <button className="button secondary" disabled={paymentBusy} onClick={() => void collectPayment()}>
+              {paymentBusy ? "Starting…" : "Collect payment"}
+            </button>
+          )}
+          {isInvoice && ro.status !== "voided" && (
+            <button className="button primary" onClick={() => setSendKind("invoice")}>Send invoice</button>
+          )}
+          {(isWorkOrder || ro.status === "voided") && (
+            <button className="button primary" disabled={photosLoading || printing || Boolean(photoError)} onClick={() => void printDocument()}>
+              {photosLoading || printing ? "Loading images…" : "Print / Save PDF"}
+            </button>
+          )}
+          <MoreMenu items={[
+            !isWorkOrder && ro.status !== "voided" && { label: photosLoading || printing ? "Print / Save PDF (loading…)" : "Print / Save PDF", onClick: () => void printDocument(), disabled: photosLoading || printing || Boolean(photoError) },
+            { label: "Multipoint inspection", onClick: onInspection },
+            !isTechnician && { label: ro.archived_at ? "Restore" : "Archive", onClick: onArchive },
+            !isTechnician && { label: ro.status === "voided" ? "Reopen" : "Void", onClick: onVoid },
+            !isTechnician && { label: "Delete permanently", onClick: onDelete, danger: true },
+          ]} />
         </div>
       </div>
-      {invoiceEmailMessage && (
-        <div className={`no-print ${invoiceEmailMessage.toLowerCase().includes("emailed") ? "notice" : "error-banner"}`} style={{ margin: "0 0 16px" }}>
-          <span>{invoiceEmailMessage}</span>
-        </div>
-      )}
       {(paymentLink || paymentError) && (
         <div className={`no-print ${paymentError ? "error-banner" : "notice"}`} style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           {paymentError ? (
@@ -6585,7 +6834,7 @@ function DocumentView({
           </button>
         </div>
       )}
-      <article ref={documentRef} className={`document-page ${className} tpl-${settings.document_template || "standard"} ${ro.status === "voided" ? "voided-document" : ""}`}>
+      <article ref={documentRef} className={`document-page ${className} tpl-${settings.document_template || "standard"} ${ro.status === "voided" ? "voided-document" : ""} ${isTechnician ? "hide-prices" : ""}`}>
         {ro.status === "voided" && <div className="void-watermark">VOID</div>}
 
         <header className="document-header">

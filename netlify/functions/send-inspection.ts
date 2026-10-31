@@ -4,6 +4,7 @@
 // inspection up by that hash. The inspection itself can keep being edited afterward — sharing
 // again reuses the same link unless the shop explicitly regenerates it.
 
+import { pickRecipient, resolveCustomerSender } from "../../lib/shop-caller";
 import { brandFromSettings, escapeHtml, paragraph, renderCustomerEmail, renderCustomerText } from "../../lib/customer-email";
 import { getInspectionShare, inspectionSummaryHtml } from "../../lib/inspection-share";
 
@@ -39,30 +40,36 @@ export default async (request: Request) => {
   });
   if (!userResponse.ok) return json({ error: "Sign in again before sending an inspection." }, 401);
   const user = await userResponse.json() as { id: string };
-  const body = await request.json().catch(() => ({})) as { repairOrderId?: string };
+  const body = await request.json().catch(() => ({})) as { repairOrderId?: string; toEmail?: string };
   if (!body.repairOrderId) return json({ error: "Missing repair order." }, 400);
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
+  // Owner, service advisor or admin may send; technicians may not.
+  const sender = await resolveCustomerSender(supabaseUrl, serviceHeaders, user.id);
+  if ("error" in sender) return json({ error: sender.error }, sender.status);
+  const ownerId = sender.ownerId;
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=id,ro_number,customers(name,email),vehicles(year,make,model)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${user.id}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=id,ro_number,customers(name,email),vehicles(year,make,model)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
     { headers: serviceHeaders }
   );
   const roRows = await roResponse.json() as Array<{ id: string; ro_number: number; customers: { name: string; email: string | null } | null; vehicles: { year: number | null; make: string | null; model: string | null } | null }>;
   const ro = roRows[0];
   if (!ro) return json({ error: "Repair order not found." }, 404);
-  const customerEmail = ro.customers?.email?.trim();
-  if (!customerEmail) return json({ error: "Add the customer's email address before sending." }, 400);
+  // The Send panel can send to a different address than the one on file.
+  const recipient = pickRecipient(body.toEmail, ro.customers?.email);
+  if ("error" in recipient) return json({ error: recipient.error }, 400);
+  const customerEmail = recipient.email;
 
   // Same link every time this inspection is sent, alone or with the estimate.
   let share;
   try {
-    share = await getInspectionShare({ supabaseUrl, serviceHeaders, repairOrderId: ro.id, ownerId: user.id, siteUrl, customerEmail });
+    share = await getInspectionShare({ supabaseUrl, serviceHeaders, repairOrderId: ro.id, ownerId, siteUrl, customerEmail });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Could not create the inspection link." }, 500);
   }
   if (!share) return json({ error: "Save the inspection before sending it to the customer." }, 400);
 
-  const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=*&owner_id=eq.${user.id}&limit=1`, { headers: serviceHeaders });
+  const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=*&owner_id=eq.${ownerId}&limit=1`, { headers: serviceHeaders });
   const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<Record<string, unknown>> : [])[0] || {};
   const brand = brandFromSettings(settings, supabaseUrl);
   const businessName = brand.name;
