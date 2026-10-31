@@ -2328,3 +2328,97 @@ tbody tr:hover { background: var(--panel-header); }
 .job-media > summary { padding: 10px 0; color: var(--muted); font-weight: 700; cursor: pointer; }
 .job-media[open] > summary { color: var(--ink); }
 .more-menu-list button.danger:first-child { margin-top: 0; border-top: 0; }
+
+/* ---- Account menu (top right): who's signed in, theme, password, sign out ---- */
+.account-menu { position: relative; }
+.account-button { display: flex; align-items: center; gap: 10px; max-width: 240px; min-height: 44px; padding: 4px 10px 4px 4px; border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 999px; background: transparent; color: #fff; cursor: pointer; text-align: left; }
+.account-button:hover, .account-button[aria-expanded="true"] { background: rgba(255, 255, 255, 0.10); }
+.account-avatar { flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: var(--accent-on); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; }
+.account-button-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.account-button-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.account-button-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: 0.75; }
+.account-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 45; width: 300px; max-width: calc(100vw - 24px); display: flex; flex-direction: column; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); }
+.account-panel-who { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px 12px; border-bottom: 1px solid var(--line); }
+.account-panel-who .signed-in-label { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.account-panel-who small { color: var(--muted); overflow-wrap: anywhere; }
+.account-panel-section { padding: 10px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.account-panel-label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 800; color: var(--muted); }
+.theme-swatches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.theme-swatch { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-header); color: var(--ink); font: inherit; font-size: 13px; font-weight: 700; text-align: left; cursor: pointer; }
+.theme-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.theme-dot { flex: 0 0 18px; width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(127, 127, 127, 0.5); }
+.theme-dot-midnight { background: linear-gradient(135deg, #0d0f14 50%, #22d3ee 50%); }
+.theme-dot-graphite { background: linear-gradient(135deg, #0e0e0e 50%, #f5a524 50%); }
+.theme-dot-ocean { background: linear-gradient(135deg, #09101f 50%, #4aa3ff 50%); }
+.theme-dot-forest { background: linear-gradient(135deg, #0a120e 50%, #3ddc84 50%); }
+.theme-dot-light { background: linear-gradient(135deg, #f5f7fb 50%, #1d63d8 50%); }
+.theme-dot-sand { background: linear-gradient(135deg, #faf6ee 50%, #c2410c 50%); }
+.account-panel > button { min-height: 44px; padding: 10px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+.account-panel > button:hover { background: var(--panel-header); }
+.account-panel > button.danger { color: var(--danger-text); }
+
+/* ---- Work order list: stage chips, whole-row click ---- */
+.ro-list-heading { align-items: center; margin-bottom: 14px; }
+.ro-list-heading h1 { margin: 0; }
+.ro-list-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.ro-list-tools .search-input { flex: 1 1 280px; max-width: 520px; }
+.stage-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.stage-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.stage-chip:hover { border-color: var(--muted); }
+.stage-chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-on); }
+.stage-chip-count { min-width: 22px; padding: 0 6px; border-radius: 999px; background: rgba(127, 127, 127, 0.18); font-size: 12px; line-height: 20px; text-align: center; }
+.stage-chip.active .stage-chip-count { background: rgba(0, 0, 0, 0.18); }
+.stage-chip.attention:not(.active) { border-color: var(--accent); color: var(--accent); }
+.ro-list-panel { padding: 0; overflow: hidden; }
+.ro-list-table { width: 100%; }
+.ro-list-table th, .ro-list-table td { vertical-align: top; }
+.ro-row { cursor: pointer; }
+.ro-row:hover td { background: var(--panel-header); }
+.ro-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ro-cell-number { font-weight: 800; white-space: nowrap; }
+.ro-cell-vehicle strong { display: block; }
+.ro-cell-concern { display: block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
+.ro-cell-total { text-align: right; white-space: nowrap; font-weight: 700; }
+.ro-cell-date { white-space: nowrap; color: var(--muted); }
+.ro-cell-note { display: block; margin-top: 4px; font-size: 12px; font-weight: 700; }
+.ro-cell-note.approved { color: var(--success-text, #34d399); }
+.ro-cell-note.declined { color: var(--danger-text); }
+.ro-progress { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.ro-progress-bar { flex: 0 0 90px; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.ro-progress-bar > span { display: block; height: 100%; background: var(--success, #1fae6e); }
+.ro-progress small { color: var(--muted); font-weight: 700; }
+.ro-list-subhead { margin: 22px 0 10px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.handed-off td { opacity: 0.8; }
+.stage-pill.stage-write_up { background: rgba(139, 147, 166, 0.18); }
+.stage-pill.stage-paid { background: var(--success-tint, rgba(52, 211, 153, 0.14)); color: var(--success-text, #34d399); }
+
+@media (max-width: 980px) {
+  .account-button-text { display: none; }
+  .account-button { padding: 4px; border-radius: 50%; }
+}
+
+/* Phone: the table becomes a stack of tappable cards — no sideways scroll. */
+@media (max-width: 760px) {
+  .stage-chips { flex-wrap: nowrap; overflow-x: auto; margin: 0 -14px 12px; padding: 0 14px 4px; scrollbar-width: none; }
+  .stage-chips::-webkit-scrollbar { display: none; }
+  .ro-list-tools .search-input { max-width: none; }
+  .ro-list-tools .ro-scope { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); }
+  .ro-list-tools .ro-scope button { min-height: 42px; }
+  .ro-list-panel { background: transparent; border: 0; box-shadow: none; }
+  .ro-list-panel .table-wrap { overflow: visible; }
+  .ro-list-table, .ro-list-table tbody { display: block; }
+  .ro-list-table thead { display: none; }
+  .ro-list-table tr.ro-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin-bottom: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+  .ro-row:hover td { background: transparent; }
+  .ro-list-table td { display: block; padding: 0; border: 0; }
+  .ro-list-table .ro-cell-vehicle { grid-column: 1; grid-row: 1; }
+  .ro-list-table .ro-cell-vehicle strong { font-size: 17px; }
+  .ro-cell-concern { max-width: none; white-space: normal; }
+  .ro-list-table .ro-cell-number { grid-column: 2; grid-row: 1; color: var(--muted); }
+  .ro-list-table .ro-cell-customer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; }
+  .ro-list-table .ro-cell-stage { grid-column: 1; margin-top: 6px; }
+  .ro-list-table .ro-cell-total { grid-column: 2; align-self: end; }
+  .ro-list-table .ro-cell-date { display: none; }
+  .ro-list-table tr.ro-empty { display: block; }
+  .ro-list-table tr.ro-empty td { padding: 24px 8px; }
+}

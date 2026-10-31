@@ -1734,8 +1734,8 @@ function RepairOrderApp({ user }: { user: User }) {
     await loadData();
   }
 
-  async function updateRoPaidStatus(ro: RepairOrder, paid: boolean) {
-    if (ro.paid === paid) return;
+  async function updateRoPaidStatus(ro: RepairOrder, paid: boolean): Promise<boolean> {
+    if (ro.paid === paid) return true;
 
     setError("");
     const { error: updateError } = await supabase
@@ -1748,10 +1748,11 @@ function RepairOrderApp({ user }: { user: User }) {
 
     if (updateError) {
       setError(`Could not update RO #${padRo(ro.ro_number)} payment status: ${updateError.message}`);
-      return;
+      return false;
     }
 
     await loadData();
+    return true;
   }
 
   async function toggleArchiveRo(ro: RepairOrder) {
@@ -1911,9 +1912,8 @@ function RepairOrderApp({ user }: { user: User }) {
         </button>
         <nav>
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
-            Work Orders
+            {isTechnicianOnly ? "My jobs" : "Work orders"}
           </button>
-          {!isTechnicianOnly && <button onClick={() => startNew()}>New Work Order</button>}
           {!isTechnicianOnly && (
             <button className={view === "customers" || view === "customer_profile" ? "active" : ""} onClick={() => setView("customers")}>
               Customers
@@ -1940,32 +1940,19 @@ function RepairOrderApp({ user }: { user: User }) {
             }}
           />
         )}
-        <div className="signed-in-as" title={user.email ?? undefined}>
-          <span className="signed-in-label">Signed in as</span>
-          <strong>
-            {currentStaff
-              ? currentStaff.name || currentStaff.username || currentStaff.email || user.email
-              : settings.business_name || user.email}
-          </strong>
-          <span className="signed-in-role">
-            {currentStaff
-              ? `${currentStaff.is_admin ? "Admin · " : ""}${currentStaff.role === "technician" ? "Technician" : "Service advisor"}${currentStaff.username ? ` · ${currentStaff.username}` : ""}`
-              : `Owner · ${user.email ?? ""}`}
-          </span>
-        </div>
-        <label className="theme-picker">
-          <select aria-label="Color theme" value={uiTheme} onChange={(event) => changeUiTheme(event.target.value as UiTheme)}>
-            {UI_THEMES.map((theme) => (
-              <option key={theme.id} value={theme.id}>{theme.name}</option>
-            ))}
-          </select>
-        </label>
-        <button className="button secondary" onClick={() => setShowPasswordChange(true)}>
-          Change password
-        </button>
-        <button className="button secondary" onClick={() => supabase.auth.signOut()}>
-          Sign out
-        </button>
+        <AccountMenu
+          name={currentStaff
+            ? currentStaff.name || currentStaff.username || currentStaff.email || user.email || "Signed in"
+            : settings.business_name || user.email || "Owner"}
+          detail={currentStaff
+            ? `${currentStaff.is_admin ? "Admin · " : ""}${currentStaff.role === "technician" ? "Technician" : "Service advisor"}${currentStaff.username ? ` · ${currentStaff.username}` : ""}`
+            : "Owner"}
+          email={user.email ?? ""}
+          theme={uiTheme}
+          onTheme={changeUiTheme}
+          onChangePassword={() => setShowPasswordChange(true)}
+          onSignOut={() => void supabase.auth.signOut()}
+        />
       </header>
       {showPasswordChange && (
         <ChangePasswordModal
@@ -2040,10 +2027,7 @@ function RepairOrderApp({ user }: { user: User }) {
                 void editDocument(id, "dashboard", mode === "invoice" ? "invoice" : "work_order", mode);
               }
             }}
-            onInspection={(id) => openInspection(id, "dashboard")}
             onOpenCustomer={openCustomer}
-            onStatusChange={updateRoStatus}
-            onPaidChange={updateRoPaidStatus}
             canCreate={!isTechnicianOnly}
             isTechnician={isTechnicianOnly}
             techFilterFor={isTechnicianOnly && currentStaff ? { staffId: currentStaff.id, teamId: currentStaff.team_id } : null}
@@ -2401,279 +2385,278 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
   );
 }
 
+/** Top-bar account button: who's signed in, their theme, password and sign out — one tap instead of five buttons. */
+function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, onSignOut }: {
+  name: string;
+  detail: string;
+  email: string;
+  theme: UiTheme;
+  onTheme: (theme: UiTheme) => void;
+  onChangePassword: () => void;
+  onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent) { if (event.key === "Escape") setOpen(false); return; }
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
+  }, [open]);
+  const initial = (name.trim()[0] || "?").toUpperCase();
+  return (
+    <div className="account-menu" ref={wrapRef}>
+      <button type="button" className="account-button" aria-haspopup="true" aria-expanded={open} aria-label={`Account: ${name}`} onClick={() => setOpen((value) => !value)}>
+        <span className="account-avatar" aria-hidden="true">{initial}</span>
+        <span className="account-button-text">
+          <strong>{name}</strong>
+          <small>{detail}</small>
+        </span>
+      </button>
+      {open && (
+        <div className="account-panel" role="menu">
+          <div className="account-panel-who">
+            <span className="signed-in-label">Signed in as</span>
+            <strong>{name}</strong>
+            <small>{detail}{email && email !== name ? ` · ${email}` : ""}</small>
+          </div>
+          <div className="account-panel-section">
+            <span className="account-panel-label">Theme</span>
+            <div className="theme-swatches" role="group" aria-label="Color theme">
+              {UI_THEMES.map((entry) => (
+                <button key={entry.id} type="button" className={`theme-swatch${theme === entry.id ? " active" : ""}`} aria-pressed={theme === entry.id} onClick={() => onTheme(entry.id)}>
+                  <span className={`theme-dot theme-dot-${entry.id}`} aria-hidden="true" />
+                  {entry.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); onChangePassword(); }}>Change password</button>
+          <button type="button" role="menuitem" className="danger" onClick={() => { setOpen(false); onSignOut(); }}>Sign out</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ListFilter = "active" | RoStage | "archived";
+/** Approved jobs on the RO, and how many the tech has marked Done. */
+function jobProgressCount(ro: RepairOrder): { done: number; total: number } {
+  const groups = new Map<string, LineItem[]>();
+  const decisions = ro.latest_estimate_authorization?.line_decisions ?? {};
+  for (const item of ro.line_items ?? []) {
+    if (!item.service_group_id || item.job_status === "pending_review" || decisions[item.service_group_id] === "declined") continue;
+    groups.set(item.service_group_id, [...(groups.get(item.service_group_id) ?? []), item]);
+  }
+  let done = 0;
+  groups.forEach((rows) => { if (rows.every((row) => row.job_progress === "done")) done += 1; });
+  return { done, total: groups.size };
+}
+
 function Dashboard({
   repairOrders,
   onNew,
   onOpen,
-  onInspection,
   onOpenCustomer,
-  onStatusChange,
-  onPaidChange,
   canCreate = true,
   techFilterFor = null,
   isTechnician = false,
 }: {
-  /** Techs see the work, not the money: no estimate, invoice or total columns. */
+  /** Techs see the work, not the money: no estimate or total. */
   isTechnician?: boolean;
-  /** Set for technicians: enables the My jobs / My team / Everything I can work filter. */
+  /** Set for technicians: enables the Mine / Team / All filter. */
   techFilterFor?: { staffId: string; teamId: string | null } | null;
   repairOrders: RepairOrder[];
   onNew: () => void;
   onOpen: (id: string, mode: DocumentMode) => void;
-  onInspection: (id: string) => void;
   onOpenCustomer: (customer: Customer) => void;
-  onStatusChange: (ro: RepairOrder, status: "open" | "completed") => Promise<void>;
-  onPaidChange: (ro: RepairOrder, paid: boolean) => Promise<void>;
   canCreate?: boolean;
 }) {
   const [search, setSearch] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
+  const [filter, setFilter] = useState<ListFilter>("active");
   // Techs land on their own cars.
   const [techScope, setTechScope] = useState<"mine" | "team" | "all">(techFilterFor ? "mine" : "all");
-  const [savingId, setSavingId] = useState<string | null>(null);
   const normalized = search.toLowerCase().trim();
-
-  async function changeStatus(ro: RepairOrder, status: "open" | "completed") {
-    setSavingId(ro.id);
-    try {
-      await onStatusChange(ro, status);
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  async function changePaidStatus(ro: RepairOrder, paid: boolean) {
-    setSavingId(ro.id);
-    try {
-      await onPaidChange(ro, paid);
-    } finally {
-      setSavingId(null);
-    }
-  }
 
   const isMine = (ro: RepairOrder) => Boolean(techFilterFor && (ro.repair_order_technicians ?? []).some((row) => row.staff_id === techFilterFor.staffId));
   const isMyTeam = (ro: RepairOrder) => Boolean(techFilterFor?.teamId && ro.team_id === techFilterFor.teamId);
-  const visibleRecords = repairOrders
-    .filter((ro) => showArchived || !ro.archived_at)
-    .filter((ro) => !techFilterFor || techScope === "all" || (techScope === "mine" ? isMine(ro) : isMine(ro) || isMyTeam(ro)));
-  const filtered = visibleRecords.filter((ro) => {
+  const inScope = (ro: RepairOrder) => !techFilterFor || techScope === "all" || (techScope === "mine" ? isMine(ro) : isMine(ro) || isMyTeam(ro));
+  const matchesSearch = (ro: RepairOrder) => {
     if (!normalized) return true;
-    const customer = ro.customers;
     const vehicle = ro.vehicles;
-    const haystack = [
-      padRo(ro.ro_number),
-      customer?.name,
-      customer?.phone,
-      customer?.email,
-      vehicle?.year,
-      vehicle?.make,
-      vehicle?.model,
-      vehicle?.vin,
-      vehicle?.license_plate,
-      ro.customer_concern,
-      ...(ro.concern_lines ?? []).map((line) => line.concern),
-      ro.status,
-      ro.paid ? "paid" : "unpaid",
-      ro.archived_at ? "archived" : "",
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(normalized);
-  });
+    return [
+      padRo(ro.ro_number), ro.customers?.name, ro.customers?.phone, ro.customers?.email,
+      vehicle?.year, vehicle?.make, vehicle?.model, vehicle?.vin, vehicle?.license_plate,
+      ro.customer_concern, ...(ro.concern_lines ?? []).map((line) => line.concern),
+      RO_STAGE_LABEL[stageOfRo(ro)],
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalized);
+  };
 
-  const currentRecords = repairOrders.filter((ro) => !ro.archived_at);
-  const archivedCount = repairOrders.length - currentRecords.length;
-  const openCount = currentRecords.filter((ro) => ro.status === "open").length;
-  const unpaidCount = currentRecords.filter(
-    (ro) => ro.status === "completed" && !ro.paid
-  ).length;
-  const activeCount = openCount + unpaidCount;
+  const scoped = repairOrders.filter(inScope).map((ro) => ({ ro, stage: stageOfRo(ro) }));
+  const current = scoped.filter(({ ro }) => !ro.archived_at);
+  const countOf = (key: ListFilter) =>
+    key === "archived" ? scoped.length - current.length
+      : key === "active" ? current.filter(({ stage }) => stage !== "paid" && stage !== "voided").length
+        : current.filter(({ stage }) => stage === key).length;
+  const passesFilter = ({ ro, stage }: { ro: RepairOrder; stage: RoStage }) =>
+    filter === "archived" ? Boolean(ro.archived_at)
+      : ro.archived_at ? false
+        : filter === "active" ? stage !== "paid" && stage !== "voided"
+          : stage === filter;
 
-  return (
-    <section>
-      <div className="page-heading">
-        <div>
-          <h1>Work Orders</h1>
-          <p>One job record. Print it as an estimate, use it as the shop work order, and issue the final invoice.</p>
-        </div>
-        {canCreate && (
-          <button className="button primary" onClick={onNew}>
-            + New Work Order
-          </button>
-        )}
-      </div>
+  // Techs: cars still in their hands up top; ones they've handed to the advisor below.
+  const techActive = current.filter(({ stage }) => stage === "write_up" || stage === "waiting" || stage === "in_shop").filter(({ ro }) => matchesSearch(ro));
+  const techHandedOff = current.filter(({ stage }) => stage === "ready").filter(({ ro }) => matchesSearch(ro));
+  const rows = isTechnician ? techActive : scoped.filter(passesFilter).filter(({ ro }) => matchesSearch(ro));
 
-      <div className="summary-grid">
-        <div className="summary-card">
-          <span>Active work orders</span>
-          <strong>{activeCount}</strong>
-        </div>
-        <div className="summary-card">
-          <span>Open jobs</span>
-          <strong>{openCount}</strong>
-        </div>
-        {!isTechnician && (
-          <div className="summary-card">
-            <span>Completed & unpaid</span>
-            <strong>{unpaidCount}</strong>
+  const chips: Array<{ key: ListFilter; label: string }> = [
+    { key: "active", label: "Active" },
+    { key: "write_up", label: "Write-up" },
+    { key: "waiting", label: "Waiting on customer" },
+    { key: "in_shop", label: "In the shop" },
+    { key: "ready", label: "Ready for you" },
+    { key: "invoiced", label: "Invoiced · unpaid" },
+    { key: "paid", label: "Paid" },
+    { key: "archived", label: "Archived" },
+  ];
+
+  const open = (ro: RepairOrder, stage: RoStage) => onOpen(ro.id, !isTechnician && (stage === "invoiced" || stage === "paid") ? "invoice" : "work_order");
+  const vehicleName = (ro: RepairOrder) => [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "No vehicle";
+  const concernOf = (ro: RepairOrder) => (ro.concern_lines ?? []).map((line) => line.concern).filter(Boolean)[0] || ro.customer_concern || "";
+
+  const renderRow = ({ ro, stage }: { ro: RepairOrder; stage: RoStage }, handedOff = false) => {
+    const pending = pendingRecommendationCount(ro.line_items ?? []);
+    const progress = jobProgressCount(ro);
+    const authorization = ro.latest_estimate_authorization;
+    const decision = authorizationDecisionSummary(authorization);
+    const stageText = isTechnician
+      ? stage === "ready" ? "Sent to advisor" : stage === "waiting" ? "Waiting on customer OK" : RO_STAGE_LABEL[stage]
+      : stage === "ready" ? "Ready for you" : RO_STAGE_LABEL[stage];
+    return (
+      <tr
+        key={ro.id}
+        className={`ro-row${ro.archived_at ? " archived-row" : ""}${handedOff ? " handed-off" : ""}`}
+        tabIndex={0}
+        onClick={() => open(ro, stage)}
+        onKeyDown={(event) => { if (event.key === "Enter") open(ro, stage); }}
+        aria-label={`Open RO ${padRo(ro.ro_number)}`}
+      >
+        <td className="ro-cell-number" data-label="RO">#{padRo(ro.ro_number)}</td>
+        <td className="ro-cell-vehicle" data-label="Vehicle">
+          <strong>{vehicleName(ro)}</strong>
+          {concernOf(ro) && <span className="ro-cell-concern">{concernOf(ro)}</span>}
+        </td>
+        <td className="ro-cell-customer" data-label="Customer">
+          {ro.customers ? (
+            isTechnician ? ro.customers.name : (
+              <button className="table-link" onClick={(event) => { event.stopPropagation(); onOpenCustomer(ro.customers as Customer); }}>
+                {ro.customers.name}
+              </button>
+            )
+          ) : "—"}
+        </td>
+        <td className="ro-cell-stage" data-label="Stage">
+          <div className="badge-row">
+            <span className={`stage-pill stage-${stage}`}>{stageText}</span>
+            {ro.archived_at && <span className="badge archived">Archived</span>}
+            {pending > 0 && !ro.archived_at && (
+              <span className="badge recommendation">{isTechnician ? `${pending} sent for pricing` : `${pending} to price`}</span>
+            )}
           </div>
-        )}
-      </div>
-
-      <div className="panel">
-        <div className="toolbar toolbar-between">
-          <input
-            className="search-input"
-            placeholder="Search customer, phone, VIN, plate, RO, vehicle…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          {techFilterFor && (
-            <div className="segmented" role="group" aria-label="Which work orders">
-              <button type="button" className={techScope === "mine" ? "active" : ""} onClick={() => setTechScope("mine")}>My jobs</button>
-              {techFilterFor.teamId && <button type="button" className={techScope === "team" ? "active" : ""} onClick={() => setTechScope("team")}>My team</button>}
-              <button type="button" className={techScope === "all" ? "active" : ""} onClick={() => setTechScope("all")}>All I can work</button>
+          {isTechnician && stage === "in_shop" && progress.total > 0 && (
+            <div className="ro-progress" aria-label={`${progress.done} of ${progress.total} jobs done`}>
+              <span className="ro-progress-bar"><span style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} /></span>
+              <small>{progress.done} of {progress.total} done</small>
             </div>
           )}
-          <label className="checkbox-row archive-toggle">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(event) => setShowArchived(event.target.checked)}
-            />
-            Show archived ({archivedCount})
-          </label>
+          {!isTechnician && (stage === "waiting" || stage === "in_shop") && decision.approved.length > 0 && (
+            <small className="ro-cell-note approved">✓ Approved {money(Number(authorization?.approved_total || 0))}</small>
+          )}
+          {!isTechnician && (stage === "waiting" || stage === "in_shop") && decision.declined.length > 0 && (
+            <small className="ro-cell-note declined">✕ Declined {compactDecisionTitles(decision.declined)}</small>
+          )}
+        </td>
+        {!isTechnician && <td className="ro-cell-total" data-label="Total">{money(repairOrderTotal(ro))}</td>}
+        <td className="ro-cell-date" data-label="Opened">{new Date(ro.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</td>
+      </tr>
+    );
+  };
+
+  const head = (
+    <thead>
+      <tr>
+        <th>RO</th>
+        <th>Vehicle</th>
+        <th>Customer</th>
+        <th>Stage</th>
+        {!isTechnician && <th className="ro-cell-total">Total</th>}
+        <th>Opened</th>
+      </tr>
+    </thead>
+  );
+
+  return (
+    <section className="ro-list-page">
+      <div className="page-heading ro-list-heading">
+        <h1>{isTechnician ? (techScope === "mine" ? "My jobs" : techScope === "team" ? "Team jobs" : "All jobs") : "Work orders"}</h1>
+        {canCreate && <button className="button primary" onClick={onNew}>+ New work order</button>}
+      </div>
+
+      <div className="ro-list-tools">
+        {techFilterFor && (
+          <div className="segmented ro-scope" role="group" aria-label="Which jobs">
+            <button type="button" className={techScope === "mine" ? "active" : ""} aria-pressed={techScope === "mine"} onClick={() => setTechScope("mine")}>Mine</button>
+            {techFilterFor.teamId && <button type="button" className={techScope === "team" ? "active" : ""} aria-pressed={techScope === "team"} onClick={() => setTechScope("team")}>Team</button>}
+            <button type="button" className={techScope === "all" ? "active" : ""} aria-pressed={techScope === "all"} onClick={() => setTechScope("all")}>All</button>
+          </div>
+        )}
+        <input
+          className="search-input"
+          type="search"
+          placeholder="Search name, phone, VIN, plate, RO…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </div>
+
+      {!isTechnician && (
+        <div className="stage-chips" role="group" aria-label="Show work orders by stage">
+          {chips.map((chip) => {
+            const count = countOf(chip.key);
+            if (count === 0 && chip.key !== "active" && chip.key !== filter) return null;
+            return (
+              <button
+                key={chip.key}
+                type="button"
+                className={`stage-chip${filter === chip.key ? " active" : ""}${chip.key === "ready" && count > 0 ? " attention" : ""}`}
+                aria-pressed={filter === chip.key}
+                onClick={() => setFilter(chip.key)}
+              >
+                {chip.label} <span className="stage-chip-count">{count}</span>
+              </button>
+            );
+          })}
         </div>
+      )}
+
+      <div className="panel ro-list-panel">
         <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>RO</th>
-                <th>Date</th>
-                <th>Customer</th>
-                <th>Vehicle</th>
-                <th>Job status</th>
-                {!isTechnician && <th>Estimate</th>}
-                {!isTechnician && <th>Invoice</th>}
-                {!isTechnician && <th>Billable total</th>}
-                <th></th>
-              </tr>
-            </thead>
+          <table className="ro-list-table">
+            {head}
             <tbody>
-              {filtered.map((ro) => {
-                const authorization = ro.latest_estimate_authorization;
-                const displayedEstimateStatus = authorization && authorization.status !== "superseded" ? authorization.status : ro.estimate_status ?? "not_sent";
-                const decisionSummary = authorizationDecisionSummary(authorization);
-                return (
-                <tr key={ro.id} className={ro.archived_at ? "archived-row" : ""}>
-                  <td className="ro-number"><button className="table-link ro-link" onClick={() => onOpen(ro.id, "work_order")}>#{padRo(ro.ro_number)}</button></td>
-                  <td>{new Date(ro.created_at).toLocaleDateString()}</td>
-                  <td>
-                    {ro.customers ? (
-                      <button className="table-link" onClick={() => onOpenCustomer(ro.customers as Customer)}>
-                        {ro.customers.name}
-                      </button>
-                    ) : "—"}
-                  </td>
-                  <td>
-                    {[ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "—"}
-                  </td>
-                  <td>
-                    <div className="badge-row">
-                      {ro.archived_at || ro.status === "voided" ? (
-                        <span className={`badge ${ro.status}`}>{statusLabel(ro.status)}</span>
-                      ) : (
-                        <select
-                          className={`status-select ${ro.status}`}
-                          aria-label={`Job status for RO ${padRo(ro.ro_number)}`}
-                          value={ro.status}
-                          disabled={savingId === ro.id}
-                          onChange={(event) => void changeStatus(ro, event.target.value as "open" | "completed")}
-                        >
-                          <option value="open">Open</option>
-                          <option value="completed">Completed</option>
-                        </select>
-                      )}
-                      {ro.archived_at && <span className="badge archived">Archived</span>}
-                      {!ro.archived_at && ro.status === "open" && ro.work_complete_at && (
-                        <span className="badge work-complete" title="The tech marked all approved work done">Work complete</span>
-                      )}
-                      {(() => {
-                        const pending = new Set((ro.line_items ?? []).filter(isPendingReview).map((item) => item.service_group_id)).size;
-                        return !ro.archived_at && pending > 0 ? (
-                          <span className="badge recommendation" title="Technician recommendations waiting for the advisor">
-                            {pending} recommendation{pending === 1 ? "" : "s"}
-                          </span>
-                        ) : null;
-                      })()}
-                    </div>
-                  </td>
-                  {!isTechnician && (<td>
-                    <div className="estimate-dashboard-status">
-                    <span className={`badge estimate-${displayedEstimateStatus}`}>
-                      {displayedEstimateStatus === "sent"
-                        ? "Sent"
-                        : displayedEstimateStatus === "approved"
-                          ? "Approved"
-                          : displayedEstimateStatus === "partially_approved"
-                            ? "Partial"
-                          : displayedEstimateStatus === "declined"
-                            ? "Declined"
-                            : "Not sent"}
-                    </span>
-                    {decisionSummary.approved.length > 0 && (
-                      <div className="estimate-decision approved" title={decisionSummary.approved.join("\n")}>
-                        <strong>✓ Approved · {money(Number(authorization?.approved_total || 0))}</strong>
-                        <small>{compactDecisionTitles(decisionSummary.approved)}</small>
-                      </div>
-                    )}
-                    {decisionSummary.declined.length > 0 && (
-                      <div className="estimate-decision declined" title={decisionSummary.declined.join("\n")}>
-                        <strong>✕ Declined</strong>
-                        <small>{compactDecisionTitles(decisionSummary.declined)}</small>
-                      </div>
-                    )}
-                    </div>
-                  </td>)}
-                  {!isTechnician && (<td>
-                    {ro.archived_at || ro.status === "voided" ? (
-                      <span className={`badge ${ro.paid ? "paid" : ro.status === "completed" ? "unpaid" : "neutral"}`}>
-                        {ro.paid ? "Paid" : ro.status === "completed" ? "Unpaid" : "Not final"}
-                      </span>
-                    ) : (
-                      <select
-                        className={`status-select ${ro.paid ? "paid" : "unpaid"}`}
-                        aria-label={`Payment status for RO ${padRo(ro.ro_number)}`}
-                        value={ro.paid ? "paid" : "unpaid"}
-                        disabled={savingId === ro.id}
-                        onChange={(event) => void changePaidStatus(ro, event.target.value === "paid")}
-                      >
-                        <option value="unpaid">Unpaid</option>
-                        <option value="paid">Paid</option>
-                      </select>
-                    )}
-                  </td>)}
-                  {!isTechnician && <td>{money(repairOrderTotal(ro))}</td>}
-                  <td className="actions-cell">
-                    <button className="button small primary" onClick={() => onInspection(ro.id)}>
-                      Inspection
-                    </button>
-                    <button className="button small secondary" onClick={() => onOpen(ro.id, "work_order")}>
-                      Work order
-                    </button>
-                    {!isTechnician && (
-                      <button className="button small ghost" onClick={() => onOpen(ro.id, "invoice")}>
-                        Invoice
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );})}
-              {!filtered.length && (
-                <tr>
-                  <td colSpan={isTechnician ? 6 : 9} className="empty-state">
-                    {showArchived ? "No matching work orders." : "No matching active work orders."}
+              {rows.map((row) => renderRow(row))}
+              {!rows.length && (
+                <tr className="ro-empty">
+                  <td colSpan={isTechnician ? 5 : 6} className="empty-state">
+                    {normalized
+                      ? "Nothing matches that search."
+                      : isTechnician
+                        ? techScope === "mine" ? "No cars assigned to you right now." : "No open jobs here right now."
+                        : filter === "active" ? "No active work orders. Start one with New work order." : "Nothing in this stage right now."}
                   </td>
                 </tr>
               )}
@@ -2681,6 +2664,20 @@ function Dashboard({
           </table>
         </div>
       </div>
+
+      {isTechnician && techHandedOff.length > 0 && (
+        <>
+          <h2 className="ro-list-subhead">Sent to advisor</h2>
+          <div className="panel ro-list-panel">
+            <div className="table-wrap">
+              <table className="ro-list-table">
+                {head}
+                <tbody>{techHandedOff.map((row) => renderRow(row, true))}</tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -6270,7 +6267,7 @@ function SettingsPanel({
       <div className="panel settings-panel">
         <h2 style={{ marginTop: 0 }}>Branding</h2>
         <p className="muted" style={{ fontSize: 13, margin: "0 0 14px" }}>
-          Brand colors are what your customers see: estimates, invoices, the approval page, emails and the top bar of this app. They are separate from the Theme menu in the top bar, which only changes how the app looks for each person using it.
+          Brand colors are what your customers see: estimates, invoices, the approval page, emails and the top bar of this app. They are separate from the app theme, which each person picks for themselves from their name at the top right.
         </p>
         <div className="form-grid two">
           <label>
