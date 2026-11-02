@@ -157,6 +157,9 @@ type LineItem = {
   job_note: string | null;
   /** Where the job stands on the shop floor (see JOB_PROGRESS). */
   job_progress?: JobProgress;
+  /** The tech who recommended this repair (set by the database when a tech adds it). */
+  recommended_by?: string | null;
+  created_at?: string;
 };
 
 type JobStatus = "authorized" | "needs_approval" | "pending_review";
@@ -542,6 +545,8 @@ type RepairOrder = {
   invoice_overrides?: InvoiceOverrides;
   /** Set when the tech marks all approved work done; cleared if more work is approved. */
   work_complete_at?: string | null;
+  /** Staff member who wrote the RO; null means the owner. */
+  service_advisor_id?: string | null;
   id: string;
   ro_number: number;
   customer_id: string;
@@ -1395,6 +1400,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useToastMessage("error");
   const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [reportsTab, setReportsTab] = useState<"sales" | "team">("sales");
   const [stripeOAuthCode, setStripeOAuthCode] = useState<string | null>(null);
   const [stripeReturnPending, setStripeReturnPending] = useState(false);
 
@@ -1920,7 +1926,7 @@ function RepairOrderApp({ user }: { user: User }) {
             </button>
           )}
           {isAdminAccess && (
-            <button className={view === "reports" ? "active" : ""} onClick={() => setView("reports")}>
+            <button className={view === "reports" ? "active" : ""} onClick={() => { setReportsTab("sales"); setView("reports"); }}>
               Reports
             </button>
           )}
@@ -2028,6 +2034,15 @@ function RepairOrderApp({ user }: { user: User }) {
               }
             }}
             onOpenCustomer={openCustomer}
+            topCard={
+              <MyWeekCard
+                repairOrders={repairOrders}
+                who={!currentStaff
+                  ? { kind: "owner" }
+                  : { kind: currentStaff.role === "technician" ? "technician" : "advisor", staffId: currentStaff.id }}
+                onOpenTeam={isAdminAccess ? () => { setReportsTab("team"); setView("reports"); } : undefined}
+              />
+            }
             canCreate={!isTechnicianOnly}
             isTechnician={isTechnicianOnly}
             techFilterFor={isTechnicianOnly && currentStaff ? { staffId: currentStaff.id, teamId: currentStaff.team_id } : null}
@@ -2093,7 +2108,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onDelete={deleteCustomer}
           />
         ) : view === "reports" && isAdminAccess ? (
-          <ReportsPanel repairOrders={repairOrders} />
+          <ReportsPanel key={reportsTab} repairOrders={repairOrders} initialTab={reportsTab} />
         ) : view === "settings" && isAdminAccess ? (
           <SettingsPanel
             user={user}
@@ -2251,7 +2266,345 @@ function downloadReportCsv(rows: ReportRow[], period: ReportPeriod) {
   URL.revokeObjectURL(url);
 }
 
-function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
+// ===================== People metrics (tech + advisor performance) =====================
+// Everything is credited in the period the RO was closed (completed_at), using the same billed-lines
+// rule as the invoice. Techs: every tech assigned to the RO gets its hours (ROs aren't split).
+// Advisors: the staff member who wrote the RO (service_advisor_id); blank means the owner wrote it.
+const OWNER_KEY = "owner";
+type MetricRange = { from: Date; to: Date };
+type TechMetrics = { ros: number; hours: number; laborSales: number; recs: number; recsApproved: number; recsApprovedValue: number; daysInShop: number[] };
+type AdvisorMetrics = { ros: number; sales: number; hours: number; grossProfit: number; estimatesSent: number; estimatesApproved: number; recs: number; recsSold: number; recsSoldValue: number; readyWaitHours: number[] };
+type PeopleMetrics = { techs: Map<string, TechMetrics>; advisors: Map<string, AdvisorMetrics> };
+
+const blankTech = (): TechMetrics => ({ ros: 0, hours: 0, laborSales: 0, recs: 0, recsApproved: 0, recsApprovedValue: 0, daysInShop: [] });
+const blankAdvisor = (): AdvisorMetrics => ({ ros: 0, sales: 0, hours: 0, grossProfit: 0, estimatesSent: 0, estimatesApproved: 0, recs: 0, recsSold: 0, recsSoldValue: 0, readyWaitHours: [] });
+const average = (values: number[]) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null);
+const inRange = (iso: string | null | undefined, range: MetricRange) => {
+  if (!iso) return false;
+  const time = new Date(iso).getTime();
+  return time >= range.from.getTime() && time < range.to.getTime();
+};
+
+function computePeopleMetrics(repairOrders: RepairOrder[], range: MetricRange): PeopleMetrics {
+  const techs = new Map<string, TechMetrics>();
+  const advisors = new Map<string, AdvisorMetrics>();
+  const tech = (id: string) => techs.get(id) ?? techs.set(id, blankTech()).get(id)!;
+  const advisor = (id: string) => advisors.get(id) ?? advisors.set(id, blankAdvisor()).get(id)!;
+
+  for (const ro of repairOrders) {
+    if (ro.status === "voided") continue;
+    const advisorKey = ro.service_advisor_id || OWNER_KEY;
+    const items = ro.line_items ?? [];
+    const billed = authorizedLineItems(items, ro.latest_estimate_authorization, ro.invoice_overrides);
+    const billedIds = new Set(billed.map((item) => item.id));
+    const techIds = [...new Set((ro.repair_order_technicians ?? []).map((row) => row.staff_id))];
+
+    // Closed in this period: hours, sales, profit.
+    if (ro.status === "completed" && inRange(ro.completed_at, range)) {
+      const hours = billed.reduce((sum, item) => (item.item_type === "labor" ? sum + Number(item.quantity || 0) : sum), 0);
+      const laborSales = billed.reduce((sum, item) => (item.item_type === "labor" ? sum + item.quantity * item.unit_price : sum), 0);
+      const sales = billed.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+      const partsCost = billed.reduce((sum, item) => (item.item_type === "part" ? sum + item.quantity * Number(item.unit_cost || 0) : sum), 0);
+      const days = (new Date(ro.completed_at!).getTime() - new Date(ro.created_at).getTime()) / 86_400_000;
+      for (const id of techIds) {
+        const row = tech(id);
+        row.ros += 1;
+        row.hours += hours;
+        row.laborSales += laborSales;
+        row.daysInShop.push(days);
+      }
+      const row = advisor(advisorKey);
+      row.ros += 1;
+      row.sales += sales;
+      row.hours += hours;
+      row.grossProfit += sales - partsCost;
+      if (ro.work_complete_at) {
+        row.readyWaitHours.push(Math.max(0, (new Date(ro.completed_at!).getTime() - new Date(ro.work_complete_at).getTime()) / 3_600_000));
+      }
+    }
+
+    // Estimates sent in this period, and whether the customer said yes to any of it.
+    const authorization = ro.latest_estimate_authorization;
+    if (authorization && authorization.status !== "superseded" && inRange(authorization.sent_at, range)) {
+      const row = advisor(advisorKey);
+      row.estimatesSent += 1;
+      if (authorization.status === "approved" || authorization.status === "partially_approved") row.estimatesApproved += 1;
+    }
+
+    // Tech recommendations written in this period, and whether they sold.
+    const groups = new Map<string, LineItem[]>();
+    for (const item of items) {
+      if (!item.service_group_id) continue;
+      groups.set(item.service_group_id, [...(groups.get(item.service_group_id) ?? []), item]);
+    }
+    groups.forEach((rows) => {
+      const ordered = [...rows].sort((a, b) => ((a.created_at ?? "") < (b.created_at ?? "") ? -1 : 1));
+      const recommender = ordered.find((item) => item.recommended_by)?.recommended_by;
+      if (!recommender || !inRange(ordered[0].created_at, range)) return;
+      const sold = rows.some((item) => item.job_status !== "pending_review" && billedIds.has(item.id))
+        && (ro.status === "completed" || Boolean(authorization && hasAuthorizationResponse(authorization)) || rows.some((item) => item.job_status === "authorized"));
+      const value = sold ? rows.reduce((sum, item) => sum + item.quantity * item.unit_price, 0) : 0;
+      const techRow = tech(recommender);
+      techRow.recs += 1;
+      const advisorRow = advisor(advisorKey);
+      advisorRow.recs += 1;
+      if (sold) {
+        techRow.recsApproved += 1;
+        techRow.recsApprovedValue += value;
+        advisorRow.recsSold += 1;
+        advisorRow.recsSoldValue += value;
+      }
+    });
+  }
+  return { techs, advisors };
+}
+
+/** Monday 00:00 local of the week containing `date`. */
+function startOfWeek(date: Date): Date {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  return start;
+}
+type MetricPeriod = "this_week" | "last_week" | "this_month" | "last_month" | "this_year";
+const METRIC_PERIODS: Array<{ id: MetricPeriod; label: string }> = [
+  { id: "this_week", label: "This week" },
+  { id: "last_week", label: "Last week" },
+  { id: "this_month", label: "This month" },
+  { id: "last_month", label: "Last month" },
+  { id: "this_year", label: "This year" },
+];
+function metricRange(period: MetricPeriod, now = new Date()): MetricRange {
+  const week = startOfWeek(now);
+  switch (period) {
+    case "this_week": return { from: week, to: new Date(week.getTime() + 7 * 86_400_000) };
+    case "last_week": return { from: new Date(week.getTime() - 7 * 86_400_000), to: week };
+    case "this_month": return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: new Date(now.getFullYear(), now.getMonth() + 1, 1) };
+    case "last_month": return { from: new Date(now.getFullYear(), now.getMonth() - 1, 1), to: new Date(now.getFullYear(), now.getMonth(), 1) };
+    default: return { from: new Date(now.getFullYear(), 0, 1), to: new Date(now.getFullYear() + 1, 0, 1) };
+  }
+}
+const fmtHours = (hours: number) => `${hours.toFixed(1)} hr`;
+const fmtPercent = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : "—");
+const fmtDays = (days: number | null) => (days === null ? "—" : days < 1 ? "< 1 day" : `${days.toFixed(1)} days`);
+const fmtWait = (hours: number | null) => (hours === null ? "—" : hours < 24 ? `${Math.round(hours)} hr` : `${(hours / 24).toFixed(1)} days`);
+
+/** Up/down versus the period before, shown under a tile. */
+function Trend({ now, before, format }: { now: number; before: number; format: (value: number) => string }) {
+  if (!now && !before) return <small className="metric-trend">—</small>;
+  const diff = now - before;
+  if (Math.abs(diff) < 0.05) return <small className="metric-trend">Same as last week</small>;
+  return <small className={`metric-trend ${diff > 0 ? "up" : "down"}`}>{diff > 0 ? "▲" : "▼"} {format(Math.abs(diff))} vs last week</small>;
+}
+
+/** "Your week" strip at the top of the work order list. Techs see hours; advisors see sales; the owner sees the shop. */
+function MyWeekCard({ repairOrders, who, onOpenTeam }: {
+  repairOrders: RepairOrder[];
+  who: { kind: "technician" | "advisor"; staffId: string } | { kind: "owner" };
+  onOpenTeam?: () => void;
+}) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem("my-week-collapsed") === "1"; } catch { return false; }
+  });
+  const toggle = () => {
+    setCollapsed((value) => {
+      try { localStorage.setItem("my-week-collapsed", value ? "0" : "1"); } catch { /* storage blocked */ }
+      return !value;
+    });
+  };
+  const thisWeek = useMemo(() => computePeopleMetrics(repairOrders, metricRange("this_week")), [repairOrders]);
+  const lastWeek = useMemo(() => computePeopleMetrics(repairOrders, metricRange("last_week")), [repairOrders]);
+
+  let title = "Your week";
+  let tiles: Array<{ label: string; value: string; trend?: ReactNode }> = [];
+  if (who.kind === "technician") {
+    const now = thisWeek.techs.get(who.staffId) ?? blankTech();
+    const before = lastWeek.techs.get(who.staffId) ?? blankTech();
+    tiles = [
+      { label: "Hours flagged", value: fmtHours(now.hours), trend: <Trend now={now.hours} before={before.hours} format={fmtHours} /> },
+      { label: "Cars finished", value: String(now.ros), trend: <Trend now={now.ros} before={before.ros} format={(value) => String(Math.round(value))} /> },
+      { label: "Recommendations sold", value: `${now.recsApproved} of ${now.recs}` },
+    ];
+  } else if (who.kind === "advisor") {
+    const now = thisWeek.advisors.get(who.staffId) ?? blankAdvisor();
+    const before = lastWeek.advisors.get(who.staffId) ?? blankAdvisor();
+    tiles = [
+      { label: "Sales", value: money(now.sales), trend: <Trend now={now.sales} before={before.sales} format={money} /> },
+      { label: "ROs closed", value: String(now.ros), trend: <Trend now={now.ros} before={before.ros} format={(value) => String(Math.round(value))} /> },
+      { label: "Average RO", value: now.ros ? money(now.sales / now.ros) : "—" },
+      { label: "Estimates approved", value: fmtPercent(now.estimatesApproved, now.estimatesSent) },
+    ];
+  } else {
+    title = "Shop this week";
+    const sum = (metrics: PeopleMetrics) => {
+      let sales = 0, ros = 0, hours = 0;
+      metrics.advisors.forEach((row) => { sales += row.sales; ros += row.ros; hours += row.hours; });
+      return { sales, ros, hours };
+    };
+    const now = sum(thisWeek);
+    const before = sum(lastWeek);
+    tiles = [
+      { label: "Sales", value: money(now.sales), trend: <Trend now={now.sales} before={before.sales} format={money} /> },
+      { label: "Hours billed", value: fmtHours(now.hours), trend: <Trend now={now.hours} before={before.hours} format={fmtHours} /> },
+      { label: "ROs closed", value: String(now.ros) },
+      { label: "Average RO", value: now.ros ? money(now.sales / now.ros) : "—" },
+    ];
+  }
+
+  return (
+    <section className={`my-week${collapsed ? " collapsed" : ""}`} aria-label={title}>
+      <div className="my-week-head">
+        <button type="button" className="my-week-toggle" aria-expanded={!collapsed} onClick={toggle}>
+          <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span> {title}
+          {collapsed && <span className="my-week-peek">{tiles[0].label}: {tiles[0].value}</span>}
+        </button>
+        {onOpenTeam && !collapsed && <button type="button" className="button small ghost" onClick={onOpenTeam}>Team numbers →</button>}
+      </div>
+      {!collapsed && (
+        <div className="my-week-tiles">
+          {tiles.map((tile) => (
+            <div key={tile.label} className="metric-tile">
+              <span>{tile.label}</span>
+              <strong>{tile.value}</strong>
+              {tile.trend}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Reports → Team: tech and advisor numbers side by side. Owner and admins only. */
+function TeamReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
+  const [period, setPeriod] = useState<MetricPeriod>("this_month");
+  const [staff, setStaff] = useState<Array<Pick<StaffMember, "id" | "name" | "username" | "role" | "is_admin" | "active">>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void supabase.from("staff").select("id, name, username, role, is_admin, active").order("name").then(({ data }) => {
+      if (!cancelled) setStaff((data ?? []) as typeof staff);
+    });
+    return () => { cancelled = true; };
+  }, []);
+  const metrics = useMemo(() => computePeopleMetrics(repairOrders, metricRange(period)), [repairOrders, period]);
+  const nameOf = (id: string) => {
+    if (id === OWNER_KEY) return "Owner";
+    const person = staff.find((entry) => entry.id === id);
+    return person ? person.name || person.username || "Staff" : "Former staff";
+  };
+  const techIds = [...new Set([
+    ...staff.filter((person) => person.active && person.role === "technician").map((person) => person.id),
+    ...metrics.techs.keys(),
+  ])].sort((a, b) => (metrics.techs.get(b)?.hours ?? 0) - (metrics.techs.get(a)?.hours ?? 0));
+  const advisorIds = [...new Set([
+    ...staff.filter((person) => person.active && (person.role !== "technician" || person.is_admin)).map((person) => person.id),
+    ...metrics.advisors.keys(),
+  ])].sort((a, b) => (metrics.advisors.get(b)?.sales ?? 0) - (metrics.advisors.get(a)?.sales ?? 0));
+
+  return (
+    <div className="team-report">
+      <div className="team-report-head">
+        <p className="muted">Counted when the RO is closed, using what&apos;s on the invoice. Every tech on an RO gets its hours.</p>
+        <div className="segmented" role="group" aria-label="Period">
+          {METRIC_PERIODS.map((entry) => (
+            <button key={entry.id} type="button" className={period === entry.id ? "active" : ""} aria-pressed={period === entry.id} onClick={() => setPeriod(entry.id)}>{entry.label}</button>
+          ))}
+        </div>
+      </div>
+
+      <h3>Technicians</h3>
+      <div className="table-wrap">
+        <table className="team-table">
+          <thead>
+            <tr>
+              <th>Tech</th>
+              <th>Hours flagged</th>
+              <th>Cars finished</th>
+              <th>Hours per car</th>
+              <th>Labor sales</th>
+              <th>Recommendations sold</th>
+              <th>Recommended $ sold</th>
+              <th>Avg days in shop</th>
+            </tr>
+          </thead>
+          <tbody>
+            {techIds.map((id) => {
+              const row = metrics.techs.get(id) ?? blankTech();
+              return (
+                <tr key={id}>
+                  <td data-label="Tech"><strong>{nameOf(id)}</strong></td>
+                  <td data-label="Hours flagged" className="metric-strong">{fmtHours(row.hours)}</td>
+                  <td data-label="Cars finished">{row.ros}</td>
+                  <td data-label="Hours per car">{row.ros ? fmtHours(row.hours / row.ros) : "—"}</td>
+                  <td data-label="Labor sales">{money(row.laborSales)}</td>
+                  <td data-label="Recommendations sold">{row.recs ? `${row.recsApproved} of ${row.recs} (${fmtPercent(row.recsApproved, row.recs)})` : "—"}</td>
+                  <td data-label="Recommended $ sold">{money(row.recsApprovedValue)}</td>
+                  <td data-label="Avg days in shop">{fmtDays(average(row.daysInShop))}</td>
+                </tr>
+              );
+            })}
+            {!techIds.length && <tr><td colSpan={8} className="empty-state">No technicians yet. Add them in Settings → Team.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Service advisors</h3>
+      <div className="table-wrap">
+        <table className="team-table">
+          <thead>
+            <tr>
+              <th>Advisor</th>
+              <th>Sales</th>
+              <th>ROs closed</th>
+              <th>Average RO</th>
+              <th>Hours per RO</th>
+              <th>Gross profit</th>
+              <th>Estimates approved</th>
+              <th>Tech recs sold</th>
+              <th>Ready → invoiced</th>
+            </tr>
+          </thead>
+          <tbody>
+            {advisorIds.map((id) => {
+              const row = metrics.advisors.get(id) ?? blankAdvisor();
+              return (
+                <tr key={id}>
+                  <td data-label="Advisor"><strong>{nameOf(id)}</strong></td>
+                  <td data-label="Sales" className="metric-strong">{money(row.sales)}</td>
+                  <td data-label="ROs closed">{row.ros}</td>
+                  <td data-label="Average RO">{row.ros ? money(row.sales / row.ros) : "—"}</td>
+                  <td data-label="Hours per RO">{row.ros ? fmtHours(row.hours / row.ros) : "—"}</td>
+                  <td data-label="Gross profit">{row.sales ? `${money(row.grossProfit)} (${fmtPercent(row.grossProfit, row.sales)})` : "—"}</td>
+                  <td data-label="Estimates approved">{row.estimatesSent ? `${row.estimatesApproved} of ${row.estimatesSent} (${fmtPercent(row.estimatesApproved, row.estimatesSent)})` : "—"}</td>
+                  <td data-label="Tech recs sold">{row.recs ? `${row.recsSold} of ${row.recs} · ${money(row.recsSoldValue)}` : "—"}</td>
+                  <td data-label="Ready → invoiced">{fmtWait(average(row.readyWaitHours))}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted team-report-foot">ROs written before this report existed are credited to the owner. From now on each RO is credited to whoever wrote it.</p>
+    </div>
+  );
+}
+
+function ReportsPanel({ repairOrders, initialTab = "sales" }: { repairOrders: RepairOrder[]; initialTab?: "sales" | "team" }) {
+  const [tab, setTab] = useState<"sales" | "team">(initialTab);
+  return (
+    <div className="panel">
+      <div className="reports-head">
+        <h2>Reports</h2>
+        <div className="segmented" role="tablist" aria-label="Report">
+          <button type="button" role="tab" aria-selected={tab === "sales"} className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>Sales &amp; tax</button>
+          <button type="button" role="tab" aria-selected={tab === "team"} className={tab === "team" ? "active" : ""} onClick={() => setTab("team")}>Team</button>
+        </div>
+      </div>
+      {tab === "team" ? <TeamReport repairOrders={repairOrders} /> : <SalesReport repairOrders={repairOrders} />}
+    </div>
+  );
+}
+
+function SalesReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
   const [period, setPeriod] = useState<ReportPeriod>("month");
   const [detail, setDetail] = useState(true);
   const [showAll, setShowAll] = useState(false);
@@ -2281,9 +2634,8 @@ function ReportsPanel({ repairOrders }: { repairOrders: RepairOrder[] }) {
   const latest = rows.find((row) => row.key !== "unknown");
 
   return (
-    <div className="panel">
-      <h2 style={{ marginTop: 0 }}>Reports</h2>
-      <p className="muted" style={{ marginTop: -8, marginBottom: 20 }}>
+    <div>
+      <p className="muted" style={{ marginBottom: 20 }}>
         Sales, sales tax and profit count once an invoice is marked paid, in the {period === "week" ? "week (Mon–Sun)" : "month"} it was
         paid. Sales are shown before tax; sales tax collected is what you owe the state, not income. Jobs completed and outstanding
         balances are shown in the {period === "week" ? "week" : "month"} a job was marked completed.
@@ -2474,7 +2826,10 @@ function Dashboard({
   canCreate = true,
   techFilterFor = null,
   isTechnician = false,
+  topCard = null,
 }: {
+  /** "Your week" numbers shown above the list. */
+  topCard?: ReactNode;
   /** Techs see the work, not the money: no estimate or total. */
   isTechnician?: boolean;
   /** Set for technicians: enables the Mine / Team / All filter. */
@@ -2614,6 +2969,8 @@ function Dashboard({
         <h1>{isTechnician ? (techScope === "mine" ? "My jobs" : techScope === "team" ? "Team jobs" : "All jobs") : "Work orders"}</h1>
         {canCreate && <button className="button primary" onClick={onNew}>+ New work order</button>}
       </div>
+
+      {topCard}
 
       <div className="ro-list-tools">
         {techFilterFor && (

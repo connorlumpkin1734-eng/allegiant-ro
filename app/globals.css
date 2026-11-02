@@ -2427,3 +2427,39 @@ tbody tr:hover { background: var(--panel-header); }
 .topbar nav.nav-single { visibility: hidden; }
 @media (max-width: 980px) { .topbar nav.nav-single { display: none; } }
 @media (max-width: 980px) { .topbar .brand-button { margin-right: auto; } }
+
+/* ---- Your week (top of the list) ---- */
+.my-week { margin-bottom: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.my-week-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.my-week-toggle { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-weight: 800; cursor: pointer; }
+.my-week-peek { margin-left: 6px; color: var(--muted); font-weight: 600; }
+.my-week-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+.metric-tile { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--panel-header); }
+.metric-tile > span { color: var(--muted); font-size: 13px; font-weight: 700; }
+.metric-tile > strong { font-size: 22px; line-height: 1.2; }
+.metric-trend { color: var(--muted); font-size: 12px; font-weight: 700; }
+.metric-trend.up { color: var(--success-text, #34d399); }
+.metric-trend.down { color: var(--warn-text); }
+
+/* ---- Reports → Team ---- */
+.reports-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.reports-head h2 { margin: 0; }
+.team-report-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.team-report-head p { margin: 0; }
+.team-report h3 { margin: 22px 0 10px; }
+.team-table td, .team-table th { white-space: nowrap; }
+.team-table .metric-strong { font-weight: 800; }
+.team-report-foot { margin-top: 14px; font-size: 13px; }
+
+@media (max-width: 760px) {
+  .my-week-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-tile > strong { font-size: 19px; }
+  .team-report-head .segmented { width: 100%; overflow-x: auto; }
+  .team-table thead { display: none; }
+  .team-table, .team-table tbody, .team-table tr, .team-table td { display: block; }
+  .team-table tr { margin-bottom: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-header); }
+  .team-table td { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border: 0; white-space: normal; text-align: right; }
+  .team-table td::before { content: attr(data-label); color: var(--muted); font-weight: 700; text-align: left; }
+  .team-table td:first-child { justify-content: flex-start; font-size: 16px; }
+  .team-table td:first-child::before { content: none; }
+}
