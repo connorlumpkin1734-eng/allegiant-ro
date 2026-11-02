@@ -3933,8 +3933,23 @@ function RepairOrderEditor({
   const previewDoc: DocumentMode = isTechnician
     ? "work_order"
     : stage === "invoiced" || stage === "paid" ? "invoice" : stage === "write_up" || stage === "waiting" || pendingRecs > 0 ? "estimate" : "work_order";
+  // Jobs the customer hasn't said yes or no to yet, and approved jobs the tech has finished.
+  const jobTitle = (group: { items: LineItem[] }) => group.items[0].service_group_title?.trim() || "Untitled job";
+  const awaitingOk = serviceGroups.filter((group) => group.items[0].job_status === "needs_approval"
+    && currentDecisions[group.id] !== "approved" && currentDecisions[group.id] !== "declined" && !invoiceOverrides[group.id]);
+  const workableJobs = serviceGroups.filter((group) => group.items[0].job_status === "authorized"
+    || currentDecisions[group.id] === "approved" || Boolean(invoiceOverrides[group.id]));
+  const allApprovedWorkDone = workableJobs.length > 0 && workableJobs.every((group) => group.items.every((item) => item.job_progress === "done"));
   async function closeAndInvoice() {
     if (!initialRo) return;
+    if (pendingRecs > 0) {
+      notify(`Price or delete the tech's recommendation${pendingRecs === 1 ? "" : "s"} before closing.`, "error");
+      return;
+    }
+    if (awaitingOk.length) {
+      notify(`${awaitingOk.map(jobTitle).join(", ")} still ${awaitingOk.length === 1 ? "needs" : "need"} the customer's OK. Send the estimate, set it to Approved if they said yes, or delete it.`, "error");
+      return;
+    }
     await save(undefined, false, { status: "completed", openSend: "invoice", doneMessage: `RO #${padRo(initialRo.ro_number)} closed. Send the invoice when you're ready.` });
   }
   async function reopenRo() {
@@ -3952,7 +3967,11 @@ function RepairOrderEditor({
           ? { label: "Send invoice", onClick: () => setSendKind("invoice") }
           : stage === "paid"
             ? { label: "Print invoice", onClick: () => void save("invoice", true) }
-            : stage === "in_shop" && pendingRecs === 0
+            : stage === "in_shop" && (pendingRecs > 0 || (awaitingOk.length > 0 && currentAuthorization?.status !== "sent"))
+              ? { label: "Send estimate", onClick: () => setSendKind("estimate") }
+              : stage === "in_shop" && allApprovedWorkDone && awaitingOk.length === 0
+                ? { label: "Close & invoice", onClick: () => void closeAndInvoice() }
+                : stage === "in_shop"
               ? { label: "Print work order", onClick: () => void save("work_order", true) }
               : { label: "Send estimate", onClick: () => setSendKind("estimate") };
 
@@ -4192,6 +4211,14 @@ function RepairOrderEditor({
         <div className="handoff-banner warn">
           <strong>{pendingRecs} tech recommendation{pendingRecs === 1 ? "" : "s"} to price.</strong>
           <span>Set each to Needs customer OK or Approved, then send the estimate.</span>
+        </div>
+      )}
+      {initialRo && !isTechnician && pendingRecs === 0 && awaitingOk.length > 0 && (stage === "in_shop" || stage === "ready") && (
+        <div className="handoff-banner warn">
+          <strong>{awaitingOk.map(jobTitle).join(", ")} {awaitingOk.length === 1 ? "needs" : "need"} the customer&apos;s OK.</strong>
+          <span>{currentAuthorization?.status === "sent"
+            ? "The estimate is out. You can close once they answer, or set the job to Approved if they told you yes."
+            : "Send the estimate, set the job to Approved if they already said yes, or delete it. You can close once it’s settled."}</span>
         </div>
       )}
 
