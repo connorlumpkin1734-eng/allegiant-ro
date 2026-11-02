@@ -50,3 +50,15 @@ update public.line_items li
  where li.repair_order_id = t.repair_order_id
    and li.recommended_by is null
    and li.job_status = 'pending_review';
+
+-- Backfill (part 2): recommendations already reviewed, found through their "recommendation" alerts.
+with recs as (
+  select distinct n.repair_order_id, substring(n.dedupe_key from 5)::uuid as group_id
+  from public.notifications n where n.kind = 'recommendation' and n.dedupe_key like 'rec:%'
+), one_tech as (
+  select repair_order_id, min(staff_id::text)::uuid as staff_id
+  from public.repair_order_technicians group by repair_order_id having count(*) = 1
+)
+update public.line_items li set recommended_by = t.staff_id
+from recs r join one_tech t using (repair_order_id)
+where li.repair_order_id = r.repair_order_id and li.service_group_id = r.group_id and li.recommended_by is null;
