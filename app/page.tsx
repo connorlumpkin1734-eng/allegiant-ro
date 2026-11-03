@@ -234,11 +234,15 @@ function StageTrack({ stage, solo = false }: { stage: RoStage; solo?: boolean })
   const currentIndex = stages.findIndex((entry) => entry.id === (solo && stage === "ready" ? "in_shop" : stage));
   return (
     <ol className="stage-track" aria-label="RO stage">
-      {stages.map((entry, index) => (
-        <li key={entry.id} className={index < currentIndex ? "done" : index === currentIndex ? "current" : "todo"} aria-current={index === currentIndex ? "step" : undefined}>
-          {index < currentIndex && <span aria-hidden="true">✓ </span>}{entry.label}
+      {stages.map((entry, index) => {
+        // Paid is the finish line: once reached it shows as done (✓), not as a step still in progress.
+        const done = index < currentIndex || (entry.id === "paid" && index === currentIndex);
+        return (
+        <li key={entry.id} className={done ? `done${index === currentIndex ? " current" : ""}` : index === currentIndex ? "current" : "todo"} aria-current={index === currentIndex ? "step" : undefined}>
+          {done && <span aria-hidden="true">✓ </span>}{entry.label}
         </li>
-      ))}
+        );
+      })}
     </ol>
   );
 }
