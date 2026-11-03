@@ -227,12 +227,14 @@ function pendingRecommendationCount(items: Array<Pick<LineItem, "service_group_i
   return new Set(items.filter((item) => item.job_status === "pending_review" && item.service_group_id).map((item) => item.service_group_id)).size;
 }
 
-function StageTrack({ stage }: { stage: RoStage }) {
+function StageTrack({ stage, solo = false }: { stage: RoStage; solo?: boolean }) {
   if (stage === "voided") return <div className="stage-track voided" aria-label="RO stage">Voided</div>;
-  const currentIndex = RO_STAGES.findIndex((entry) => entry.id === stage);
+  // One-person shop: there's no tech handing the car to an advisor, so that step is left out.
+  const stages = solo ? RO_STAGES.filter((entry) => entry.id !== "ready") : RO_STAGES;
+  const currentIndex = stages.findIndex((entry) => entry.id === (solo && stage === "ready" ? "in_shop" : stage));
   return (
     <ol className="stage-track" aria-label="RO stage">
-      {RO_STAGES.map((entry, index) => (
+      {stages.map((entry, index) => (
         <li key={entry.id} className={index < currentIndex ? "done" : index === currentIndex ? "current" : "todo"} aria-current={index === currentIndex ? "step" : undefined}>
           {index < currentIndex && <span aria-hidden="true">✓ </span>}{entry.label}
         </li>
@@ -2112,7 +2114,7 @@ function RepairOrderApp({ user }: { user: User }) {
             name={currentStaff.name || currentStaff.username || currentStaff.email || "You"}
           />
         ) : view === "reports" && isAdminAccess ? (
-          <ReportsPanel key={reportsTab} repairOrders={repairOrders} initialTab={reportsTab} />
+          <ReportsPanel key={reportsTab} repairOrders={repairOrders} initialTab={reportsTab} showTeam={settings.team_features_enabled} />
         ) : view === "settings" && isAdminAccess ? (
           <SettingsPanel
             user={user}
@@ -2608,16 +2610,18 @@ function TeamReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
   );
 }
 
-function ReportsPanel({ repairOrders, initialTab = "sales" }: { repairOrders: RepairOrder[]; initialTab?: "sales" | "team" }) {
-  const [tab, setTab] = useState<"sales" | "team">(initialTab);
+function ReportsPanel({ repairOrders, initialTab = "sales", showTeam = true }: { repairOrders: RepairOrder[]; initialTab?: "sales" | "team"; showTeam?: boolean }) {
+  const [tab, setTab] = useState<"sales" | "team">(showTeam ? initialTab : "sales");
   return (
     <div className="panel">
       <div className="reports-head">
         <h2>Reports</h2>
-        <div className="segmented" role="tablist" aria-label="Report">
-          <button type="button" role="tab" aria-selected={tab === "sales"} className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>Sales &amp; tax</button>
-          <button type="button" role="tab" aria-selected={tab === "team"} className={tab === "team" ? "active" : ""} onClick={() => setTab("team")}>Team</button>
-        </div>
+        {showTeam && (
+          <div className="segmented" role="tablist" aria-label="Report">
+            <button type="button" role="tab" aria-selected={tab === "sales"} className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>Sales &amp; tax</button>
+            <button type="button" role="tab" aria-selected={tab === "team"} className={tab === "team" ? "active" : ""} onClick={() => setTab("team")}>Team</button>
+          </div>
+        )}
       </div>
       {tab === "team" ? <TeamReport repairOrders={repairOrders} /> : <SalesReport repairOrders={repairOrders} />}
     </div>
@@ -3954,7 +3958,9 @@ function RepairOrderEditor({
     && currentDecisions[group.id] !== "approved" && currentDecisions[group.id] !== "declined" && !invoiceOverrides[group.id]);
   const workableJobs = serviceGroups.filter((group) => group.items[0].job_status === "authorized"
     || currentDecisions[group.id] === "approved" || Boolean(invoiceOverrides[group.id]));
-  const allApprovedWorkDone = workableJobs.length > 0 && workableJobs.every((group) => group.items.every((item) => item.job_progress === "done"));
+  // One-person shop (team features off): no tech hand-off and no per-job Done to tick off.
+  const soloShop = !settings.team_features_enabled;
+  const allApprovedWorkDone = workableJobs.length > 0 && (soloShop || workableJobs.every((group) => group.items.every((item) => item.job_progress === "done")));
   async function closeAndInvoice() {
     if (!initialRo) return;
     if (pendingRecs > 0) {
@@ -3990,6 +3996,7 @@ function RepairOrderEditor({
               ? { label: "Print work order", onClick: () => void save("work_order", true) }
               : { label: "Send estimate", onClick: () => setSendKind("estimate") };
 
+  const soloShopForJobs = !settings.team_features_enabled;
   const renderJob = (group: { id: string; items: LineItem[] }, label: string) => {
     const first = group.items[0];
     const jobStatus: JobStatus = first.job_status ?? "needs_approval";
@@ -4042,7 +4049,7 @@ function RepairOrderEditor({
               <select value={jobStatus} onChange={(event) => setJobStatus(group.id, event.target.value as JobStatus)}>
                 <option value="authorized">Approved</option>
                 <option value="needs_approval">{customerDecision === "approved" ? "Customer approved" : customerDecision === "declined" ? "Customer declined" : "Needs customer OK"}</option>
-                <option value="pending_review">Tech request · needs pricing</option>
+                {(!soloShopForJobs || jobStatus === "pending_review") && <option value="pending_review">Tech request · needs pricing</option>}
               </select>
             </label>
           ) : (
@@ -4050,7 +4057,7 @@ function RepairOrderEditor({
               {jobStatus === "pending_review" ? "Sent to advisor" : isJobWorkable(group.id, jobStatus) ? "Approved · go ahead" : "Waiting on customer"}
             </span>
           )}
-          {initialRo && workspaceTab === "work_order" && (
+          {initialRo && workspaceTab === "work_order" && settings.team_features_enabled && (
             isJobWorkable(group.id, jobStatus) ? (
               <div className="segmented job-progress" role="group" aria-label="Job progress">
                 {JOB_PROGRESS.map((step) => {
@@ -4206,8 +4213,8 @@ function RepairOrderEditor({
                 { label: "Print estimate", onClick: () => void save("estimate", true) },
                 mainAction?.label !== "Print work order" && { label: "Print work order", onClick: () => void save("work_order", true) },
                 (stage === "invoiced" || stage === "paid") && mainAction?.label !== "Print invoice" && { label: "Print invoice", onClick: () => void save("invoice", true) },
-                (stage === "in_shop" || stage === "write_up" || stage === "waiting") && { label: "Mark ready for advisor", onClick: () => void markWorkComplete(true) },
-                stage === "ready" && { label: "Send back to the shop", onClick: () => void markWorkComplete(false) },
+                !soloShop && (stage === "in_shop" || stage === "write_up" || stage === "waiting") && { label: "Mark ready for advisor", onClick: () => void markWorkComplete(true) },
+                !soloShop && stage === "ready" && { label: "Send back to the shop", onClick: () => void markWorkComplete(false) },
                 stage === "invoiced" && { label: "Reopen RO", onClick: () => void reopenRo() },
                 onDelete && { label: "Delete RO", onClick: onDelete, danger: true },
               ]} />
@@ -4215,7 +4222,7 @@ function RepairOrderEditor({
           </div>
         )}
       </div>
-      {initialRo && !isTechnician && <StageTrack stage={stage} />}
+      {initialRo && !isTechnician && <StageTrack stage={stage} solo={soloShop} />}
       {initialRo && !isTechnician && stage === "ready" && (
         <div className="handoff-banner">
           <strong>The tech sent this to you.</strong>
