@@ -5,7 +5,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { MultipointInspection } from "@/components/MultipointInspection";
 import { supabase } from "@/lib/supabase";
 
-type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection" | "reports";
+type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection" | "reports" | "my_stats";
 type DocumentMode = "estimate" | "work_order" | "invoice";
 type WorkspaceTab = "work_order" | "invoice";
 type DocumentType = "estimate" | "repair_order" | "invoice";
@@ -1506,6 +1506,7 @@ function RepairOrderApp({ user }: { user: User }) {
   useEffect(() => {
     const saved = window.location.hash.slice(1);
     if (saved === "customers" || saved === "reports" || saved === "settings") setView(saved);
+    if (saved === "my-stats") setView("my_stats");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1515,8 +1516,8 @@ function RepairOrderApp({ user }: { user: User }) {
       viewHashSkipFirst.current = false;
       return;
     }
-    if (view === "dashboard" || view === "customers" || view === "reports" || view === "settings") {
-      const next = view === "dashboard" ? window.location.pathname + window.location.search : `#${view}`;
+    if (view === "dashboard" || view === "customers" || view === "reports" || view === "settings" || view === "my_stats") {
+      const next = view === "dashboard" ? window.location.pathname + window.location.search : view === "my_stats" ? "#my-stats" : `#${view}`;
       window.history.replaceState({}, "", next);
     }
   }, [view]);
@@ -1916,10 +1917,15 @@ function RepairOrderApp({ user }: { user: User }) {
             <span className="topbar-logo-text">{settings.business_name}</span>
           )}
         </button>
-        <nav className={isTechnicianOnly ? "nav-single" : undefined}>
+        <nav>
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             {isTechnicianOnly ? "My jobs" : "Work orders"}
           </button>
+          {currentStaff && (
+            <button className={view === "my_stats" ? "active" : ""} onClick={() => setView("my_stats")}>
+              My stats
+            </button>
+          )}
           {!isTechnicianOnly && (
             <button className={view === "customers" || view === "customer_profile" ? "active" : ""} onClick={() => setView("customers")}>
               Customers
@@ -2034,15 +2040,6 @@ function RepairOrderApp({ user }: { user: User }) {
               }
             }}
             onOpenCustomer={openCustomer}
-            topCard={
-              <MyWeekCard
-                repairOrders={repairOrders}
-                who={!currentStaff
-                  ? { kind: "owner" }
-                  : { kind: currentStaff.role === "technician" ? "technician" : "advisor", staffId: currentStaff.id }}
-                onOpenTeam={isAdminAccess ? () => { setReportsTab("team"); setView("reports"); } : undefined}
-              />
-            }
             canCreate={!isTechnicianOnly}
             isTechnician={isTechnicianOnly}
             techFilterFor={isTechnicianOnly && currentStaff ? { staffId: currentStaff.id, teamId: currentStaff.team_id } : null}
@@ -2106,6 +2103,13 @@ function RepairOrderApp({ user }: { user: User }) {
             onNew={(customerId, vehicleId) => startNew(customerId, vehicleId, "customer_profile")}
             onArchive={toggleArchiveCustomer}
             onDelete={deleteCustomer}
+          />
+        ) : view === "my_stats" && currentStaff ? (
+          <MyStatsPage
+            repairOrders={repairOrders}
+            staffId={currentStaff.id}
+            kind={currentStaff.role === "technician" ? "technician" : "advisor"}
+            name={currentStaff.name || currentStaff.username || currentStaff.email || "You"}
           />
         ) : view === "reports" && isAdminAccess ? (
           <ReportsPanel key={reportsTab} repairOrders={repairOrders} initialTab={reportsTab} />
@@ -2389,87 +2393,90 @@ const fmtDays = (days: number | null) => (days === null ? "—" : days < 1 ? "< 
 const fmtWait = (hours: number | null) => (hours === null ? "—" : hours < 24 ? `${Math.round(hours)} hr` : `${(hours / 24).toFixed(1)} days`);
 
 /** Up/down versus the period before, shown under a tile. */
-function Trend({ now, before, format }: { now: number; before: number; format: (value: number) => string }) {
-  if (!now && !before) return <small className="metric-trend">—</small>;
+function Trend({ now, before, format, vs }: { now: number; before: number; format: (value: number) => string; vs: string }) {
+  if (!now && !before) return <small className="metric-trend">Nothing yet</small>;
   const diff = now - before;
-  if (Math.abs(diff) < 0.05) return <small className="metric-trend">Same as last week</small>;
-  return <small className={`metric-trend ${diff > 0 ? "up" : "down"}`}>{diff > 0 ? "▲" : "▼"} {format(Math.abs(diff))} vs last week</small>;
+  if (Math.abs(diff) < 0.05) return <small className="metric-trend">Same as {vs}</small>;
+  return <small className={`metric-trend ${diff > 0 ? "up" : "down"}`}>{diff > 0 ? "▲" : "▼"} {format(Math.abs(diff))} vs {vs}</small>;
 }
 
-/** "Your week" strip at the top of the work order list. Techs see hours; advisors see sales; the owner sees the shop. */
-function MyWeekCard({ repairOrders, who, onOpenTeam }: {
-  repairOrders: RepairOrder[];
-  who: { kind: "technician" | "advisor"; staffId: string } | { kind: "owner" };
-  onOpenTeam?: () => void;
-}) {
-  const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem("my-week-collapsed") === "1"; } catch { return false; }
-  });
-  const toggle = () => {
-    setCollapsed((value) => {
-      try { localStorage.setItem("my-week-collapsed", value ? "0" : "1"); } catch { /* storage blocked */ }
-      return !value;
-    });
-  };
-  const thisWeek = useMemo(() => computePeopleMetrics(repairOrders, metricRange("this_week")), [repairOrders]);
-  const lastWeek = useMemo(() => computePeopleMetrics(repairOrders, metricRange("last_week")), [repairOrders]);
+/** The same-length period just before this one (this week → last week, this month → last month…). */
+function previousRange(period: MetricPeriod, now = new Date()): MetricRange {
+  const { from, to } = metricRange(period, now);
+  if (period === "this_week" || period === "last_week") {
+    return { from: new Date(from.getTime() - 7 * 86_400_000), to: from };
+  }
+  if (period === "this_year") return { from: new Date(from.getFullYear() - 1, 0, 1), to: from };
+  return { from: new Date(from.getFullYear(), from.getMonth() - 1, 1), to: from };
+}
+const PREVIOUS_LABEL: Record<MetricPeriod, string> = {
+  this_week: "last week", last_week: "the week before", this_month: "last month", last_month: "the month before", this_year: "last year",
+};
 
-  let title = "Your week";
-  let tiles: Array<{ label: string; value: string; trend?: ReactNode }> = [];
-  if (who.kind === "technician") {
-    const now = thisWeek.techs.get(who.staffId) ?? blankTech();
-    const before = lastWeek.techs.get(who.staffId) ?? blankTech();
+/** "My stats" tab: a tech's or advisor's own numbers. Nobody sees anyone else's here. */
+function MyStatsPage({ repairOrders, staffId, kind, name }: {
+  repairOrders: RepairOrder[];
+  staffId: string;
+  kind: "technician" | "advisor";
+  name: string;
+}) {
+  const [period, setPeriod] = useState<MetricPeriod>("this_week");
+  const now = useMemo(() => computePeopleMetrics(repairOrders, metricRange(period)), [repairOrders, period]);
+  const before = useMemo(() => computePeopleMetrics(repairOrders, previousRange(period)), [repairOrders, period]);
+  const vs = PREVIOUS_LABEL[period];
+  const count = (value: number) => String(Math.round(value));
+
+  type Tile = { label: string; value: string; trend?: ReactNode; help?: string };
+  let tiles: Tile[];
+  if (kind === "technician") {
+    const a = now.techs.get(staffId) ?? blankTech();
+    const b = before.techs.get(staffId) ?? blankTech();
     tiles = [
-      { label: "Hours flagged", value: fmtHours(now.hours), trend: <Trend now={now.hours} before={before.hours} format={fmtHours} /> },
-      { label: "Cars finished", value: String(now.ros), trend: <Trend now={now.ros} before={before.ros} format={(value) => String(Math.round(value))} /> },
-      { label: "Recommendations sold", value: `${now.recsApproved} of ${now.recs}` },
-    ];
-  } else if (who.kind === "advisor") {
-    const now = thisWeek.advisors.get(who.staffId) ?? blankAdvisor();
-    const before = lastWeek.advisors.get(who.staffId) ?? blankAdvisor();
-    tiles = [
-      { label: "Sales", value: money(now.sales), trend: <Trend now={now.sales} before={before.sales} format={money} /> },
-      { label: "ROs closed", value: String(now.ros), trend: <Trend now={now.ros} before={before.ros} format={(value) => String(Math.round(value))} /> },
-      { label: "Average RO", value: now.ros ? money(now.sales / now.ros) : "—" },
-      { label: "Estimates approved", value: fmtPercent(now.estimatesApproved, now.estimatesSent) },
+      { label: "Hours flagged", value: fmtHours(a.hours), trend: <Trend now={a.hours} before={b.hours} format={fmtHours} vs={vs} />, help: "Labor hours on the ROs you worked, counted when the RO is closed." },
+      { label: "Cars finished", value: String(a.ros), trend: <Trend now={a.ros} before={b.ros} format={count} vs={vs} /> },
+      { label: "Hours per car", value: a.ros ? fmtHours(a.hours / a.ros) : "—" },
+      { label: "Recommendations sold", value: a.recs ? `${a.recsApproved} of ${a.recs}` : "—", help: a.recs ? `${fmtPercent(a.recsApproved, a.recs)} of what you found got approved.` : "Repairs you recommend from the inspection." },
+      { label: "Avg days in shop", value: fmtDays(average(a.daysInShop)) },
     ];
   } else {
-    title = "Shop this week";
-    const sum = (metrics: PeopleMetrics) => {
-      let sales = 0, ros = 0, hours = 0;
-      metrics.advisors.forEach((row) => { sales += row.sales; ros += row.ros; hours += row.hours; });
-      return { sales, ros, hours };
-    };
-    const now = sum(thisWeek);
-    const before = sum(lastWeek);
+    const a = now.advisors.get(staffId) ?? blankAdvisor();
+    const b = before.advisors.get(staffId) ?? blankAdvisor();
     tiles = [
-      { label: "Sales", value: money(now.sales), trend: <Trend now={now.sales} before={before.sales} format={money} /> },
-      { label: "Hours billed", value: fmtHours(now.hours), trend: <Trend now={now.hours} before={before.hours} format={fmtHours} /> },
-      { label: "ROs closed", value: String(now.ros) },
-      { label: "Average RO", value: now.ros ? money(now.sales / now.ros) : "—" },
+      { label: "Sales", value: money(a.sales), trend: <Trend now={a.sales} before={b.sales} format={money} vs={vs} />, help: "Before tax, on ROs you wrote, counted when the RO is closed." },
+      { label: "ROs closed", value: String(a.ros), trend: <Trend now={a.ros} before={b.ros} format={count} vs={vs} /> },
+      { label: "Average RO", value: a.ros ? money(a.sales / a.ros) : "—", trend: <Trend now={a.ros ? a.sales / a.ros : 0} before={b.ros ? b.sales / b.ros : 0} format={money} vs={vs} /> },
+      { label: "Hours per RO", value: a.ros ? fmtHours(a.hours / a.ros) : "—" },
+      { label: "Gross profit", value: a.sales ? fmtPercent(a.grossProfit, a.sales) : "—", help: a.sales ? `${money(a.grossProfit)} after parts cost.` : undefined },
+      { label: "Estimates approved", value: a.estimatesSent ? fmtPercent(a.estimatesApproved, a.estimatesSent) : "—", help: a.estimatesSent ? `${a.estimatesApproved} of ${a.estimatesSent} sent.` : undefined },
+      { label: "Tech recs sold", value: a.recs ? `${a.recsSold} of ${a.recs}` : "—", help: a.recs ? `${money(a.recsSoldValue)} sold.` : undefined },
+      { label: "Ready → invoiced", value: fmtWait(average(a.readyWaitHours)), help: "How long finished cars wait before you close them." },
     ];
   }
 
   return (
-    <section className={`my-week${collapsed ? " collapsed" : ""}`} aria-label={title}>
-      <div className="my-week-head">
-        <button type="button" className="my-week-toggle" aria-expanded={!collapsed} onClick={toggle}>
-          <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span> {title}
-          {collapsed && <span className="my-week-peek">{tiles[0].label}: {tiles[0].value}</span>}
-        </button>
-        {onOpenTeam && !collapsed && <button type="button" className="button small ghost" onClick={onOpenTeam}>Team numbers →</button>}
-      </div>
-      {!collapsed && (
-        <div className="my-week-tiles">
-          {tiles.map((tile) => (
-            <div key={tile.label} className="metric-tile">
-              <span>{tile.label}</span>
-              <strong>{tile.value}</strong>
-              {tile.trend}
-            </div>
-          ))}
+    <section className="my-stats">
+      <div className="page-heading my-stats-heading">
+        <div>
+          <h1>My stats</h1>
+          <p>{name} · {kind === "technician" ? "Technician" : "Service advisor"}</p>
         </div>
-      )}
+      </div>
+      <div className="segmented my-stats-periods" role="group" aria-label="Period">
+        {METRIC_PERIODS.map((entry) => (
+          <button key={entry.id} type="button" className={period === entry.id ? "active" : ""} aria-pressed={period === entry.id} onClick={() => setPeriod(entry.id)}>{entry.label}</button>
+        ))}
+      </div>
+      <div className="my-stats-tiles">
+        {tiles.map((tile) => (
+          <div key={tile.label} className="metric-tile">
+            <span>{tile.label}</span>
+            <strong>{tile.value}</strong>
+            {tile.trend}
+            {tile.help && <small className="metric-help">{tile.help}</small>}
+          </div>
+        ))}
+      </div>
+      <p className="muted my-stats-foot">Only you, the owner and admins can see these numbers.</p>
     </section>
   );
 }
@@ -2510,6 +2517,19 @@ function TeamReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
           ))}
         </div>
       </div>
+
+      {(() => {
+        let sales = 0, ros = 0, hours = 0;
+        metrics.advisors.forEach((row) => { sales += row.sales; ros += row.ros; hours += row.hours; });
+        return (
+          <div className="my-stats-tiles team-totals">
+            <div className="metric-tile"><span>Shop sales</span><strong>{money(sales)}</strong></div>
+            <div className="metric-tile"><span>Hours billed</span><strong>{fmtHours(hours)}</strong></div>
+            <div className="metric-tile"><span>ROs closed</span><strong>{ros}</strong></div>
+            <div className="metric-tile"><span>Average RO</span><strong>{ros ? money(sales / ros) : "—"}</strong></div>
+          </div>
+        );
+      })()}
 
       <h3>Technicians</h3>
       <div className="table-wrap">
@@ -2826,10 +2846,7 @@ function Dashboard({
   canCreate = true,
   techFilterFor = null,
   isTechnician = false,
-  topCard = null,
 }: {
-  /** "Your week" numbers shown above the list. */
-  topCard?: ReactNode;
   /** Techs see the work, not the money: no estimate or total. */
   isTechnician?: boolean;
   /** Set for technicians: enables the Mine / Team / All filter. */
@@ -2969,8 +2986,6 @@ function Dashboard({
         <h1>{isTechnician ? (techScope === "mine" ? "My jobs" : techScope === "team" ? "Team jobs" : "All jobs") : "Work orders"}</h1>
         {canCreate && <button className="button primary" onClick={onNew}>+ New work order</button>}
       </div>
-
-      {topCard}
 
       <div className="ro-list-tools">
         {techFilterFor && (

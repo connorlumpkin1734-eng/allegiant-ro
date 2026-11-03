@@ -2463,3 +2463,19 @@ tbody tr:hover { background: var(--panel-header); }
   .team-table td:first-child { justify-content: flex-start; font-size: 16px; }
   .team-table td:first-child::before { content: none; }
 }
+
+/* ---- My stats ---- */
+.my-stats-heading { margin-bottom: 14px; }
+.my-stats-heading h1 { margin: 0; }
+.my-stats-periods { margin-bottom: 16px; max-width: 100%; overflow-x: auto; }
+.my-stats-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.my-stats .metric-tile { padding: 16px; border: 1px solid var(--line); background: var(--panel); }
+.my-stats .metric-tile > strong { font-size: 28px; }
+.metric-help { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+.my-stats-foot { margin-top: 16px; font-size: 13px; }
+.team-totals { margin: 6px 0 4px; }
+@media (max-width: 760px) {
+  .my-stats-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .my-stats .metric-tile { padding: 12px; }
+  .my-stats .metric-tile > strong { font-size: 22px; }
+}
