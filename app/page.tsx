@@ -57,6 +57,8 @@ type Settings = {
   techs_can_price: boolean;
   /** Whether service advisors (not admins) may change the labor rate on a single line. */
   advisors_can_change_labor_rate: boolean;
+  /** Mileage in is required to open an RO, mileage out to close it. */
+  require_mileage?: boolean;
   /** Parts pricing: one flat markup, or a cost-based matrix. */
   parts_pricing_mode: PartsPricingMode;
   parts_matrix: MatrixPoint[];
@@ -681,6 +683,7 @@ const defaultSettings: Settings = {
   team_features_enabled: false,
   techs_can_price: true,
   advisors_can_change_labor_rate: false,
+  require_mileage: false,
   parts_pricing_mode: "flat",
   parts_matrix: MATRIX_PRESETS[1].points,
   parts_matrix_sliding: true,
@@ -862,6 +865,13 @@ function declinedEstimateGroups(
 function valueOrNull(value: string): string | null {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+/** Odometer as typed: "45,120" or "45120 mi" → 45120. Blank → null; anything else → NaN (invalid). */
+function parseMiles(value: string): number | null {
+  const cleaned = value.replace(/[,\s]/g, "").replace(/mi(les)?$/i, "");
+  if (!cleaned) return null;
+  return /^\d+$/.test(cleaned) ? Number(cleaned) : Number.NaN;
 }
 
 function numberOrNull(value: string): number | null {
@@ -3736,6 +3746,27 @@ function RepairOrderEditor({
       focusProblem('[data-field="vehicle-year"]');
       return;
     }
+    {
+      const milesIn = parseMiles(mileageIn);
+      const milesOut = parseMiles(mileageOut);
+      const closing = options.status === "completed";
+      const mileageProblem = (text: string, field: "mileage-in" | "mileage-out") => {
+        setMessage(text);
+        if (field === "mileage-in") setDetailsOpen(true);
+        focusProblem(`[data-field="${field}"]`);
+      };
+      if (Number.isNaN(milesIn)) return mileageProblem("Mileage in should be a whole number, like 45120.", "mileage-in");
+      if (Number.isNaN(milesOut)) return mileageProblem("Mileage out should be a whole number, like 45130.", "mileage-out");
+      if (settings.require_mileage && milesIn === null && (!initialRo || closing)) {
+        return mileageProblem(initialRo ? "Enter the mileage in before closing this RO." : "Enter the mileage in to open this RO.", "mileage-in");
+      }
+      if (settings.require_mileage && closing && milesOut === null) {
+        return mileageProblem("Enter the mileage out before closing this RO.", "mileage-out");
+      }
+      if (milesIn !== null && milesOut !== null && milesOut < milesIn) {
+        return mileageProblem(`Mileage out (${milesOut.toLocaleString()}) can't be lower than mileage in (${milesIn.toLocaleString()}).`, "mileage-out");
+      }
+    }
     // A write-up can be just concerns (jobs come after the tech inspects), so charge lines are optional
     // as long as there's at least one concern or job.
     const hasConcern = concernLines.some((line) => Boolean(line.concern?.trim()));
@@ -3826,8 +3857,8 @@ function RepairOrderEditor({
         document_type: "repair_order" as DocumentType,
         ...(initialRo?.invoice_overrides !== undefined || Object.keys(invoiceOverrides).length ? { invoice_overrides: invoiceOverrides } : {}),
         status: options.status ?? status,
-        mileage_in: numberOrNull(mileageIn),
-        mileage_out: numberOrNull(mileageOut),
+        mileage_in: parseMiles(mileageIn),
+        mileage_out: parseMiles(mileageOut),
         customer_concern: valueOrNull(concern),
         notes: valueOrNull(notes),
         paid,
@@ -4300,7 +4331,7 @@ function RepairOrderEditor({
                 <span className="muted">Miles in {mileageIn || "—"}</span>
                 <label>
                   <span className="muted">out</span>
-                  <input inputMode="numeric" aria-label="Mileage out" placeholder="—" value={mileageOut} onChange={(event) => setMileageOut(event.target.value)} />
+                  <input inputMode="numeric" data-field="mileage-out" aria-label="Mileage out" placeholder={settings.require_mileage ? "Required" : "—"} value={mileageOut} onChange={(event) => setMileageOut(event.target.value)} />
                 </label>
               </div>
             </div>
@@ -4455,12 +4486,12 @@ function RepairOrderEditor({
             <h2>Visit details</h2>
             <div className="form-grid four">
               <label>
-                Mileage in
-                <input inputMode="numeric" value={mileageIn} onChange={(event) => setMileageIn(event.target.value)} />
+                Mileage in{settings.require_mileage && <span className="required-mark" aria-hidden="true"> *</span>}
+                <input inputMode="numeric" data-field="mileage-in" required={settings.require_mileage} value={mileageIn} onChange={(event) => setMileageIn(event.target.value)} />
               </label>
               <label>
-                Mileage out
-                <input inputMode="numeric" value={mileageOut} onChange={(event) => setMileageOut(event.target.value)} />
+                Mileage out{settings.require_mileage && <span className="muted" style={{ fontWeight: 400 }}> (needed to close)</span>}
+                <input inputMode="numeric" data-field="mileage-out" value={mileageOut} onChange={(event) => setMileageOut(event.target.value)} />
               </label>
               <label className="span-four">
                 General customer notes <span className="muted" style={{ fontWeight: 400 }}>(optional — write each concern on its own service job below)</span>
@@ -6673,6 +6704,19 @@ function SettingsPanel({
           <label>
             Default sales-tax rate %
             <NumberInput value={form.sales_tax_rate} maxDecimals={3} onChange={(value) => setForm((current) => ({ ...current, sales_tax_rate: value }))} />
+          </label>
+          <label className="checkbox-row span-two">
+            <input
+              type="checkbox"
+              checked={Boolean(form.require_mileage)}
+              onChange={(event) => setForm({ ...form, require_mileage: event.target.checked })}
+            />
+            <span>
+              <strong>Require mileage</strong>
+              <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+                Mileage in is needed to open a repair order, and mileage out to close it. Mileage out can never be lower than mileage in, with this on or off.
+              </p>
+            </span>
           </label>
           <label className="span-two">
             Document footer <span className="muted" style={{ fontWeight: 400 }}>— type {"{shop}"} anywhere to print your shop name</span>
