@@ -325,6 +325,11 @@ let toastList: Toast[] = [];
 let toastSeq = 0;
 const toastListeners = new Set<(toasts: Toast[]) => void>();
 function emitToasts() { toastListeners.forEach((listener) => listener(toastList)); }
+/** Wipe every pop-up — used when someone signs in or out, so the last screen's messages don't follow them. */
+function clearToasts() {
+  toastList = [];
+  emitToasts();
+}
 function dismissToast(id: number) {
   toastList = toastList.filter((toast) => toast.id !== id);
   emitToasts();
@@ -907,7 +912,12 @@ export default function HomePage() {
       setAuthLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    let lastAuthUserId: string | null | undefined;
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      // A typo'd password earlier ("Invalid login credentials") shouldn't still be showing once you're in.
+      // Only on a real sign-in/out (the session's user changes), not the SIGNED_IN that repeats on tab focus.
+      if ((event === "SIGNED_IN" || event === "SIGNED_OUT") && lastAuthUserId !== (nextSession?.user.id ?? null)) clearToasts();
+      lastAuthUserId = nextSession?.user.id ?? null;
       setSession(nextSession);
       setAuthLoading(false);
     });
@@ -2842,7 +2852,7 @@ function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, on
   );
 }
 
-type ListFilter = "active" | RoStage | "archived";
+type ListFilter = "active" | "all" | RoStage | "archived";
 /** Approved jobs on the RO, and how many the tech has marked Done. */
 function jobProgressCount(ro: RepairOrder): { done: number; total: number } {
   const groups = new Map<string, LineItem[]>();
@@ -2899,11 +2909,13 @@ function Dashboard({
   const current = scoped.filter(({ ro }) => !ro.archived_at);
   const countOf = (key: ListFilter) =>
     key === "archived" ? scoped.length - current.length
+      : key === "all" ? current.length
       : key === "active" ? current.filter(({ stage }) => stage !== "paid" && stage !== "voided").length
         : current.filter(({ stage }) => stage === key).length;
   const passesFilter = ({ ro, stage }: { ro: RepairOrder; stage: RoStage }) =>
     filter === "archived" ? Boolean(ro.archived_at)
       : ro.archived_at ? false
+        : filter === "all" ? true
         : filter === "active" ? stage !== "paid" && stage !== "voided"
           : stage === filter;
 
@@ -2914,6 +2926,7 @@ function Dashboard({
 
   const chips: Array<{ key: ListFilter; label: string }> = [
     { key: "active", label: "Active" },
+    { key: "all", label: "All" },
     { key: "write_up", label: "Write-up" },
     { key: "waiting", label: "Waiting on customer" },
     { key: "in_shop", label: "In the shop" },
@@ -3026,7 +3039,7 @@ function Dashboard({
         <div className="stage-chips" role="group" aria-label="Show work orders by stage">
           {chips.map((chip) => {
             const count = countOf(chip.key);
-            if (count === 0 && chip.key !== "active" && chip.key !== filter) return null;
+            if (count === 0 && chip.key !== "active" && chip.key !== "all" && chip.key !== filter) return null;
             return (
               <button
                 key={chip.key}
