@@ -795,7 +795,17 @@ tbody tr:hover { background: var(--panel-header); }
 .vin-camera-guide { position: absolute; inset: 35% 5%; display: grid; place-items: center; border: 3px solid #fff; border-radius: 8px; box-shadow: 0 0 0 999px rgba(0, 0, 0, .28); color: white; font-size: 11px; font-weight: 1000; letter-spacing: .18em; text-shadow: 0 1px 3px #000; }
 .vin-scanner-status { margin: 12px 0; color: var(--muted); font-size: 13px; font-weight: 700; }
 
-.approval-shell { min-height: 100vh; padding: 32px 16px; background: #eef2f7; color-scheme: light; }
+.approval-shell {
+  min-height: 100vh; padding: 32px 16px; background: #eef2f7; color-scheme: light;
+  /* Customer pages always use the light palette, whatever app theme is saved in this browser. */
+  --ink: #1b2333; --muted: #5b6578; --line: #d9dfe8;
+  --panel: #ffffff; --panel-header: #f1f4f9; --background: #f5f7fb;
+  --accent: #1d63d8; --accent-strong: #1550b5; --accent-on: #ffffff; --accent-tint: rgba(29, 99, 216, 0.10);
+  --success: #16794a; --success-on: #ffffff; --success-text: #15803d; --success-tint: rgba(21, 128, 61, 0.12);
+  --warn-text: #9a5b00; --warn-tint: rgba(154, 91, 0, 0.12);
+  --danger-text: #c0262f; --danger-tint: rgba(192, 38, 47, 0.10);
+  color: var(--ink);
+}
 /* Customer-facing pages are always a light, printed-paper look — never the shop's dark app theme
    (customers have no theme, so the app's dark defaults would otherwise leak into form fields). */
 .approval-shell input, .approval-shell select, .approval-shell textarea {
@@ -2479,3 +2489,7 @@ tbody tr:hover { background: var(--panel-header); }
   .my-stats .metric-tile { padding: 12px; }
   .my-stats .metric-tile > strong { font-size: 22px; }
 }
+
+/* Native dropdown lists: dark themes get dark menus, and option text always contrasts with its background. */
+:root:not([data-theme="light"]):not([data-theme="sand"]) { color-scheme: dark; }
+select option { background-color: var(--panel); color: var(--ink); }
