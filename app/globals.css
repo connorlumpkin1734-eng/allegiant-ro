@@ -2496,3 +2496,30 @@ select option { background-color: var(--panel); color: var(--ink); }
 .stage-track li.done.current { border-color: var(--success-text); background: var(--success-tint); color: var(--success-text); }
 .required-mark { color: var(--danger-text); }
 .photo-upload-buttons { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* ---- Estimate approval page: make the choice obvious, and readable on a phone ---- */
+.approval-card .item-meta { display: none; }
+.approval-choice .approve.selected { border-color: #16804e; background: #16804e; color: #ffffff; }
+.approval-choice .decline.selected { border-color: #b21f2d; background: #b21f2d; color: #ffffff; }
+.approval-sticky { display: none; }
+@media (max-width: 700px) {
+  .approval-shell { padding: 0; }
+  .approval-card { padding: 16px 14px 96px; border: 0; border-radius: 0; box-shadow: none; }
+  .approval-service { margin: 12px 0 20px; }
+  .approval-service-heading { padding: 14px; }
+  .approval-service-heading h3 { font-size: 17px; }
+  .approval-service-heading strong { font-size: 18px; }
+  .approval-choice button { min-height: 48px; font-size: 16px; }
+  .approval-card .document-charges { font-size: 15px; table-layout: auto; }
+  .approval-card .document-charges th, .approval-card .document-charges td { padding: 10px 14px; }
+  .approval-card .document-charges .item-qty, .approval-card .document-charges .item-rate,
+  .approval-card .document-charges th:nth-child(2), .approval-card .document-charges th:nth-child(3) { display: none; }
+  .approval-card .document-charges .item-amount, .approval-card .document-charges th:last-child { text-align: right; white-space: nowrap; vertical-align: top; }
+  .approval-card .item-meta { display: block; margin-top: 2px; color: #5b6578; font-size: 13px; }
+  .approval-sticky { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: #ffffff; border-top: 1px solid #d9dfe8; box-shadow: 0 -6px 20px rgba(15, 39, 71, 0.12); }
+  .approval-sticky > div { display: flex; flex-direction: column; line-height: 1.2; }
+  .approval-sticky span { color: #5b6578; font-size: 13px; font-weight: 700; }
+  .approval-sticky strong { font-size: 20px; color: #1b2333; }
+  .approval-sticky .button { min-height: 48px; padding: 0 20px; font-size: 16px; }
+}
+@media (max-width: 700px) { .approval-card .document-charges th:last-child, .approval-card .document-charges td.item-amount { width: 1%; } .approval-card .document-charges th:first-child, .approval-card .document-charges td.item-desc { width: auto; } }

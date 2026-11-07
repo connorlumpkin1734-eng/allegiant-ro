@@ -20,7 +20,14 @@ function ItemRow({ item, jobTitle }: { item: Item; jobTitle?: string }) {
   const discount = isDiscount(item);
   const labor = item.item_type === "labor";
   const description = labor && jobTitle && (!item.description.trim() || sameText(item.description, jobTitle)) ? "Labor" : item.description;
-  return <tr className={discount ? "document-discount-row" : ""}><td>{discount && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}{description}</td><td>{labor ? `${item.quantity} hr` : item.quantity}</td><td>{labor ? `${money(item.unit_price)}/hr` : money(discount ? Math.abs(item.unit_price) : item.unit_price)}</td><td>{money(item.quantity * item.unit_price)}</td></tr>;
+  const qty = labor ? `${item.quantity} hr` : String(item.quantity);
+  const rate = labor ? `${money(item.unit_price)}/hr` : money(discount ? Math.abs(item.unit_price) : item.unit_price);
+  return <tr className={discount ? "document-discount-row" : ""}>
+    <td className="item-desc">{discount && <strong className="discount-applied-label">DISCOUNT APPLIED</strong>}{description}
+      {/* Phones: quantity × rate sits under the description instead of in two cramped columns. */}
+      {!discount && <span className="item-meta">{qty} × {rate}</span>}
+    </td>
+    <td className="item-qty">{qty}</td><td className="item-rate">{rate}</td><td className="item-amount">{money(item.quantity * item.unit_price)}</td></tr>;
 }
 
 // Jobs the customer already authorized at drop-off are shown as approved and can't be declined here.
@@ -100,7 +107,7 @@ export default function EstimateApprovalPage() {
       <div className="document-info-grid"><section><h3>Customer</h3><strong>{snapshot.customerName}</strong></section><section><h3>Vehicle</h3><strong>{snapshot.vehicle || "—"}</strong><span>VIN: {snapshot.vin || "—"}</span></section><section><h3>Estimate details</h3><span>{groups.length} proposed service{groups.length === 1 ? "" : "s"}</span></section></div>
       {snapshot.customerConcern && <section className="concern-box"><h3>{lines.some((line) => line.concern) ? "Customer notes" : "Customer request / proposed work"}</h3><p>{snapshot.customerConcern}</p></section>}
       <div className="document-section-heading"><h3>Proposed services</h3><span>Approve or decline each job</span></div>
-      {groups.map((group, groupIndex) => { const line = lines.find((entry) => entry.id === group.lineId); const startsLine = Boolean(line) && (groupIndex === 0 || groups[groupIndex - 1].lineId !== group.lineId); const startsOther = !line && lines.length > 0 && (groupIndex === 0 || Boolean(groups[groupIndex - 1].lineId)); const groupTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0); const photos = (snapshot.photos ?? []).filter((photo) => photo.service_group_id === group.id && photo.url); const videos = (snapshot.videos ?? []).filter((video) => video.service_group_id === group.id && video.url); return <Fragment key={group.id}>{startsOther && <header className="estimate-line-header approval-line-header"><span>Other</span><h3>Additional work</h3></header>}{startsLine && line && <header className="estimate-line-header approval-line-header"><span>Line {line.letter} · {line.kind === "inspection" ? "We recommend" : line.kind === "request" ? "You requested" : "Your concern"}</span><h3>{line.concern || group.title}</h3>{line.kind !== "request" && line.cause && <p><strong>What we found:</strong> {line.cause}</p>}</header>}<section className={`approval-service ${decisions[group.id] || ""}`}>
+      {groups.map((group, groupIndex) => { const line = lines.find((entry) => entry.id === group.lineId); const startsLine = Boolean(line) && (groupIndex === 0 || groups[groupIndex - 1].lineId !== group.lineId); const startsOther = !line && lines.length > 0 && (groupIndex === 0 || Boolean(groups[groupIndex - 1].lineId)); const groupTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0); const photos = (snapshot.photos ?? []).filter((photo) => photo.service_group_id === group.id && photo.url); const videos = (snapshot.videos ?? []).filter((video) => video.service_group_id === group.id && video.url); return <Fragment key={group.id}>{startsOther && <header className="estimate-line-header approval-line-header"><span>Other</span><h3>Additional work</h3></header>}{startsLine && line && <header className="estimate-line-header approval-line-header"><span>Line {line.letter} · {line.kind === "inspection" ? "We recommend" : line.kind === "request" ? "You requested" : "Your concern"}</span><h3>{line.concern || group.title}</h3>{line.kind !== "request" && line.cause && <p><strong>What we found:</strong> {line.cause}</p>}</header>}<section id={`job-${group.id}`} className={`approval-service ${decisions[group.id] || ""}`}>
         <div className="approval-service-heading"><div><h3>{group.title}</h3><strong>{money(groupTotal)}</strong></div>{group.authorized ? <div className="approval-choice"><span className="authorization-mark approved">Already authorized</span></div> : <div className="approval-choice"><button type="button" className={decisions[group.id] === "approved" ? "selected approve" : "approve"} onClick={() => setDecisions((current) => ({ ...current, [group.id]: "approved" }))} disabled={authorization.status !== "sent"}>✓ Approve</button><button type="button" className={decisions[group.id] === "declined" ? "selected decline" : "decline"} onClick={() => setDecisions((current) => ({ ...current, [group.id]: "declined" }))} disabled={authorization.status !== "sent"}>✕ Decline</button></div>}</div>
         {group.recommendation && <p className="approval-recommendation">{group.recommendation}</p>}
         <table className="document-table document-charges"><thead><tr><th>Description</th><th>Qty/Hrs</th><th>Est. rate</th><th>Amount</th></tr></thead><tbody>{group.items.map((item, index) => <ItemRow key={`${item.description}-${index}`} item={item} jobTitle={group.title} />)}</tbody></table>
@@ -116,5 +123,16 @@ export default function EstimateApprovalPage() {
       {authorization.status === "sent" ? <section className="document-terms"><strong>Work authorization</strong>{approvedGroups.length > 0 && <><label>Full name<input value={signerName} onChange={(event) => setSignerName(event.target.value)} /></label><label>Signature</label><canvas ref={canvasRef} className="signature-pad" width={900} height={220} onPointerDown={startDrawing} onPointerMove={draw} onPointerUp={() => { drawing.current = false; }} onPointerCancel={() => { drawing.current = false; }} /><button className="button small ghost" type="button" onClick={clearSignature}>Clear signature</button><label className="checkbox-row"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />I authorize {snapshot.businessName || "the shop"} to perform only the services I approved above for the selected total shown.</label></>}<button className="button primary approval-submit" disabled={busy} onClick={() => void respond()}>{busy ? "Submitting…" : approvedGroups.length ? `Submit selections & authorize ${money(approvedTotal)}` : "Submit declined services"}</button></section> : <div className={`notice badge estimate-${authorization.status}`}>Response recorded: {authorization.status.replaceAll("_", " ")}. Authorized total: {money(authorization.approved_total || 0)}.</div>}
       {message && <div className="notice">{message}</div>}
     </>}
-  </article></main>;
+  </article>
+    {snapshot && authorization && authorization.status === "sent" && groups.length > 0 && <div className="approval-sticky" role="status">
+        <div><span>{Object.keys(decisions).length} of {groups.length} chosen</span><strong>{money(approvedTotal)}</strong></div>
+        <button type="button" className="button primary" onClick={() => {
+          // Still deciding: jump to the next service without an answer. All answered: jump to sign.
+          const next = groups.find((group) => !decisions[group.id]);
+          (next ? document.getElementById(`job-${next.id}`) : document.querySelector(".document-terms"))?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }}>
+          {groups.some((group) => !decisions[group.id]) ? "Next service" : approvedGroups.length ? "Sign & approve" : "Submit"}
+        </button>
+      </div>}
+  </main>;
 }
