@@ -175,7 +175,8 @@ type LineItem = {
   created_at?: string;
 };
 
-type JobStatus = "authorized" | "needs_approval" | "pending_review";
+/** declined = the customer said no (in person or by phone): kept on record, never billed. */
+type JobStatus = "authorized" | "needs_approval" | "pending_review" | "declined";
 // Shop-floor progress of a job. To add a step later (e.g. "waiting_parts"), add it here and to the
 // line_items_job_progress_check constraint in the database.
 const JOB_PROGRESS = [
@@ -792,7 +793,7 @@ function authorizedLineItems<T extends { service_group_id: string | null; job_st
   authorization: EstimateAuthorization | null | undefined,
   overrides: InvoiceOverrides = {}
 ): T[] {
-  const billable = items.filter((item) => item.job_status !== "pending_review");
+  const billable = items.filter((item) => item.job_status !== "pending_review" && item.job_status !== "declined");
   if (!hasAuthorizationResponse(authorization)) return billable;
   const decisions = authorization.line_decisions ?? {};
   const hasApprovedService = Object.values(decisions).includes("approved")
@@ -2872,7 +2873,7 @@ function jobProgressCount(ro: RepairOrder): { done: number; total: number } {
   const groups = new Map<string, LineItem[]>();
   const decisions = ro.latest_estimate_authorization?.line_decisions ?? {};
   for (const item of ro.line_items ?? []) {
-    if (!item.service_group_id || item.job_status === "pending_review" || decisions[item.service_group_id] === "declined") continue;
+    if (!item.service_group_id || item.job_status === "pending_review" || item.job_status === "declined" || decisions[item.service_group_id] === "declined") continue;
     groups.set(item.service_group_id, [...(groups.get(item.service_group_id) ?? []), item]);
   }
   let done = 0;
@@ -3470,9 +3471,12 @@ function RepairOrderEditor({
   // - A technician's job is always a request for the advisor to review.
   // - A recommended repair always needs the customer's approval — that's the point of recommending it.
   // - Otherwise, jobs added while writing up a new RO were approved at drop-off; later ones need approval.
+  // - A customer request ("do my brakes") is something they already asked for: Approved.
+  // - A customer concern ("it's grinding") gets diagnosed and priced first: Needs customer OK.
   function defaultJobStatus(lineKind: LineKind | undefined): JobStatus {
     if (isTechnician) return "pending_review";
-    if (lineKind === "inspection") return "needs_approval";
+    if (lineKind === "inspection" || lineKind === "customer") return "needs_approval";
+    if (lineKind === "request") return "authorized";
     return initialRo ? "needs_approval" : "authorized";
   }
 
@@ -3545,7 +3549,7 @@ function RepairOrderEditor({
   const [workCompleteAt, setWorkCompleteAt] = useState<string | null>(initialRo?.work_complete_at ?? null);
   /** A job the shop may work on: approved at write-up, by the customer, or separately authorized. */
   function isJobWorkable(groupId: string, status: JobStatus) {
-    if (status === "pending_review") return false;
+    if (status === "pending_review" || status === "declined") return false;
     return status === "authorized" || currentDecisions[groupId] === "approved" || Boolean(invoiceOverrides[groupId]);
   }
 
@@ -3590,16 +3594,23 @@ function RepairOrderEditor({
         return;
       }
     }
-    const { error } = await supabase.rpc("mark_work_complete", { p_ro: initialRo.id, p_complete: complete });
-    if (error) {
-      setMessage(error.message);
+    const doneText = complete
+      ? (isTechnician ? "Sent to the advisor." : "Marked ready for advisor.")
+      : (isTechnician ? "Taken back. It's yours to finish." : "Sent back to the shop.");
+    const handOff = async () => {
+      const { error } = await supabase.rpc("mark_work_complete", { p_ro: initialRo.id, p_complete: complete });
+      if (error) { setMessage(error.message); return false; }
+      setWorkCompleteAt(complete ? new Date().toISOString() : null);
+      return true;
+    };
+    if (complete) {
+      // Save everything first (notes, cause, correction, hours) so nothing typed is lost in the hand-off.
+      await save(undefined, false, { afterWrite: handOff, doneMessage: doneText });
       return;
     }
-    setWorkCompleteAt(complete ? new Date().toISOString() : null);
+    if (!(await handOff())) return;
     onBackgroundRefresh?.();
-    setMessage(complete
-      ? (isTechnician ? "Sent to the advisor." : "Marked ready for advisor.")
-      : (isTechnician ? "Taken back. It's yours to finish." : "Sent back to the shop."));
+    setMessage(doneText);
   }
 
   function setJobStatus(groupId: string, jobStatus: JobStatus) {
@@ -3757,7 +3768,11 @@ function RepairOrderEditor({
   async function save(
     previewMode?: DocumentMode,
     print = false,
-    options: { status?: "open" | "completed"; openSend?: "invoice"; doneMessage?: string } = {}
+    options: {
+      status?: "open" | "completed"; openSend?: "invoice"; doneMessage?: string;
+      /** Runs after everything is written, before the editor reloads (e.g. the hand-off to the advisor). */
+      afterWrite?: () => Promise<boolean>;
+    } = {}
   ) {
     if (!canWrite) {
       setMessage(
@@ -4001,8 +4016,9 @@ function RepairOrderEditor({
         if (deleteLineError) throw deleteLineError;
       }
 
+      const afterOk = options.afterWrite ? await options.afterWrite() : true;
       setBusy(false);
-      if (!previewMode) notify(options.doneMessage ?? (initialRo ? `RO #${padRo(initialRo.ro_number)} saved.` : "Work order saved."), "success");
+      if (!previewMode && afterOk) notify(options.doneMessage ?? (initialRo ? `RO #${padRo(initialRo.ro_number)} saved.` : "Work order saved."), "success");
       onSaved(roId, options.status === "completed" ? "invoice" : options.status === "open" ? "work_order" : workspaceTab, previewMode, print, options.openSend);
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "The work order could not be saved.");
@@ -4128,12 +4144,13 @@ function RepairOrderEditor({
               <select value={jobStatus} onChange={(event) => setJobStatus(group.id, event.target.value as JobStatus)}>
                 <option value="authorized">Approved</option>
                 <option value="needs_approval">{customerDecision === "approved" ? "Customer approved" : customerDecision === "declined" ? "Customer declined" : "Needs customer OK"}</option>
+                <option value="declined">Declined · not doing</option>
                 {(!soloShopForJobs || jobStatus === "pending_review") && <option value="pending_review">Tech request · needs pricing</option>}
               </select>
             </label>
           ) : (
             <span className={`job-status-badge ${jobStatus}`}>
-              {jobStatus === "pending_review" ? "Sent to advisor" : isJobWorkable(group.id, jobStatus) ? "Approved · go ahead" : "Waiting on customer"}
+              {jobStatus === "pending_review" ? "Sent to advisor" : jobStatus === "declined" ? "Declined · don't do" : isJobWorkable(group.id, jobStatus) ? "Approved · go ahead" : "Waiting on customer"}
             </span>
           )}
           {initialRo && workspaceTab === "work_order" && settings.team_features_enabled && (
@@ -7607,10 +7624,23 @@ function DocumentView({
   const hasCustomerResponse = hasAuthorizationResponse(authorization);
   const decisionSummary = authorizationDecisionSummary(authorization);
   // Pending technician requests show on the shop's work order only — never on the estimate or invoice.
-  const visibleItems = isWorkOrder ? items : items.filter((item) => !isPendingReview(item));
+  // Jobs the customer declined in person stay on the shop's work order (marked) and get their own
+  // "declined" list on the invoice; they never appear as charges on the estimate or invoice.
+  const visibleItems = isWorkOrder ? items : items.filter((item) => !isPendingReview(item) && item.job_status !== "declined");
   const pricedItems = isEstimate ? visibleItems : authorizedLineItems(items, authorization, ro.invoice_overrides);
   const { subtotal, tax, total } = calculateLineItemTotals(pricedItems, Number(ro.tax_rate));
-  const declinedGroups = isInvoice ? declinedEstimateGroups(authorization).filter((group) => !ro.invoice_overrides?.[group.id]) : [];
+  const declinedGroups = isInvoice ? (() => {
+    const fromEstimate = declinedEstimateGroups(authorization).filter((group) => !ro.invoice_overrides?.[group.id]);
+    const seen = new Set(fromEstimate.map((group) => group.id));
+    const inPerson = new Map<string, DeclinedEstimateGroup>();
+    for (const item of items) {
+      if (item.job_status !== "declined" || !item.service_group_id || seen.has(item.service_group_id)) continue;
+      const group = inPerson.get(item.service_group_id) ?? { id: item.service_group_id, title: item.service_group_title || "Recommended service", recommendation: item.job_note || "", items: [] };
+      group.items.push(item as unknown as DeclinedEstimateGroup["items"][number]);
+      inPerson.set(item.service_group_id, group);
+    }
+    return [...fromEstimate, ...inPerson.values()];
+  })() : [];
   const currentStatusLabel = statusLabel(ro.status);
   const displayedItems = isInvoice && hasCustomerResponse ? pricedItems : visibleItems;
   type DocumentGroup = {
@@ -7692,7 +7722,9 @@ function DocumentView({
   const renderJobRows = (group: DocumentGroup, showJobTotal: boolean, inLine: boolean): ReactNode[] => {
     const isServiceJob = Boolean(group.title);
     const separateAuthorization = ro.invoice_overrides?.[group.id];
-    const decision = isServiceJob && hasCustomerResponse && !separateAuthorization && group.status !== "authorized" ? decisions[group.id] : undefined;
+    const decision = group.status === "declined"
+      ? "declined"
+      : isServiceJob && hasCustomerResponse && !separateAuthorization && group.status !== "authorized" ? decisions[group.id] : undefined;
     const laborLines = group.items.filter((item) => item.item_type === "labor");
     const opLabor = isServiceJob && laborLines.length === 1 && (!laborLines[0].description.trim() || sameText(laborLines[0].description, group.title)) ? laborLines[0] : null;
     const otherItems = opLabor ? group.items.filter((item) => item !== opLabor) : group.items;
@@ -8043,7 +8075,7 @@ function DocumentView({
               </div>
               <strong>{declinedGroups.length} declined job{declinedGroups.length === 1 ? "" : "s"}</strong>
             </header>
-            <p>These recommendations were included on the estimate and declined by the customer. They are excluded from the invoice total.</p>
+            <p>The customer declined these recommendations. They are not included in the invoice total.</p>
             <div className="invoice-declined-list">
               {declinedGroups.map((group) => {
                 const groupTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);

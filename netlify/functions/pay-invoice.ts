@@ -43,7 +43,7 @@ function hasAuthorizationResponse(a: EstimateAuthorization | null | undefined): 
 }
 function authorizedLineItems(items: LineItem[], a: EstimateAuthorization | null | undefined, overrides: InvoiceOverrides = {}): LineItem[] {
   // Pending technician requests are never billed; jobs authorized at write-up always are.
-  const billable = items.filter((item) => item.job_status !== "pending_review");
+  const billable = items.filter((item) => item.job_status !== "pending_review" && item.job_status !== "declined");
   if (!hasAuthorizationResponse(a)) return billable;
   const decisions = a.line_decisions ?? {};
   const hasApprovedService = Object.values(decisions).includes("approved")

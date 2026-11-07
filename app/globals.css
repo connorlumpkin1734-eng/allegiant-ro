@@ -2552,3 +2552,7 @@ select option { background-color: var(--panel); color: var(--ink); }
   .settings-sections { display: flex; flex-wrap: wrap; overflow: visible; }
   .settings-sections button { flex: 1 1 auto; }
 }
+/* Declined in person: kept on the RO, never billed. */
+.job-approval-chip.declined select { background-color: var(--danger-tint); color: var(--danger-text); }
+.job-status-badge.declined { color: var(--danger-text); background: var(--danger-tint); }
+.service-job-card.job-status-declined { opacity: 0.7; }

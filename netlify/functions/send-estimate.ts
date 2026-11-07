@@ -82,7 +82,7 @@ export default async (request: Request) => {
   const videos = videoResponse.ok ? await videoResponse.json() as Array<Record<string, unknown>> : [];
   // Technician requests still pending advisor review are not part of the estimate.
   const items = [...(ro.line_items || [])]
-    .filter((item) => item.job_status !== "pending_review")
+    .filter((item) => item.job_status !== "pending_review" && item.job_status !== "declined")
     .sort((a, b) => a.sort_order - b.sort_order);
   if (!items.some((item) => item.service_group_id)) {
     return json({ error: "Add at least one priced job before sending the estimate (technician requests must be reviewed first)." }, 400);

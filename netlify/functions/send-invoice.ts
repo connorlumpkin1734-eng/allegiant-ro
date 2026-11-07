@@ -106,7 +106,7 @@ function authorizedLineItems(
   overrides: InvoiceOverrides = {}
 ): LineItem[] {
   // Pending technician requests are never billed; jobs authorized at write-up always are.
-  const billable = items.filter((item) => item.job_status !== "pending_review");
+  const billable = items.filter((item) => item.job_status !== "pending_review" && item.job_status !== "declined");
   if (!hasAuthorizationResponse(authorization)) return billable;
   const decisions = authorization.line_decisions ?? {};
   const hasApprovedService = Object.values(decisions).includes("approved")
@@ -190,8 +190,9 @@ async function handler(request: Request): Promise<Response> {
   );
   const authorizationRows = authorizationResponse.ok ? await authorizationResponse.json() as EstimateAuthorization[] : [];
   const estimateAuthorization = authorizationRows[0] ?? null;
-  const wasAdjustedForDeclines = hasAuthorizationResponse(estimateAuthorization)
-    && Object.values(estimateAuthorization.line_decisions ?? {}).includes("declined");
+  const wasAdjustedForDeclines = (hasAuthorizationResponse(estimateAuthorization)
+    && Object.values(estimateAuthorization.line_decisions ?? {}).includes("declined"))
+    || (ro.line_items || []).some((item) => item.job_status === "declined");
 
   const allItems = [...(ro.line_items || [])].sort((a, b) => a.sort_order - b.sort_order);
   const items = authorizedLineItems(allItems, estimateAuthorization, ro.invoice_overrides ?? {});
