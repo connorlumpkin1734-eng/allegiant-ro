@@ -96,6 +96,7 @@ export default function EstimateApprovalPage() {
       const response = await fetch("/.netlify/functions/estimate-approval", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, decisions, signerName, consent: approvedGroups.length > 0 ? consent : false, signatureData: approvedGroups.length > 0 ? canvasRef.current!.toDataURL("image/png") : null }) });
       const body = await response.json() as { error?: string; status?: string; approvedTotal?: number }; if (!response.ok) throw new Error(body.error || "Your response could not be saved.");
       setAuthorization((current) => current ? { ...current, status: body.status || "declined", line_decisions: decisions, approved_total: body.approvedTotal, responded_at: new Date().toISOString() } : current);
+      window.setTimeout(() => document.querySelector(".approval-done")?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
       setMessage(approvedGroups.length ? `Selections submitted. ${money(body.approvedTotal || 0)} authorized.` : `All services declined. ${snapshot?.businessName || "The shop"} has received your response.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Your response could not be saved."); } finally { setBusy(false); }
   }
@@ -123,8 +124,13 @@ export default function EstimateApprovalPage() {
       {authorization.status === "sent" ? <section className="document-terms"><strong>Work authorization</strong>{approvedGroups.length > 0 && <><label>Full name<input value={signerName} onChange={(event) => setSignerName(event.target.value)} /></label><label>Signature</label><canvas ref={canvasRef} className="signature-pad" width={900} height={220} onPointerDown={startDrawing} onPointerMove={draw} onPointerUp={() => { drawing.current = false; }} onPointerCancel={() => { drawing.current = false; }} /><button className="button small ghost" type="button" onClick={clearSignature}>Clear signature</button><label className="checkbox-row"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />I authorize {snapshot.businessName || "the shop"} to perform only the services I approved above for the selected total shown.</label></>}<button className="button primary approval-submit" disabled={busy} onClick={() => void respond()}>{busy ? "Submitting…" : approvedGroups.length ? `Submit selections & authorize ${money(approvedTotal)}` : "Submit declined services"}</button></section> : authorization.status === "superseded"
         // An older link: the shop sent an updated estimate since. Don't call it a recorded response.
         ? <div className="notice">This estimate has been updated. Please use the newest estimate email from {snapshot.businessName || "the shop"}, or call them for a fresh link.</div>
-        : <div className={`notice badge estimate-${authorization.status}`}>Response recorded: {authorization.status.replaceAll("_", " ")}. Authorized total: {money(authorization.approved_total || 0)}.</div>}
-      {message && <div className="notice">{message}</div>}
+        : <div className={`notice approval-done estimate-${authorization.status}`}>
+          <strong>{authorization.status === "declined" ? "Thanks — your response is in." : "Thanks — you're all set."}</strong>
+          <span>{authorization.status === "declined"
+            ? `You declined the proposed services. ${snapshot.businessName || "The shop"} has your answer.`
+            : `You approved ${money(authorization.approved_total || 0)} of work. ${snapshot.businessName || "The shop"} has been notified and will get started.`}</span>
+        </div>}
+      {message && authorization.status === "sent" && <div className="notice">{message}</div>}
     </>}
   </article>
     {snapshot && authorization && authorization.status === "sent" && groups.length > 0 && <div className="approval-sticky" role="status">

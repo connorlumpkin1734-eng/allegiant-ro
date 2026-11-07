@@ -345,7 +345,7 @@ function dismissToast(id: number) {
   toastList = toastList.filter((toast) => toast.id !== id);
   emitToasts();
 }
-const ERRORISH = /(could not|couldn't|can't|cannot|error|failed|missing|required|needs? |add the|add at least|before |invalid|expired|too many|not allowed|only the|doesn't look|denied|rejected|isn't|wasn't)/i;
+const ERRORISH = /(could not|couldn't|can't|cannot|error|failed|missing|required|needs? |add the|add at least|before |invalid|expired|too many|not allowed|only the|doesn't look|denied|rejected|isn't|wasn't|should be|\benter (the|at least|a|an)\b|write the|choose |pick a)/i;
 const SUCCESSISH = /\b(emailed|sent|saved|copied|recorded|approved|updated|added|removed|deleted|archived|restored|confirmed|ready|marked|reopened|notified|done|complete|turned)\b/i;
 function guessToastKind(text: string): ToastKind {
   if (ERRORISH.test(text)) return "error";
@@ -355,7 +355,8 @@ function notify(text: string, kind: ToastKind = guessToastKind(text)) {
   if (!text.trim()) return;
   const toast = { id: ++toastSeq, text, kind };
   // A success means whatever went wrong before is sorted out, so old errors go away.
-  const keep = kind === "success" ? toastList.filter((entry) => entry.kind !== "error") : toastList;
+  // A new error replaces the last one too, so stale problems don't pile up.
+  const keep = kind === "success" || kind === "error" ? toastList.filter((entry) => entry.kind !== "error") : toastList;
   toastList = [...keep.filter((entry) => entry.text !== text).slice(-3), toast];
   emitToasts();
   if (kind !== "error") window.setTimeout(() => dismissToast(toast.id), 5000);
@@ -404,7 +405,8 @@ function focusProblem(selector: string) {
       emitToasts();
     };
     field.addEventListener("input", clear);
-    window.setTimeout(() => { field.classList.remove("field-problem"); field.removeEventListener("input", clear); }, 6000);
+    // The red outline fades after a few seconds; the error message stays until they type in the field.
+    window.setTimeout(() => { field.classList.remove("field-problem"); }, 6000);
   }, 50);
 }
 
@@ -2102,6 +2104,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onInspection={editingRo ? () => openInspection(editingRo.id, "editor") : undefined}
             onCancel={returnFromEditor}
             onDelete={editingRo && !isTechnicianOnly ? () => deleteRo(editingRo) : undefined}
+            onBackgroundRefresh={() => void loadData(false)}
             onSaved={async (id, tab, previewMode, print, openSend) => {
               setEditorTab(tab);
               setPendingSend(openSend ?? null);
@@ -3125,7 +3128,10 @@ function RepairOrderEditor({
   onCancel,
   onSaved,
   onDelete,
+  onBackgroundRefresh,
 }: {
+  /** Refresh the list behind the editor without reloading the editor (after a send or a hand-off). */
+  onBackgroundRefresh?: () => void;
   /** Open the Send panel as soon as the editor shows (after Close & invoice). */
   initialSend?: "estimate" | "invoice" | null;
   onInitialSendShown?: () => void;
@@ -3352,6 +3358,9 @@ function RepairOrderEditor({
   }, [items, taxRate]);
 
   const currentAuthorization = initialRo?.latest_estimate_authorization;
+  // Flips to true the moment an estimate goes out, so the banner and main button stop saying "Send estimate".
+  const [estimateJustSent, setEstimateJustSent] = useState(false);
+  const authorizationStatus = estimateJustSent ? "sent" : currentAuthorization?.status;
   const currentDecisions = currentAuthorization?.line_decisions ?? {};
   const hasCustomerAuthorizationResponse = hasAuthorizationResponse(currentAuthorization);
   const currentDecisionSummary = useMemo(
@@ -3561,6 +3570,7 @@ function RepairOrderEditor({
     ]);
     const failed = jobResult.error || lineResult.error;
     if (failed) setMessage(`Couldn't save the job status: ${failed.message}`);
+    else { toastList = toastList.filter((toast) => toast.kind !== "error"); emitToasts(); }
   }
 
   async function markWorkComplete(complete: boolean) {
@@ -3586,6 +3596,7 @@ function RepairOrderEditor({
       return;
     }
     setWorkCompleteAt(complete ? new Date().toISOString() : null);
+    onBackgroundRefresh?.();
     setMessage(complete
       ? (isTechnician ? "Sent to the advisor." : "Marked ready for advisor.")
       : (isTechnician ? "Taken back. It's yours to finish." : "Sent back to the shop."));
@@ -3756,7 +3767,13 @@ function RepairOrderEditor({
       );
       return;
     }
-    if ((initialRo?.status === "completed" || initialRo?.paid) && !finalEditConfirmed && !options.status) {
+    // Only warn about overriding a final invoice when its charges actually changed — marking it paid,
+    // adding miles out or fixing a note shouldn't need that scary prompt.
+    const chargesKey = (list: LineItem[], rate: number) => JSON.stringify([Number(rate), [...list]
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+      .map((item) => [item.id, item.item_type, item.description, Number(item.quantity), Number(item.unit_price), Boolean(item.taxable), item.job_status])]);
+    const chargesChanged = Boolean(initialRo) && chargesKey(items, taxRate) !== chargesKey(initialRo?.line_items ?? [], Number(initialRo?.tax_rate ?? 0));
+    if ((initialRo?.status === "completed" || initialRo?.paid) && chargesChanged && !finalEditConfirmed && !options.status) {
       if (!window.confirm("Override this final invoice and save changes? This updates its charges and totals. The original customer estimate approval will remain unchanged.")) return;
       setFinalEditConfirmed(true);
     }
@@ -4005,7 +4022,7 @@ function RepairOrderEditor({
     paid: initialRo?.paid ?? false,
     work_complete_at: workCompleteAt,
     items,
-    authorizationStatus: currentAuthorization?.status ?? (initialRo?.estimate_status === "sent" ? "sent" : null),
+    authorizationStatus: authorizationStatus ?? (initialRo?.estimate_status === "sent" ? "sent" : null),
     decisions: currentAuthorization?.line_decisions,
     overrides: invoiceOverrides,
   });
@@ -4043,13 +4060,15 @@ function RepairOrderEditor({
     ? null
     : isTechnician
       ? null
+      : stage === "ready" && (pendingRecs > 0 || (awaitingOk.length > 0 && authorizationStatus !== "sent"))
+        ? { label: "Send estimate", onClick: () => setSendKind("estimate") }
       : stage === "ready"
         ? { label: "Close & invoice", onClick: () => void closeAndInvoice() }
         : stage === "invoiced"
           ? { label: "Send invoice", onClick: () => setSendKind("invoice") }
           : stage === "paid"
             ? { label: "Print invoice", onClick: () => void save("invoice", true) }
-            : stage === "in_shop" && (pendingRecs > 0 || (awaitingOk.length > 0 && currentAuthorization?.status !== "sent"))
+            : stage === "in_shop" && (pendingRecs > 0 || (awaitingOk.length > 0 && authorizationStatus !== "sent"))
               ? { label: "Send estimate", onClick: () => setSendKind("estimate") }
               : stage === "in_shop" && allApprovedWorkDone && awaitingOk.length === 0
                 ? { label: "Close & invoice", onClick: () => void closeAndInvoice() }
@@ -4264,6 +4283,8 @@ function RepairOrderEditor({
           onClose={() => setSendKind(null)}
           onSent={(sentTo, savedToCustomer) => {
             if (savedToCustomer) setCustomerForm((current) => ({ ...current, email: sentTo }));
+            if (sendKind === "estimate") setEstimateJustSent(true);
+            onBackgroundRefresh?.();
           }}
         />
       )}
@@ -4322,10 +4343,12 @@ function RepairOrderEditor({
       {initialRo && !isTechnician && stage === "ready" && (
         <div className="handoff-banner">
           <strong>The tech sent this to you.</strong>
-          <span>All approved jobs are done. Look over the corrections, then Close &amp; invoice.</span>
+          <span>{pendingRecs > 0
+            ? `The approved work is done, and they found ${pendingRecs === 1 ? "one more thing" : `${pendingRecs} more things`}. Price ${pendingRecs === 1 ? "it" : "them"} below and send the estimate, or delete ${pendingRecs === 1 ? "it" : "them"} — then Close & invoice.`
+            : "All approved jobs are done. Look over the corrections, then Close & invoice."}</span>
         </div>
       )}
-      {initialRo && !isTechnician && stage !== "ready" && pendingRecs > 0 && (
+      {initialRo && !isTechnician && pendingRecs > 0 && (
         <div className="handoff-banner warn">
           <strong>{pendingRecs} tech recommendation{pendingRecs === 1 ? "" : "s"} to price.</strong>
           <span>Set each to Needs customer OK or Approved, then send the estimate.</span>
@@ -4334,7 +4357,7 @@ function RepairOrderEditor({
       {initialRo && !isTechnician && pendingRecs === 0 && awaitingOk.length > 0 && (stage === "in_shop" || stage === "ready") && (
         <div className="handoff-banner warn">
           <strong>{awaitingOk.map(jobTitle).join(", ")} {awaitingOk.length === 1 ? "needs" : "need"} the customer&apos;s OK.</strong>
-          <span>{currentAuthorization?.status === "sent"
+          <span>{authorizationStatus === "sent"
             ? "The estimate is out. You can close once they answer, or set the job to Approved if they told you yes."
             : "Send the estimate, set the job to Approved if they already said yes, or delete it. You can close once it’s settled."}</span>
         </div>
@@ -4343,7 +4366,8 @@ function RepairOrderEditor({
       {!initialRo && (
         <div className="notice workspace-notice">Save this new work order once before previewing or printing documents.</div>
       )}
-      {hasCustomerAuthorizationResponse && currentAuthorization && (
+      {/* Techs see "Approved · go ahead" on each job instead of this money panel. */}
+      {!isTechnician && hasCustomerAuthorizationResponse && currentAuthorization && (
         <section className={`approval-overview ${currentAuthorization.status}`} aria-label="Customer estimate decisions">
           <div className="approval-overview-heading">
             <div>

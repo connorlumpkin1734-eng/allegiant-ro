@@ -2538,3 +2538,11 @@ select option { background-color: var(--panel); color: var(--ink); }
 }
 .settings-sections { margin-bottom: 16px; max-width: 100%; overflow-x: auto; }
 .settings-sections button { white-space: nowrap; }
+/* Phone nav: tabs share the width so all of them fit (no hidden "Settings"). */
+@media (max-width: 760px) {
+  .topbar nav { gap: 0; }
+  .topbar nav button { flex: 1 1 auto; padding: 0 6px; font-size: 14px; }
+}
+.approval-done { display: flex; flex-direction: column; gap: 4px; padding: 16px; font-size: 16px; }
+.approval-done strong { font-size: 18px; }
+.approval-done.estimate-approved, .approval-done.estimate-partially_approved { border-color: #49a573; background: #e8f7ef; color: #0f633c; }
