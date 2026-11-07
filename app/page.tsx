@@ -3355,7 +3355,7 @@ function RepairOrderEditor({
 
   // Pending technician requests aren't priced/approved yet, so they never count toward totals.
   const totals = useMemo(() => {
-    return calculateLineItemTotals(items.filter((item) => !isPendingReview(item)), taxRate);
+    return calculateLineItemTotals(items.filter((item) => !isPendingReview(item) && item.job_status !== "declined"), taxRate);
   }, [items, taxRate]);
 
   const currentAuthorization = initialRo?.latest_estimate_authorization;
