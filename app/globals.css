@@ -2523,3 +2523,18 @@ select option { background-color: var(--panel); color: var(--ink); }
   .approval-sticky .button { min-height: 48px; padding: 0 20px; font-size: 16px; }
 }
 @media (max-width: 700px) { .approval-card .document-charges th:last-child, .approval-card .document-charges td.item-amount { width: 1%; } .approval-card .document-charges th:first-child, .approval-card .document-charges td.item-desc { width: auto; } }
+
+/* Inspection bottom bar: ⋯ menu that opens upward. */
+.inspection-more { position: relative; }
+.inspection-more > summary { list-style: none; min-width: 48px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.inspection-more > summary::-webkit-details-marker { display: none; }
+.inspection-more-list { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 220px; display: flex; flex-direction: column; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35); }
+.inspection-more-list button { min-height: 44px; padding: 10px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+.inspection-more-list button:hover { background: var(--panel-header); }
+.inspection-more-list button:disabled { opacity: 0.5; cursor: default; }
+@media (max-width: 760px) {
+  .inspection-bottom-actions .inspection-more { flex: 0 0 auto; }
+  .inspection-toolbar .button-row { display: none; }
+}
+.settings-sections { margin-bottom: 16px; max-width: 100%; overflow-x: auto; }
+.settings-sections button { white-space: nowrap; }

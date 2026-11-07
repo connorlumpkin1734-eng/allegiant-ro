@@ -104,6 +104,17 @@ type StaffMember = {
   active: boolean;
 };
 
+/** City/state/zip line. A state on its own (the form defaults to TX) isn't an address, so it shows nothing. */
+function cityStateZip(customer: Pick<Customer, "city" | "state" | "zip_code"> | null | undefined): string {
+  if (!customer || (!customer.city?.trim() && !customer.zip_code?.trim())) return "";
+  return [customer.city, customer.state, customer.zip_code].filter((part) => part?.trim()).join(", ");
+}
+/** One-line address, or "" when there's no real address (state alone doesn't count). */
+function addressText(customer: Pick<Customer, "address_line_1" | "address_line_2" | "city" | "state" | "zip_code"> | null | undefined): string {
+  if (!customer) return "";
+  return [customer.address_line_1, customer.address_line_2, cityStateZip(customer)].filter((part) => part?.trim()).join(", ");
+}
+
 type Customer = {
   id: string;
   archived_at: string | null;
@@ -3187,6 +3198,7 @@ function RepairOrderEditor({
   const [notes, setNotes] = useState(initialRo?.notes ?? "");
   const [paid, setPaid] = useState(initialRo?.paid ?? false);
   const [taxRate, setTaxRate] = useState(Number(initialRo?.tax_rate ?? settings.sales_tax_rate));
+  const [showTaxRate, setShowTaxRate] = useState(false);
   const [items, setItems] = useState<LineItem[]>(() =>
     initialRo?.line_items?.length
       ? initialRo.line_items.map((item, index) => ({ ...item, sort_order: index }))
@@ -3209,6 +3221,7 @@ function RepairOrderEditor({
   }, [focusLineId]);
   // Private shop notes stay tucked away until someone adds one.
   const [openShopNotes, setOpenShopNotes] = useState<Set<string>>(() => new Set());
+  const [openMedia, setOpenMedia] = useState<Set<string>>(() => new Set());
   // Whether this RO has a saved multipoint inspection that can go out with the estimate.
   // The RO's multipoint inspection, for the status card and for sending it with the estimate.
   const [inspectionSummary, setInspectionSummary] = useState<{ needs: number; watch: number; good: number; checked: number; total: number } | null>(null);
@@ -4084,7 +4097,6 @@ function RepairOrderEditor({
                           item.service_group_id === group.id ? { ...item, concern_line_id: line.id } : item)),
                       }))
                   : []),
-                !openShopNotes.has(group.id) && !first.internal_notes && { label: "Add shop note (private)", onClick: () => setOpenShopNotes((current) => new Set(current).add(group.id)) },
                 canDeleteJob && { label: "Delete job", onClick: () => void deleteServiceJob(group.id), danger: true },
               ]}
             />
@@ -4188,11 +4200,39 @@ function RepairOrderEditor({
           ))}
         </div>
         <div className="job-add-actions">
-          <button className="button small secondary" onClick={() => addItem("labor", group.id)}>+ Labor</button>
-          {canAddPartLine && <button className="button small secondary" onClick={() => addItem("part", group.id)}>+ Part</button>}
+          {/* One "+ Add" per job instead of a row of buttons. */}
+          <MoreMenu
+            label="+ Add"
+            small
+            items={[
+              { label: "Labor", onClick: () => addItem("labor", group.id) },
+              canAddPartLine && { label: "Part", onClick: () => addItem("part", group.id) },
+              initialRo && workspaceTab === "work_order" && {
+                label: "Photo or video",
+                onClick: () => {
+                  setOpenMedia((current) => new Set(current).add(group.id));
+                  window.setTimeout(() => document.getElementById(`job-media-${group.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+                },
+              },
+              !openShopNotes.has(group.id) && !first.internal_notes && { label: "Shop note (private)", onClick: () => setOpenShopNotes((current) => new Set(current).add(group.id)) },
+            ]}
+          />
         </div>
         {initialRo && workspaceTab === "work_order" && (
-          <details className="job-media">
+          <details
+            id={`job-media-${group.id}`}
+            className="job-media"
+            open={openMedia.has(group.id)}
+            onToggle={(event) => {
+              const isOpen = (event.currentTarget as HTMLDetailsElement).open;
+              setOpenMedia((current) => {
+                if (current.has(group.id) === isOpen) return current;
+                const next = new Set(current);
+                if (isOpen) next.add(group.id); else next.delete(group.id);
+                return next;
+              });
+            }}
+          >
             <summary>Photos &amp; videos</summary>
             <JobPhotos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
             <JobVideos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
@@ -4263,6 +4303,14 @@ function RepairOrderEditor({
                 (stage === "invoiced" || stage === "paid") && mainAction?.label !== "Print invoice" && { label: "Print invoice", onClick: () => void save("invoice", true) },
                 !soloShop && (stage === "in_shop" || stage === "write_up" || stage === "waiting") && { label: "Mark ready for advisor", onClick: () => void markWorkComplete(true) },
                 !soloShop && stage === "ready" && { label: "Send back to the shop", onClick: () => void markWorkComplete(false) },
+                !isTechnician && stage !== "paid" && { label: `Change tax rate (${Number(taxRate)}%)`, onClick: () => {
+                  setShowTaxRate(true);
+                  window.setTimeout(() => {
+                    const field = document.querySelector<HTMLInputElement>('[data-field="tax-rate"] input');
+                    field?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    field?.focus();
+                  }, 50);
+                } },
                 stage === "invoiced" && { label: "Reopen RO", onClick: () => void reopenRo() },
                 onDelete && { label: "Delete RO", onClick: onDelete, danger: true },
               ]} />
@@ -4740,10 +4788,13 @@ function RepairOrderEditor({
         {!isTechnician && (
         <aside className={`panel totals-sidebar ${workspaceTab === "invoice" ? "invoice-sidebar" : ""}`}>
           <h2>{workspaceTab === "invoice" ? "Invoice & payment" : "Current totals"}</h2>
-          <label>
-            Sales-tax rate %
-            <NumberInput value={taxRate} maxDecimals={3} onChange={setTaxRate} />
-          </label>
+          {/* Tax rate comes from Settings; it's only shown here once someone changes it for this RO (⋯ → Change tax rate). */}
+          {(showTaxRate || Number(taxRate) !== Number(settings.sales_tax_rate)) && (
+            <label data-field="tax-rate">
+              Sales-tax rate % <span className="muted" style={{ fontWeight: 400 }}>(this RO · shop default {Number(settings.sales_tax_rate)}%)</span>
+              <NumberInput value={taxRate} maxDecimals={3} onChange={setTaxRate} />
+            </label>
+          )}
           {workspaceTab === "invoice" ? (
             <>
               <label className="checkbox-row invoice-paid-toggle">
@@ -4757,7 +4808,7 @@ function RepairOrderEditor({
           )}
           <div className="totals-box">
             <div><span>Subtotal</span><strong>{money(displayedTotals.subtotal)}</strong></div>
-            <div><span>Tax</span><strong>{money(displayedTotals.tax)}</strong></div>
+            <div><span>Tax ({Number(taxRate)}%)</span><strong>{money(displayedTotals.tax)}</strong></div>
             <div className="grand-total"><span>{workspaceTab === "invoice" ? "Billable total" : "Estimate total"}</span><strong>{money(displayedTotals.total)}</strong></div>
           </div>
           {workspaceTab === "invoice" && hasCustomerAuthorizationResponse && (
@@ -5011,7 +5062,7 @@ function JobPhotos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
   return (
     <section className="job-photos">
       <div className="job-photo-heading">
-        <div><strong>Customer estimate photos</strong><small>Saved with this RO and shown under this service job.</small></div>
+        <div><strong>Photos</strong><small>The customer sees these with this job on the estimate.</small></div>
         {busy ? <span className="button small secondary photo-upload-button disabled">Uploading…</span> : (
           <div className="photo-upload-buttons">
             {/* Opens the camera straight away on a phone. */}
@@ -5130,7 +5181,7 @@ function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
   return (
     <section className="job-photos">
       <div className="job-photo-heading">
-        <div><strong>Customer estimate videos</strong><small>Saved with this RO and shown under this service job.</small></div>
+        <div><strong>Videos</strong><small>The customer sees these with this job on the estimate.</small></div>
         {busy ? <span className="button small secondary photo-upload-button disabled">Uploading…</span> : (
           <div className="photo-upload-buttons">
             <label className="button small secondary photo-upload-button">
@@ -5663,7 +5714,7 @@ function CustomerDirectory({
                       {customer.archived_at && <span className="badge archived" style={{ marginLeft: 8 }}>Archived</span>}
                     </td>
                     <td>{[customer.phone, customer.email].filter(Boolean).join(" · ") || "—"}</td>
-                    <td>{[customer.address_line_1, customer.city, customer.state, customer.zip_code].filter(Boolean).join(", ") || "—"}</td>
+                    <td>{addressText(customer) || "—"}</td>
                     <td>
                       {ownedVehicles.length
                         ? `${vehicleSummary}${ownedVehicles.length > 2 ? ` +${ownedVehicles.length - 2} more` : ""}`
@@ -5758,7 +5809,7 @@ function CustomerProfile({
           <dl className="details-list">
             <div><dt>Phone</dt><dd>{customer.phone || "—"}</dd></div>
             <div><dt>Email</dt><dd>{customer.email || "—"}</dd></div>
-            <div><dt>Address</dt><dd>{[customer.address_line_1, customer.address_line_2, customer.city, customer.state, customer.zip_code].filter(Boolean).join(", ") || "—"}</dd></div>
+            <div><dt>Address</dt><dd>{addressText(customer) || "—"}</dd></div>
             <div><dt>Status</dt><dd>{customer.archived_at ? "Archived" : "Active"}</dd></div>
           </dl>
           {customer.notes && <div className="profile-notes"><h3>Notes</h3><p>{customer.notes}</p></div>}
@@ -6680,6 +6731,7 @@ function SettingsPanel({
   }
 
   const logoUrl = logoPublicUrl(form.logo_path);
+  const [section, setSection] = useState<SettingsSection>(() => (pendingStripeOAuthCode || stripeReturnPending ? "payments" : "shop"));
 
   return (
     <section>
@@ -6691,7 +6743,14 @@ function SettingsPanel({
         <button className="button primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</button>
       </div>
       {message && <div className="notice">{message}</div>}
-      <div className="panel settings-panel">
+      {/* One section at a time instead of a 12-section scroll. Save covers every section. */}
+      <div className="segmented settings-sections" role="tablist" aria-label="Settings section">
+        {SETTINGS_SECTIONS.map((entry) => (
+          <button key={entry.id} type="button" role="tab" aria-selected={section === entry.id} className={section === entry.id ? "active" : ""} onClick={() => setSection(entry.id)}>{entry.label}</button>
+        ))}
+      </div>
+      {section === "shop" && <div className="panel settings-panel">
+        <h2 style={{ marginTop: 0 }}>Shop</h2>
         <div className="form-grid two">
           <label className="span-two">
             Business name
@@ -6754,11 +6813,11 @@ function SettingsPanel({
             <textarea rows={5} value={form.invoice_footer} onChange={(event) => setForm({ ...form, invoice_footer: event.target.value })} />
           </label>
         </div>
-      </div>
+      </div>}
 
-      <PartsPricingPanel form={form} setForm={setForm} />
+      {section === "pricing" && <PartsPricingPanel form={form} setForm={setForm} />}
 
-      <div className="panel settings-panel">
+      {section === "branding" && <div className="panel settings-panel">
         <h2 style={{ marginTop: 0 }}>Branding</h2>
         <p className="muted" style={{ fontSize: 13, margin: "0 0 14px" }}>
           Brand colors are what your customers see: estimates, invoices, the approval page, emails and the top bar of this app. They are separate from the app theme, which each person picks for themselves from their name at the top right.
@@ -6855,11 +6914,11 @@ function SettingsPanel({
             </div>
           </div>
         </div>
-      </div>
+      </div>}
 
-      {isOwner && <BillingPanel settings={initialSettings} />}
+      {section === "payments" && isOwner && <BillingPanel settings={initialSettings} />}
 
-      <PaymentsPanel
+      {section === "payments" && <PaymentsPanel
         ownerId={ownerId}
         settings={initialSettings}
         pendingStripeOAuthCode={pendingStripeOAuthCode}
@@ -6867,9 +6926,9 @@ function SettingsPanel({
         stripeReturnPending={stripeReturnPending}
         onStripeReturnHandled={onStripeReturnHandled}
         onStatusChanged={onStripeStatusChanged}
-      />
+      />}
 
-      <div className="panel settings-panel">
+      {section === "staff" && <div className="panel settings-panel">
         <h2 style={{ marginTop: 0 }}>Staff accounts</h2>
         <label className="checkbox-row">
           <input
@@ -6943,9 +7002,9 @@ function SettingsPanel({
             </p>
           </fieldset>
         )}
-      </div>
+      </div>}
 
-      {form.team_features_enabled && <StaffTeamsManager ownerId={ownerId} />}
+      {section === "staff" && form.team_features_enabled && <StaffTeamsManager ownerId={ownerId} />}
 
       <p className="muted" style={{ textAlign: "center", fontSize: 12, marginTop: 4 }}>
         <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a>
@@ -6955,6 +7014,15 @@ function SettingsPanel({
     </section>
   );
 }
+
+type SettingsSection = "shop" | "pricing" | "branding" | "payments" | "staff";
+const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string }> = [
+  { id: "shop", label: "Shop" },
+  { id: "pricing", label: "Parts pricing" },
+  { id: "branding", label: "Branding" },
+  { id: "payments", label: "Payments & billing" },
+  { id: "staff", label: "Staff" },
+];
 
 function StaffTeamsManager({ ownerId }: { ownerId: string }) {
   const [teams, setTeams] = useState<Team[]>([]);
@@ -7837,8 +7905,8 @@ function DocumentView({
           <section>
             <h3>Customer</h3>
             <strong>{customer?.name}</strong>
-            <span>{customer?.address_line_1}</span>
-            <span>{[customer?.city, customer?.state, customer?.zip_code].filter(Boolean).join(", ")}</span>
+            {customer?.address_line_1 && <span>{customer.address_line_1}</span>}
+            {cityStateZip(customer) && <span>{cityStateZip(customer)}</span>}
             <span>{customer?.phone}</span>
             <span>{customer?.email}</span>
           </section>

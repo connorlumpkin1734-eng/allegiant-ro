@@ -517,9 +517,17 @@ export function MultipointInspection({
         </div>
       </section>
 
+      {/* One Save button; everything else lives in ⋯ so the bar stays one slim row on a phone. */}
       <div className="inspection-bottom-actions">
         <span className="inspection-bottom-progress">{completedCount} of {totalCount} checked</span>
-        <button className="button secondary" onClick={onBack}>Back to RO</button>
+        <details className="inspection-more">
+          <summary className="button secondary" aria-label="More inspection actions">⋯</summary>
+          <div className="inspection-more-list" role="menu">
+            <button type="button" role="menuitem" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement).open = false; onBack(); }}>Back to RO</button>
+            <button type="button" role="menuitem" disabled={exporting} onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement).open = false; void exportPdf(); }}>{exporting ? "Creating PDF…" : "Export PDF"}</button>
+            {canShare && <button type="button" role="menuitem" disabled={sending || saving} onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement).open = false; void sendToCustomer(); }}>{sending ? "Sending…" : "Share with customer"}</button>}
+          </div>
+        </details>
         <button className="button primary" onClick={() => void saveInspection()} disabled={saving}>{saving ? "Saving…" : "Save inspection"}</button>
       </div>
     </section>
