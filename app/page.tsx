@@ -5862,7 +5862,7 @@ function CustomerProfile({
                     </div>
                     <dl>
                       <div><dt>VIN</dt><dd>{vehicle.vin || "—"}</dd></div>
-                      <div><dt>Plate</dt><dd>{[vehicle.license_plate, vehicle.plate_state].filter(Boolean).join(" ") || "—"}</dd></div>
+                      <div><dt>Plate</dt><dd>{vehicle.license_plate?.trim() ? [vehicle.license_plate, vehicle.plate_state].filter(Boolean).join(" ") : "—"}</dd></div>
                       <div><dt>Latest mileage</dt><dd>{latestMileage ? latestMileage.toLocaleString() : "—"}</dd></div>
                       <div><dt>History</dt><dd>{vehicleHistory.length} work order{vehicleHistory.length === 1 ? "" : "s"}</dd></div>
                     </dl>
@@ -5905,9 +5905,8 @@ function CustomerProfile({
                     <th>Date</th>
                     <th>Vehicle</th>
                     <th>Requested work</th>
-                    <th>Status</th>
-                    <th>Invoice</th>
-                    <th>Billable total</th>
+                    <th>Stage</th>
+                    <th>Total</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -5918,17 +5917,16 @@ function CustomerProfile({
                       <td>{new Date(ro.created_at).toLocaleDateString()}</td>
                       <td>{[ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "—"}</td>
                       <td className="history-description">{[...(ro.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order).map((line) => line.concern).filter(Boolean).join(" · ") || ro.customer_concern || "—"}</td>
-                      <td><span className={`badge ${ro.status}`}>{statusLabel(ro.status)}</span></td>
-                      <td><span className={`badge ${ro.paid ? "paid" : ro.status === "completed" ? "unpaid" : "neutral"}`}>{ro.paid ? "Paid" : ro.status === "completed" ? "Unpaid" : "Not final"}</span></td>
+                      {/* Same stage names as the work order list. */}
+                      <td><span className={`stage-pill stage-${stageOfRo(ro)}`}>{RO_STAGE_LABEL[stageOfRo(ro)]}</span></td>
                       <td>{money(repairOrderTotal(ro))}</td>
                       <td className="actions-cell profile-actions-cell">
-                        <button className="button small secondary" onClick={() => onOpenRo(ro.id, "work_order")}>Work order</button>
-                        <button className="button small ghost" onClick={() => onOpenRo(ro.id, "invoice")}>Invoice</button>
+                        <button className="button small secondary" onClick={() => onOpenRo(ro.id, stageOfRo(ro) === "invoiced" || stageOfRo(ro) === "paid" ? "invoice" : "work_order")}>Open</button>
                       </td>
                     </tr>
                   ))}
                   {!history.length && (
-                    <tr><td colSpan={8} className="empty-state">No work orders match this filter.</td></tr>
+                    <tr><td colSpan={7} className="empty-state">No work orders match this filter.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -7938,7 +7936,7 @@ function DocumentView({
             <h3>Vehicle</h3>
             <strong>{[vehicle?.year, vehicle?.make, vehicle?.model, vehicle?.trim].filter(Boolean).join(" ")}</strong>
             <span>VIN: {vehicle?.vin || "—"}</span>
-            <span>Plate: {[vehicle?.license_plate, vehicle?.plate_state].filter(Boolean).join(" ") || "—"}</span>
+            <span>Plate: {vehicle?.license_plate?.trim() ? [vehicle.license_plate, vehicle.plate_state].filter(Boolean).join(" ") : "—"}</span>
             <span>Engine: {vehicle?.engine || "—"}</span>
           </section>
           <section>
