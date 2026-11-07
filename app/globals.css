@@ -2495,3 +2495,4 @@ tbody tr:hover { background: var(--panel-header); }
 select option { background-color: var(--panel); color: var(--ink); }
 .stage-track li.done.current { border-color: var(--success-text); background: var(--success-tint); color: var(--success-text); }
 .required-mark { color: var(--danger-text); }
+.photo-upload-buttons { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }

@@ -5012,10 +5012,20 @@ function JobPhotos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
     <section className="job-photos">
       <div className="job-photo-heading">
         <div><strong>Customer estimate photos</strong><small>Saved with this RO and shown under this service job.</small></div>
-        <label className={`button small secondary photo-upload-button ${busy ? "disabled" : ""}`}>
-          {busy ? "Uploading…" : "+ Take or add photos"}
-          <input type="file" accept="image/*" capture="environment" multiple disabled={busy} onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} />
-        </label>
+        {busy ? <span className="button small secondary photo-upload-button disabled">Uploading…</span> : (
+          <div className="photo-upload-buttons">
+            {/* Opens the camera straight away on a phone. */}
+            <label className="button small secondary photo-upload-button">
+              Take photo
+              <input type="file" accept="image/*" capture="environment" multiple onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} />
+            </label>
+            {/* No capture attribute: the phone offers the photo library / camera roll. */}
+            <label className="button small secondary photo-upload-button">
+              Choose photos
+              <input type="file" accept="image/*" multiple onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} />
+            </label>
+          </div>
+        )}
       </div>
       {photos.length > 0 && <div className="job-photo-grid">{photos.map((photo) => (
         <article className="job-photo-card" key={photo.id}>
@@ -5121,10 +5131,18 @@ function JobVideos({ ownerId, repairOrderId, serviceGroupId }: { ownerId: string
     <section className="job-photos">
       <div className="job-photo-heading">
         <div><strong>Customer estimate videos</strong><small>Saved with this RO and shown under this service job.</small></div>
-        <label className={`button small secondary photo-upload-button ${busy ? "disabled" : ""}`}>
-          {busy ? "Uploading…" : "+ Take or add video"}
-          <input type="file" accept="video/*" capture="environment" multiple disabled={busy} onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} />
-        </label>
+        {busy ? <span className="button small secondary photo-upload-button disabled">Uploading…</span> : (
+          <div className="photo-upload-buttons">
+            <label className="button small secondary photo-upload-button">
+              Record video
+              <input type="file" accept="video/*" capture="environment" onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} />
+            </label>
+            <label className="button small secondary photo-upload-button">
+              Choose videos
+              <input type="file" accept="video/*" multiple onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} />
+            </label>
+          </div>
+        )}
       </div>
       {videos.length > 0 && <div className="job-photo-grid">{videos.map((video) => (
         <article className={`job-photo-card ${playing?.id === video.id ? "playing" : ""}`} key={video.id}>
