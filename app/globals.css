@@ -2546,3 +2546,9 @@ select option { background-color: var(--panel); color: var(--ink); }
 .approval-done { display: flex; flex-direction: column; gap: 4px; padding: 16px; font-size: 16px; }
 .approval-done strong { font-size: 18px; }
 .approval-done.estimate-approved, .approval-done.estimate-partially_approved { border-color: #49a573; background: #e8f7ef; color: #0f633c; }
+@media (max-width: 760px) {
+  /* The stage pill in the action bar already says where the RO is; the 6-step track ate ~110px. */
+  .stage-track { display: none; }
+  .settings-sections { display: flex; flex-wrap: wrap; overflow: visible; }
+  .settings-sections button { flex: 1 1 auto; }
+}
