@@ -574,6 +574,8 @@ type RepairOrder = {
   work_complete_at?: string | null;
   /** Staff member who wrote the RO; null means the owner. */
   service_advisor_id?: string | null;
+  /** Goes up on any change to the RO or its lines; used to catch two people overwriting each other. */
+  edit_version?: number;
   id: string;
   ro_number: number;
   customer_id: string;
@@ -3495,6 +3497,44 @@ function RepairOrderEditor({
   // Flips to true the moment an estimate goes out, so the banner and main button stop saying "Send estimate".
   const [estimateJustSent, setEstimateJustSent] = useState(false);
   const authorizationStatus = estimateJustSent ? "sent" : currentAuthorization?.status;
+
+  // ---- Two people on one RO ----
+  // The editor remembers the RO's edit_version it loaded. Before saving it checks the database; if
+  // someone else (or the customer answering the estimate) changed the RO in the meantime, it stops
+  // and asks instead of overwriting. Our own instant writes (job Done, dispatch, hand-off, sending)
+  // re-sync the number so they don't count as "someone else".
+  const baseVersionRef = useRef<number>(Number(initialRo?.edit_version ?? 0));
+  const [changedElsewhere, setChangedElsewhere] = useState<null | "notice" | "blocked">(null);
+  const pendingSaveRef = useRef<null | (() => void)>(null);
+  async function fetchEditVersion(): Promise<number | null> {
+    if (!initialRo) return null;
+    const { data } = await supabase.from("repair_orders").select("edit_version").eq("id", initialRo.id).maybeSingle();
+    return data ? Number((data as { edit_version: number }).edit_version) : null;
+  }
+  async function syncEditVersion() {
+    const version = await fetchEditVersion();
+    if (version !== null) baseVersionRef.current = version;
+  }
+  useEffect(() => {
+    if (!initialRo) return;
+    let cancelled = false;
+    const check = async () => {
+      const version = await fetchEditVersion();
+      if (!cancelled && version !== null && version !== baseVersionRef.current) {
+        setChangedElsewhere((current) => current ?? "notice");
+      }
+    };
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void check(); }, 20000);
+    const onFocus = () => void check();
+    window.addEventListener("focus", onFocus);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", onFocus); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialRo?.id]);
+  function reloadFromServer() {
+    if (!initialRo) return;
+    setChangedElsewhere(null);
+    onSaved(initialRo.id, workspaceTab);
+  }
   const currentDecisions = currentAuthorization?.line_decisions ?? {};
   const hasCustomerAuthorizationResponse = hasAuthorizationResponse(currentAuthorization);
   const currentDecisionSummary = useMemo(
@@ -3707,7 +3747,7 @@ function RepairOrderEditor({
     ]);
     const failed = jobResult.error || lineResult.error;
     if (failed) setMessage(`Couldn't save the job status: ${failed.message}`);
-    else { toastList = toastList.filter((toast) => toast.kind !== "error"); emitToasts(); }
+    else { toastList = toastList.filter((toast) => toast.kind !== "error"); emitToasts(); void syncEditVersion(); }
   }
 
   async function markWorkComplete(complete: boolean) {
@@ -3734,6 +3774,7 @@ function RepairOrderEditor({
       const { error } = await supabase.rpc("mark_work_complete", { p_ro: initialRo.id, p_complete: complete });
       if (error) { setMessage(error.message); return false; }
       setWorkCompleteAt(complete ? new Date().toISOString() : null);
+      await syncEditVersion();
       return true;
     };
     if (complete) {
@@ -3905,8 +3946,19 @@ function RepairOrderEditor({
       status?: "open" | "completed"; openSend?: "invoice"; doneMessage?: string;
       /** Runs after everything is written, before the editor reloads (e.g. the hand-off to the advisor). */
       afterWrite?: () => Promise<boolean>;
+      /** Save even though someone else changed the RO since it was opened. */
+      overrideConflict?: boolean;
     } = {}
   ) {
+    if (initialRo && canWrite && !options.overrideConflict) {
+      const version = await fetchEditVersion();
+      if (version !== null && version !== baseVersionRef.current) {
+        pendingSaveRef.current = () => void save(previewMode, print, { ...options, overrideConflict: true });
+        setChangedElsewhere("blocked");
+        return;
+      }
+    }
+    setChangedElsewhere(null);
     if (!canWrite) {
       setMessage(
         initialRo
@@ -4434,6 +4486,7 @@ function RepairOrderEditor({
           onSent={(sentTo, savedToCustomer) => {
             if (savedToCustomer) setCustomerForm((current) => ({ ...current, email: sentTo }));
             if (sendKind === "estimate") setEstimateJustSent(true);
+            void syncEditVersion();
             onBackgroundRefresh?.();
           }}
         />
@@ -4489,6 +4542,22 @@ function RepairOrderEditor({
           </div>
         )}
       </div>
+      {changedElsewhere && (
+        <div className={`edit-conflict-banner${changedElsewhere === "blocked" ? " blocked" : ""}`} role="alert">
+          <div>
+            <strong>{changedElsewhere === "blocked" ? "Not saved yet — someone else changed this RO." : "Someone else just changed this RO."}</strong>
+            <span>{changedElsewhere === "blocked"
+              ? "Another person (or the customer answering the estimate) saved changes after you opened it. Reload to see them, or save yours on top. Saving yours replaces theirs."
+              : "Another person (or the customer) saved changes since you opened it. Reload to see them before you keep editing. Anything you haven't saved will be lost."}</span>
+          </div>
+          <div className="edit-conflict-actions">
+            <button type="button" className="button primary small" onClick={reloadFromServer}>Reload</button>
+            {changedElsewhere === "blocked"
+              ? <button type="button" className="button ghost small" onClick={() => { setChangedElsewhere(null); pendingSaveRef.current?.(); }}>Save mine anyway</button>
+              : <button type="button" className="button ghost small" onClick={() => setChangedElsewhere(null)}>Keep editing</button>}
+          </div>
+        </div>
+      )}
       {initialRo && !isTechnician && <StageTrack stage={stage} solo={soloShop} />}
       {initialRo && !isTechnician && stage === "ready" && (
         <div className="handoff-banner">
@@ -4787,6 +4856,7 @@ function RepairOrderEditor({
           initialTeamId={initialRo?.team_id ?? null}
           draft={dispatchDraft}
           onDraftChange={setDispatchDraft}
+          onSaved={() => void syncEditVersion()}
         />
       )}
 
@@ -5027,7 +5097,10 @@ function TechnicianAssignment({
   initialTeamId,
   draft,
   onDraftChange,
+  onSaved,
 }: {
+  /** Called after a pick is written straight to a saved RO. */
+  onSaved?: () => void;
   ownerId: string;
   /** Null while writing up a new RO: picks are held here and saved along with the RO. */
   repairOrderId: string | null;
@@ -5079,6 +5152,7 @@ function TechnicianAssignment({
       ? await supabase.from("repair_order_technicians").insert({ owner_id: ownerId, repair_order_id: repairOrderId, staff_id: staffId })
       : await supabase.from("repair_order_technicians").delete().eq("repair_order_id", repairOrderId).eq("staff_id", staffId);
     if (error) setMessage(error.message);
+    else onSaved?.();
     await loadAll();
     setBusy(false);
   }
@@ -5095,7 +5169,7 @@ function TechnicianAssignment({
     if (error) {
       setTeamId(previous);
       setMessage(error.message);
-    }
+    } else onSaved?.();
     setBusy(false);
   }
   const teamName = (id: string | null) => teams.find((team) => team.id === id)?.name;
