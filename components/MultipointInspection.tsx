@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PDFDocument, PDFTextField } from "pdf-lib";
 import { finishInspectionPdf } from "@/lib/inspectionPdf";
 import { supabase } from "@/lib/supabase";
@@ -19,11 +19,15 @@ export type InspectionData = {
   recommendations: string;
   initials: [string, string, string];
   items: Record<string, InspectionValue>;
+  /** Inspection item key → the RO line it was turned into, so it isn't added twice. */
+  addedToRo?: Record<string, string>;
 };
 type InspectionRo = {
   id: string;
   ro_number: number;
   mileage_in: number | null;
+  concern_lines?: Array<{ id: string; sort_order: number }> | null;
+  line_items?: Array<{ sort_order: number }> | null;
   customers?: { name: string; phone: string | null; email: string | null } | null;
   vehicles?: {
     year: number | null;
@@ -158,7 +162,7 @@ function blankInspection(): InspectionData {
   for (const section of sections) {
     for (const item of section.items) items[`${section.key}_${item.id}`] = blankValue();
   }
-  return { technician: "", transmission: "", page1Notes: "", recommendations: "", initials: ["", "", ""], items };
+  return { technician: "", transmission: "", page1Notes: "", recommendations: "", initials: ["", "", ""], items, addedToRo: {} };
 }
 
 export function normalizeInspection(value: unknown): InspectionData {
@@ -180,7 +184,21 @@ export function normalizeInspection(value: unknown): InspectionData {
       ? [String(candidate.initials[0] ?? ""), String(candidate.initials[1] ?? ""), String(candidate.initials[2] ?? "")]
       : blank.initials,
     items: normalizedItems,
+    addedToRo: candidate.addedToRo && typeof candidate.addedToRo === "object" ? candidate.addedToRo : {},
   };
+}
+
+/** "Brake System · LF" reads fine on its own; "LF" alone wouldn't. */
+function findingTitle(section: InspectionSection, item: InspectionItem) {
+  return /^(LF|RF|LR|RR)$/.test(item.label) ? `${section.title} · ${item.label}` : item.label;
+}
+
+function findingDetails(item: InspectionItem, value: InspectionValue) {
+  const measures = [
+    item.measurement1 && value.measurement1.trim() ? `${item.measurement1}: ${value.measurement1.trim()}` : "",
+    item.measurement2 && value.measurement2.trim() ? `${item.measurement2}: ${value.measurement2.trim()}` : "",
+  ].filter(Boolean);
+  return [value.notes.trim(), measures.join(", ")].filter(Boolean).join(" — ");
 }
 
 export const statusOptions: { value: Exclude<Status, "">; label: string }[] = [
@@ -195,12 +213,20 @@ export function MultipointInspection({
   userId,
   onBack,
   canShare = true,
+  canAddToRo = false,
+  technicianMode = false,
+  laborRate = 0,
 }: {
   ro: InspectionRo;
   userId: string;
   onBack: () => void;
   /** Sending to the customer is the advisor's job; techs don't get the button. */
   canShare?: boolean;
+  /** False once the RO is invoiced, paid or voided — nothing new goes on it then. */
+  canAddToRo?: boolean;
+  /** A tech's finding goes to the advisor for review first instead of straight to "needs customer OK". */
+  technicianMode?: boolean;
+  laborRate?: number;
 }) {
   const [data, setData] = useState<InspectionData>(blankInspection);
   const [loading, setLoading] = useState(true);
@@ -209,8 +235,15 @@ export function MultipointInspection({
   const [sending, setSending] = useState(false);
   const [message, setMessage] = useState("");
   const [savedAt, setSavedAt] = useState("");
+  const [addingKeys, setAddingKeys] = useState<string[]>([]);
   const customer = ro.customers;
   const vehicle = ro.vehicles;
+  // Lines already on the RO. A finding whose line was later deleted from the RO can be added again.
+  const [roLineIds, setRoLineIds] = useState<Set<string>>(() => new Set((ro.concern_lines ?? []).map((line) => line.id)));
+  const nextSort = useRef({
+    line: Math.max(-1, ...(ro.concern_lines ?? []).map((line) => line.sort_order)) + 1,
+    item: Math.max(-1, ...(ro.line_items ?? []).map((item) => item.sort_order)) + 1,
+  });
 
   useEffect(() => {
     let active = true;
@@ -285,6 +318,88 @@ export function MultipointInspection({
     }
     setSaving(false);
     return !error;
+  }
+
+  const isOnRo = (key: string) => {
+    const lineId = data.addedToRo?.[key];
+    return Boolean(lineId && roLineIds.has(lineId));
+  };
+
+  // Every item marked Service or Monitor, in form order.
+  const findings = useMemo(() => sections.flatMap((section) => section.items.flatMap((item) => {
+    const key = `${section.key}_${item.id}`;
+    const value = data.items[key];
+    return value && (value.status === "service" || value.status === "monitor") ? [{ key, section, item, value }] : [];
+  })), [data.items]);
+
+  /**
+   * Turns findings into recommendation lines on the RO (same as "+ Recommend repair" there):
+   * one line per finding with its job already created, waiting on the advisor (tech) or the customer.
+   */
+  async function addFindingsToRo(keys: string[]) {
+    const picked = findings.filter((finding) => keys.includes(finding.key) && !isOnRo(finding.key));
+    if (!picked.length) return;
+    setAddingKeys(picked.map((finding) => finding.key));
+    setMessage("");
+    try {
+      const lines = picked.map((finding) => ({
+        key: finding.key,
+        id: crypto.randomUUID(),
+        title: findingTitle(finding.section, finding.item),
+        details: findingDetails(finding.item, finding.value),
+      }));
+      const { error: lineError } = await supabase.from("concern_lines").insert(lines.map((line) => ({
+        id: line.id,
+        owner_id: userId,
+        repair_order_id: ro.id,
+        sort_order: nextSort.current.line++,
+        kind: "inspection",
+        concern: line.title,
+        cause: line.details || null,
+        correction: null,
+      })));
+      if (lineError) throw lineError;
+      const { error: jobError } = await supabase.from("line_items").insert(lines.map((line) => ({
+        id: crypto.randomUUID(),
+        owner_id: userId,
+        repair_order_id: ro.id,
+        item_type: "labor",
+        description: line.title,
+        quantity: 1,
+        unit_cost: null,
+        markup_percent: null,
+        unit_price: laborRate,
+        price_manual: false,
+        taxable: false,
+        sort_order: nextSort.current.item++,
+        service_group_id: crypto.randomUUID(),
+        service_group_title: line.title,
+        concern_line_id: line.id,
+        job_status: technicianMode ? "pending_review" : "needs_approval",
+        job_progress: "not_started",
+      })));
+      if (jobError) {
+        // Don't leave findings on the RO without their jobs.
+        await supabase.from("concern_lines").delete().in("id", lines.map((line) => line.id));
+        throw jobError;
+      }
+      const addedToRo = { ...(data.addedToRo ?? {}) };
+      for (const line of lines) addedToRo[line.key] = line.id;
+      const nextData = { ...data, addedToRo };
+      setData(nextData);
+      setRoLineIds((current) => new Set([...current, ...lines.map((line) => line.id)]));
+      const now = new Date().toISOString();
+      const { error: saveError } = await supabase.from("multipoint_inspections").upsert(
+        { owner_id: userId, repair_order_id: ro.id, data: nextData, updated_at: now },
+        { onConflict: "repair_order_id" }
+      );
+      if (!saveError) setSavedAt(now);
+      const count = lines.length;
+      setMessage(`${count === 1 ? `"${lines[0].title}" was` : `${count} findings were`} added to the RO as ${count === 1 ? "a recommendation" : "recommendations"}${technicianMode ? " for the advisor to review" : ""}. Inspection saved.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? `Couldn't add to the RO: ${error.message}` : "Couldn't add to the RO.");
+    }
+    setAddingKeys([]);
   }
 
   async function sendToCustomer() {
@@ -483,6 +598,13 @@ export function MultipointInspection({
                             </button>
                           ))}
                         </div>
+                        {canAddToRo && (value.status === "service" || value.status === "monitor") && (
+                          isOnRo(key)
+                            ? <span className="inspection-on-ro">✓ On the RO</span>
+                            : <button type="button" className="inspection-add-ro" disabled={addingKeys.length > 0} onClick={() => void addFindingsToRo([key])}>
+                                {addingKeys.includes(key) ? "Adding…" : "+ Add to RO"}
+                              </button>
+                        )}
                       </td>
                       <td><input placeholder="Notes" value={value.notes} onChange={(event) => changeItem(key, { notes: event.target.value })} /></td>
                     </tr>
@@ -499,6 +621,42 @@ export function MultipointInspection({
           )}
         </section>
       ))}
+
+      {findings.length > 0 && (
+        <section className="panel inspection-findings">
+          <div className="inspection-section-head">
+            <h2>Found during inspection</h2>
+            {canAddToRo && findings.some((finding) => finding.value.status === "service" && !isOnRo(finding.key)) && (
+              <button type="button" className="button small primary" disabled={addingKeys.length > 0}
+                onClick={() => void addFindingsToRo(findings.filter((finding) => finding.value.status === "service").map((finding) => finding.key))}>
+                {addingKeys.length > 1 ? "Adding…" : `Add all "Service" items to RO`}
+              </button>
+            )}
+          </div>
+          <ul className="inspection-findings-list">
+            {findings.map((finding) => {
+              const details = findingDetails(finding.item, finding.value);
+              return (
+                <li key={finding.key} className={`is-${finding.value.status}`}>
+                  <span className={`finding-tag ${finding.value.status}`}>{finding.value.status === "service" ? "Service" : "Monitor"}</span>
+                  <div className="finding-text">
+                    <strong>{findingTitle(finding.section, finding.item)}</strong>
+                    {details && <span>{details}</span>}
+                  </div>
+                  {canAddToRo && (isOnRo(finding.key)
+                    ? <span className="inspection-on-ro">✓ On the RO</span>
+                    : <button type="button" className="inspection-add-ro" disabled={addingKeys.length > 0} onClick={() => void addFindingsToRo([finding.key])}>
+                        {addingKeys.includes(finding.key) ? "Adding…" : "+ Add to RO"}
+                      </button>)}
+                </li>
+              );
+            })}
+          </ul>
+          {canAddToRo
+            ? <p className="muted inspection-findings-hint">Each one becomes a recommendation line on the RO with its job started{technicianMode ? ", sent to the advisor to review and price" : ", ready to price and send on the estimate"}.</p>
+            : <p className="muted inspection-findings-hint">This RO is closed, so nothing new can be added to it.</p>}
+        </section>
+      )}
 
       <section className="panel inspection-final">
         <h2>Final Findings & Recommendations</h2>

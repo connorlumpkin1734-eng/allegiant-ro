@@ -2613,3 +2613,30 @@ select option { background-color: var(--panel); color: var(--ink); }
 .edit-conflict-banner span { color: var(--muted); font-size: 14px; }
 .edit-conflict-actions { display: flex; gap: 8px; flex-shrink: 0; }
 @media (max-width: 700px) { .edit-conflict-banner { flex-direction: column; align-items: stretch; } .edit-conflict-actions .button { flex: 1; min-height: 44px; } }
+
+/* Inspection → RO: turn Service/Monitor findings into recommendation lines */
+.inspection-add-ro {
+  margin-top: 6px; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  color: var(--accent); background: transparent; border: 1px solid var(--accent); cursor: pointer;
+}
+.inspection-add-ro:disabled { opacity: 0.55; cursor: default; }
+.inspection-on-ro { display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.inspection-findings .inspection-section-head { gap: 10px; flex-wrap: wrap; }
+.inspection-findings-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.inspection-findings-list li {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.inspection-findings-list li:last-child { border-bottom: 0; }
+.inspection-findings-list .finding-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.inspection-findings-list .finding-text span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.inspection-findings-list .inspection-add-ro,
+.inspection-findings-list .inspection-on-ro { margin-top: 0; flex: 0 0 auto; }
+.finding-tag { flex: 0 0 auto; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; }
+.finding-tag.service { color: var(--danger-text); background: var(--danger-tint); }
+.finding-tag.monitor { color: var(--warn-text); background: var(--warn-tint); }
+.inspection-findings-hint { margin: 10px 0 0; font-size: 13px; }
+@media (max-width: 700px) {
+  .inspection-findings-list li { flex-wrap: wrap; }
+  .inspection-findings-list .finding-text { flex-basis: calc(100% - 90px); }
+  .inspection-findings-list .inspection-add-ro, .inspection-findings-list .inspection-on-ro { margin-left: auto; }
+}

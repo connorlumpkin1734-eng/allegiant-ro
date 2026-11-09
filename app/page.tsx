@@ -1936,6 +1936,8 @@ function RepairOrderApp({ user }: { user: User }) {
   };
 
   const returnFromInspection = () => {
+    // Findings may have been added to the RO from the inspection; the list should show them.
+    if (inspectionReturnView !== "editor") void loadData(false);
     if (!selectedRo) {
       setView("dashboard");
     } else if (inspectionReturnView === "editor") {
@@ -2193,7 +2195,15 @@ function RepairOrderApp({ user }: { user: User }) {
             onStripeStatusChanged={() => void loadData(false)}
           />
         ) : view === "inspection" && selectedRo ? (
-          <MultipointInspection ro={selectedRo} userId={ownerId} onBack={returnFromInspection} canShare={!isTechnicianOnly} />
+          <MultipointInspection
+            ro={selectedRo}
+            userId={ownerId}
+            onBack={returnFromInspection}
+            canShare={!isTechnicianOnly}
+            canAddToRo={selectedRo.status !== "completed" && selectedRo.status !== "voided" && !selectedRo.paid}
+            technicianMode={isTechnicianOnly}
+            laborRate={Number(settings.default_labor_rate) || 0}
+          />
         ) : selectedRo ? (
           <DocumentView
             ro={selectedRo}
