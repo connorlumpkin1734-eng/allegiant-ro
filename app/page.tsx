@@ -5663,6 +5663,23 @@ function SendPanel({
 
 // ---- ⋯ menu ----------------------------------------------------------------------------------
 type MoreMenuItem = { label: string; onClick: () => void; danger?: boolean; disabled?: boolean };
+/** × that needs a second tap ("Remove?") within a few seconds, so a thumb brushing it while scrolling doesn't delete anything. */
+function ConfirmRemoveButton({ title, onConfirm }: { title: string; onConfirm: () => void }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const timer = window.setTimeout(() => setArmed(false), 3500);
+    return () => window.clearTimeout(timer);
+  }, [armed]);
+  return armed ? (
+    <button type="button" className="icon-button confirm-remove" title={title} onClick={() => { setArmed(false); onConfirm(); }} onBlur={() => setArmed(false)} autoFocus>
+      Remove?
+    </button>
+  ) : (
+    <button type="button" className="icon-button" title={title} aria-label={title} onClick={() => setArmed(true)}>×</button>
+  );
+}
+
 function MoreMenu({ items, label, ariaLabel = "More actions", small = false }: {
   items: Array<MoreMenuItem | false | null | undefined>;
   /** Text button (e.g. "+ Add") instead of ⋯. */
@@ -5671,14 +5688,40 @@ function MoreMenu({ items, label, ariaLabel = "More actions", small = false }: {
   small?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // The list is placed in screen coordinates so it's never clipped by a card or pushed off the
+  // edge of a phone screen; it opens upward when there isn't room below.
+  const [position, setPosition] = useState<CSSProperties>({});
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  function toggle() {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const width = Math.min(260, window.innerWidth - 16);
+      const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
+      const roomBelow = window.innerHeight - rect.bottom;
+      setPosition(roomBelow < 280 && rect.top > roomBelow
+        ? { position: "fixed", left, width, bottom: window.innerHeight - rect.top + 6, top: "auto", right: "auto" }
+        : { position: "fixed", left, width, top: rect.bottom + 6, right: "auto" });
+    }
+    setOpen((value) => !value);
+  }
   useEffect(() => {
     if (!open) return;
-    const close = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    const close = (event: MouseEvent | TouchEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    const onScroll = () => setOpen(false);
     document.addEventListener("mousedown", close);
+    document.addEventListener("touchstart", close, { passive: true });
     window.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey); };
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("touchstart", close);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, { capture: true });
+      window.removeEventListener("resize", onScroll);
+    };
   }, [open]);
   const visible = items.filter((item): item is MoreMenuItem => Boolean(item));
   if (!visible.length) return null;
@@ -5690,10 +5733,11 @@ function MoreMenu({ items, label, ariaLabel = "More actions", small = false }: {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={label ? undefined : ariaLabel}
-        onClick={() => setOpen((value) => !value)}
+        ref={buttonRef}
+        onClick={toggle}
       >{label ?? "⋯"}</button>
       {open && (
-        <div className="more-menu-list" role="menu">
+        <div className="more-menu-list" role="menu" style={position}>
           {visible.map((item) => (
             <button
               key={item.label}
@@ -5785,7 +5829,7 @@ function ChargeLine({
           <strong>{money(item.item_type === "discount" ? Math.abs(item.quantity * item.unit_price) : item.quantity * item.unit_price)}</strong>
         </div>
       )}
-      {canRemove && <button className="icon-button" title="Remove line" onClick={removeItem}>×</button>}
+      {canRemove && <ConfirmRemoveButton title="Remove line" onConfirm={removeItem} />}
       {isPart && item.price_manual && (
         <div className="price-manual-row">
           <span className="price-manual-tag" title="This part was priced by hand, so shop pricing won't change it.">Manual price</span>
@@ -6757,7 +6801,7 @@ function PartsPricingPanel({
                   <td>{money(roundCents(Number(row.cost) * (1 + Number(row.markup) / 100)))}</td>
                   <td>
                     {rows.length > 1 && (
-                      <button type="button" className="icon-button" title="Remove row" onClick={() => setRows(rows.filter((_, i) => i !== index))}>×</button>
+                      <ConfirmRemoveButton title="Remove row" onConfirm={() => setRows(rows.filter((_, i) => i !== index))} />
                     )}
                   </td>
                 </tr>
