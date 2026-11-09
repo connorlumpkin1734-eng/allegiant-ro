@@ -27,7 +27,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       body: JSON.stringify({
         from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[Allegiant RO] ${functionName} threw an error`,
+        subject: `[ROrunner] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
       }),
     });
@@ -101,7 +101,7 @@ async function handler(request: Request): Promise<Response> {
     "line_items[0][price_data][currency]": "usd",
     "line_items[0][price_data][unit_amount]": String(settings.plan_price_cents),
     "line_items[0][price_data][recurring][interval]": "month",
-    "line_items[0][price_data][product_data][name]": `Allegiant RO subscription${settings.business_name ? ` — ${settings.business_name}` : ""}`,
+    "line_items[0][price_data][product_data][name]": `ROrunner subscription${settings.business_name ? ` — ${settings.business_name}` : ""}`,
     success_url: new URL("?billing=success", returnUrl).toString(),
     cancel_url: new URL("?billing=canceled", returnUrl).toString(),
     "metadata[owner_id]": user.id,

@@ -45,7 +45,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       body: JSON.stringify({
         from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[Allegiant RO] ${functionName} threw an error`,
+        subject: `[ROrunner] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
       }),
     });
@@ -270,7 +270,7 @@ async function handler(request: Request): Promise<Response> {
             method: "POST",
             headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
             body: JSON.stringify({
-              from: fromAddress(`${process.env.EMAIL_PRODUCT_NAME || "RO Runner"} Billing`, "billing"),
+              from: fromAddress(`${process.env.EMAIL_PRODUCT_NAME || "ROrunner"} Billing`, "billing"),
               to: [existing.business_email],
               subject: `Action needed: your payment method failed`,
               text: `Hi,\n\nWe weren't able to charge the card on file for ${businessName}'s subscription. You have 7 days to update your payment method before the account goes read-only (existing work orders stay viewable, but creating or editing anything will pause).\n\nUpdate your payment method: ${billingUrl}\n\nIf you've already fixed this, you can ignore this email — we'll pick up the update automatically.`,

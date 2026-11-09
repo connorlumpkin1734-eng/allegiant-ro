@@ -15,5 +15,5 @@ export function fromAddress(name: string, localPart: string): string {
 
 /** Internal alerts to the platform owner (errors, backups). */
 export function alertsFrom(): string {
-  return fromAddress(`${process.env.EMAIL_PRODUCT_NAME || "RO Runner"} Alerts`, "alerts");
+  return fromAddress(`${process.env.EMAIL_PRODUCT_NAME || "ROrunner"} Alerts`, "alerts");
 }

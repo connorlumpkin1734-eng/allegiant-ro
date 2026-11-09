@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Repair Orders",
-  description: "Repair orders, estimates, and invoices",
+  title: "ROrunner",
+  description: "Repair orders, estimates and invoices for independent auto repair shops.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

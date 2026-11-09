@@ -965,7 +965,7 @@ export default function HomePage() {
   }, [session]);
 
   if (authLoading || (session && !platformAdminChecked)) {
-    return <div className="center-screen">Loading Allegiant RO…</div>;
+    return <div className="center-screen">Loading ROrunner…</div>;
   }
 
   if (!session) {
@@ -1031,6 +1031,7 @@ function PlatformAdminOnlyApp() {
   return (
     <div className="app-shell">
       <header className="topbar no-print">
+        <img className="platform-logo" src="/rorunner-logo-white.png" alt="ROrunner" />
         <span className="topbar-logo-text">Platform Admin</span>
         <nav />
         <button className="button secondary" onClick={() => supabase.auth.signOut()}>
@@ -1145,12 +1146,10 @@ function AuthScreen() {
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <img
-  className="login-logo"
-  src="/allegiant-auto-care-logo.png"
-  alt="Allegiant Auto Care"
-/>
-        <p className="muted">Work orders, estimates, and invoices.</p>
+        {/* The product's own logo; each shop's logo shows inside the app and on their documents. */}
+        <img className="login-logo logo-on-dark" src="/rorunner-logo-white.png" alt="ROrunner" />
+        <img className="login-logo logo-on-light" src="/rorunner-logo.png" alt="ROrunner" />
+        <p className="muted">Repair orders, estimates and invoices for independent shops.</p>
         <form onSubmit={submit} className="stack">
           <label>
             {mode === "signup" ? "Email" : "Username or email"}
@@ -1374,7 +1373,7 @@ function RepairOrderApp({ user }: { user: User }) {
   // Browser tab shows the shop's own name.
   useEffect(() => {
     const name = settings.business_name?.trim();
-    document.title = name ? `${name} · Repair Orders` : "Repair Orders";
+    document.title = name ? `${name} · ROrunner` : "ROrunner";
   }, [settings.business_name]);
   const canWrite = shopCanWrite(settings);
 
@@ -6506,7 +6505,7 @@ function PlatformAdminPanel() {
       <div className="panel">
         <h2 style={{ marginTop: 0 }}>Platform Admin</h2>
         <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
-          Every shop on Allegiant RO, and what they&apos;re billed. Changing a shop&apos;s price only affects that shop —
+          Every shop on ROrunner, and what they&apos;re billed. Changing a shop&apos;s price only affects that shop —
           existing subscribers never change price unless you edit them here.
         </p>
         {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}

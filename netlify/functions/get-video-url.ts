@@ -24,7 +24,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       body: JSON.stringify({
         from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[Allegiant RO] ${functionName} threw an error`,
+        subject: `[ROrunner] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
       }),
     });
