@@ -1,6 +1,5 @@
 // Lightweight "is this username available" check used by the Add Staff form as someone types, so
-// they find out before submitting the whole form. Unlike resolve-username.ts (which returns the
-// real email behind a username, for login), this only ever returns a yes/no — it never reveals
+// they find out before submitting the whole form. This only ever returns a yes/no — it never reveals
 // anything about who a taken username belongs to.
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -26,5 +25,12 @@ export default async (request: Request) => {
     { headers: serviceHeaders }
   );
   const rows = response.ok ? await response.json() as Array<{ id: string }> : [];
-  return json({ available: rows.length === 0 });
+  if (rows.length) return json({ available: false });
+  // Owners can have a username too, and a name can belong to only one account across both.
+  const ownerResponse = await fetch(
+    `${supabaseUrl}/rest/v1/settings?select=id&owner_username=eq.${encodeURIComponent(username.toLowerCase())}&limit=1`,
+    { headers: serviceHeaders }
+  );
+  const ownerRows = ownerResponse.ok ? await ownerResponse.json() as Array<{ id: string }> : [];
+  return json({ available: ownerRows.length === 0 });
 };

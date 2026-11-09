@@ -59,6 +59,8 @@ type Settings = {
   advisors_can_change_labor_rate: boolean;
   /** Mileage in is required to open an RO, mileage out to close it. */
   require_mileage?: boolean;
+  /** Lets the owner sign in as e.g. "allegiantauto" instead of typing their email. Stored lowercase. */
+  owner_username?: string | null;
   /** Parts pricing: one flat markup, or a cost-based matrix. */
   parts_pricing_mode: PartsPricingMode;
   parts_matrix: MatrixPoint[];
@@ -1078,44 +1080,39 @@ function AuthScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Staff sign in with a username, not their real email. If what was typed isn't an email address,
-  // look up the real email behind that username so Supabase Auth (which only knows emails) can be used.
-  async function resolveEmail(value: string): Promise<string | null> {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (trimmed.includes("@")) return trimmed;
-    try {
-      const response = await fetch("/.netlify/functions/resolve-username", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: trimmed }),
-      });
-      if (!response.ok) return null;
-      const body = await response.json() as { email?: string };
-      return body.email || null;
-    } catch {
-      return null;
-    }
+  // Owners and staff can sign in with a username instead of their email. A username never gets
+  // turned into an email in the browser: the server checks the password and hands back a session.
+  async function usernameRequest(payload: Record<string, string>) {
+    const response = await fetch("/.netlify/functions/username-sign-in", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return { ok: response.ok, body: await response.json().catch(() => ({})) as { access_token?: string; refresh_token?: string; error?: string; message?: string } };
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setMessage("");
+    const typed = identifier.trim();
+    const isEmail = typed.includes("@");
 
     if (mode === "forgot") {
-      const resolvedEmail = await resolveEmail(identifier);
       // Same message either way — don't reveal whether a username/email has an account.
       const genericMessage = "If that account exists, a password reset link is on its way. Check your inbox.";
-      if (!resolvedEmail) {
+      const redirectTo = `${window.location.origin}/reset-password`;
+      try {
+        if (isEmail) {
+          const { error } = await supabase.auth.resetPasswordForEmail(typed, { redirectTo });
+          setMessage(error && !/not found|invalid/i.test(error.message) ? error.message : genericMessage);
+        } else {
+          await usernameRequest({ action: "reset", username: typed, redirectTo });
+          setMessage(genericMessage);
+        }
+      } catch {
         setMessage(genericMessage);
-        setBusy(false);
-        return;
       }
-      const { error } = await supabase.auth.resetPasswordForEmail(resolvedEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      setMessage(error ? error.message : genericMessage);
       setBusy(false);
       return;
     }
@@ -1134,14 +1131,23 @@ function AuthScreen() {
     }
 
     // login
-    const resolvedEmail = await resolveEmail(identifier);
-    if (!resolvedEmail) {
-      setMessage("Invalid login credentials.");
+    if (isEmail) {
+      const result = await supabase.auth.signInWithPassword({ email: typed, password });
+      if (result.error) setMessage(result.error.message);
       setBusy(false);
       return;
     }
-    const result = await supabase.auth.signInWithPassword({ email: resolvedEmail, password });
-    if (result.error) setMessage(result.error.message);
+    try {
+      const { ok, body } = await usernameRequest({ action: "sign-in", username: typed, password });
+      if (!ok || !body.access_token || !body.refresh_token) {
+        setMessage(body.error || "Invalid login credentials.");
+      } else {
+        const { error } = await supabase.auth.setSession({ access_token: body.access_token, refresh_token: body.refresh_token });
+        if (error) setMessage(error.message);
+      }
+    } catch {
+      setMessage("Couldn't reach the server. Check your connection and try again.");
+    }
     setBusy(false);
   }
 
@@ -6976,6 +6982,30 @@ function SettingsPanel({
   const [form, setForm] = useState<Settings>(initialSettings);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useToastMessage();
+  const savedUsername = (initialSettings.owner_username ?? "").toLowerCase();
+  const typedUsername = (form.owner_username ?? "").trim().toLowerCase();
+  const [usernameState, setUsernameState] = useState<"idle" | "checking" | "available" | "taken" | "invalid">("idle");
+
+  // Check the owner's sign-in username as they type (only when it's new).
+  useEffect(() => {
+    if (!typedUsername || typedUsername === savedUsername) { setUsernameState("idle"); return; }
+    if (!/^[a-z0-9_]{3,20}$/.test(typedUsername)) { setUsernameState("invalid"); return; }
+    setUsernameState("checking");
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch("/.netlify/functions/check-username", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: typedUsername }),
+        });
+        const body = await response.json() as { available?: boolean };
+        setUsernameState(body.available ? "available" : "taken");
+      } catch {
+        setUsernameState("idle");
+      }
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [typedUsername, savedUsername]);
   const [logoUploading, setLogoUploading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
@@ -6995,10 +7025,31 @@ function SettingsPanel({
       setBusy(false);
       return;
     }
-    const payload = { ...form, parts_matrix: matrix.length ? matrix : MATRIX_PRESETS[1].points, owner_id: ownerId };
+    if (isOwner && typedUsername && typedUsername !== savedUsername) {
+      if (!/^[a-z0-9_]{3,20}$/.test(typedUsername)) {
+        setSection("shop");
+        setMessage("Sign-in username: 3–20 letters, numbers or underscores, no spaces.");
+        setBusy(false);
+        return;
+      }
+      if (usernameState === "taken") {
+        setSection("shop");
+        setMessage(`The username "${typedUsername}" is already taken. Try another.`);
+        setBusy(false);
+        return;
+      }
+    }
+    const payload = {
+      ...form,
+      owner_username: isOwner ? typedUsername || null : initialSettings.owner_username ?? null,
+      parts_matrix: matrix.length ? matrix : MATRIX_PRESETS[1].points,
+      owner_id: ownerId,
+    };
     const { error } = await supabase.from("settings").upsert(payload, { onConflict: "owner_id" });
     if (error) {
-      setMessage(error.message);
+      setMessage(/owner_username|already taken/i.test(error.message)
+        ? `The username "${typedUsername}" is already taken. Try another.`
+        : error.message);
       setBusy(false);
       return;
     }
@@ -7087,6 +7138,28 @@ function SettingsPanel({
               Lets customers pay invoices via Zelle as well as card. Payments are confirmed manually — you check your own bank app before marking paid.
             </span>
           </label>
+          {isOwner && (
+            <label className="span-two">
+              Your sign-in username <span className="muted" style={{ fontWeight: 400 }}>(optional)</span>
+              <input
+                value={form.owner_username ?? ""}
+                placeholder="e.g. allegiantauto"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                maxLength={20}
+                onChange={(event) => setForm({ ...form, owner_username: event.target.value.replace(/\s/g, "").toLowerCase() })}
+              />
+              <span className={`muted username-hint ${usernameState}`} style={{ fontSize: 12, fontWeight: 400 }}>
+                {usernameState === "checking" ? "Checking…"
+                  : usernameState === "available" ? "✓ Available — save settings to use it."
+                  : usernameState === "taken" ? "Taken — try another."
+                  : usernameState === "invalid" ? "3–20 letters, numbers or underscores."
+                  : savedUsername ? `Sign in with "${savedUsername}" or your email.`
+                  : "Sign in with this instead of your email. Letters, numbers and underscores."}
+              </span>
+            </label>
+          )}
           <label>
             Default labor rate
             <NumberInput format="money" value={form.default_labor_rate} onChange={(value) => setForm((current) => ({ ...current, default_labor_rate: value }))} />

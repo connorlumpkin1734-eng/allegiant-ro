@@ -2640,3 +2640,5 @@ select option { background-color: var(--panel); color: var(--ink); }
   .inspection-findings-list .finding-text { flex-basis: calc(100% - 90px); }
   .inspection-findings-list .inspection-add-ro, .inspection-findings-list .inspection-on-ro { margin-left: auto; }
 }
+.username-hint.available { color: #3ccf7a; }
+.username-hint.taken, .username-hint.invalid { color: var(--danger-text); }
