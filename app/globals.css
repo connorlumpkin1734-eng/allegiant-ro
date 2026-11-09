@@ -2586,3 +2586,22 @@ select option { background-color: var(--panel); color: var(--ink); }
 @media (max-width: 400px) { .topbar nav button { font-size: 13px; padding: 0 4px; } }
 /* Second tap to remove a line: the × turns into a red "Remove?" for a few seconds. */
 .icon-button.confirm-remove { width: auto; min-width: 0; padding: 0 10px; border-color: var(--danger-text); background: var(--danger-tint); color: var(--danger-text); font-size: 13px; font-weight: 800; white-space: nowrap; }
+
+/* ---- Phones: tighten the line → job → charge nesting so the work gets the width ---- */
+@media (max-width: 700px) {
+  .line-items-panel { padding: 12px 10px; }
+  .line-items-panel .button-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .line-items-panel .button-row .button { width: 100%; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
+  .concern-lines { gap: 14px; margin-top: 12px; }
+  .concern-line-header { padding: 10px 10px; gap: 8px; }
+  .concern-line-3c, .concern-line-3c.cols-2 { grid-template-columns: 1fr; gap: 8px; padding: 0 10px 10px; }
+  .concern-line-jobs { padding: 8px 6px; gap: 10px; }
+  .service-jobs { gap: 10px; margin-top: 10px; }
+  .service-job-header { padding: 10px 10px; gap: 8px; }
+  .service-job-narratives, .service-job-narratives.two-up { grid-template-columns: 1fr; gap: 8px; padding: 10px; }
+  .service-job-narratives textarea, .service-job-narratives.two-up textarea { min-height: 56px; }
+  .charge-line { padding: 10px; gap: 8px; }
+  .charge-line.associated-part { margin-left: 0; padding-left: 10px; }
+  .job-add-actions { padding: 8px 10px; }
+  .job-media { margin: 0 10px 10px; }
+}
