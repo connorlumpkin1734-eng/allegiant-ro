@@ -1025,7 +1025,7 @@ function UpdateBanner() {
   );
 }
 
-// The entire screen for a god-mode / platform-operator login: no shop chrome, no work orders, no
+// The entire screen for a god-mode / platform-operator login: no shop chrome, no repair orders, no
 // customers — just the cross-tenant admin panel and a way to sign out.
 function PlatformAdminOnlyApp() {
   return (
@@ -1324,7 +1324,7 @@ function ChangePasswordModal({
 // Mirrors the DB's owner_can_write() RLS check (see migration
 // 20261001_past_due_grace_period.sql), purely for UX (friendly messaging/disabled buttons) — the
 // real enforcement lives in Postgres and doesn't depend on this being correct. Shared by
-// RepairOrderApp and the work-order editor so the 7-day past_due grace period only has one place
+// RepairOrderApp and the repair-order editor so the 7-day past_due grace period only has one place
 // to get right on the client.
 function shopCanWrite(settings: Settings): boolean {
   if (settings.subscription_status === "active" || settings.subscription_status === "exempt") return true;
@@ -1809,7 +1809,7 @@ function RepairOrderApp({ user }: { user: User }) {
 
   async function toggleArchiveRo(ro: RepairOrder) {
     if (!canWrite) {
-      setError("This shop's access is read-only right now — go to Settings to resolve billing before archiving work orders.");
+      setError("This shop's access is read-only right now — go to Settings to resolve billing before archiving repair orders.");
       return;
     }
     const restoring = Boolean(ro.archived_at);
@@ -1833,7 +1833,7 @@ function RepairOrderApp({ user }: { user: User }) {
 
   async function deleteRo(ro: RepairOrder) {
     if (!canWrite) {
-      setError("This shop's access is read-only right now — go to Settings to resolve billing before deleting work orders.");
+      setError("This shop's access is read-only right now — go to Settings to resolve billing before deleting repair orders.");
       return;
     }
     const confirmed = window.confirm(
@@ -1869,7 +1869,7 @@ function RepairOrderApp({ user }: { user: User }) {
       return;
     }
     const restoring = Boolean(customer.archived_at);
-    if (!restoring && !window.confirm(`Archive ${customer.name}? They will be hidden from the normal customer list and new-work-order selector, but their history will remain.`)) {
+    if (!restoring && !window.confirm(`Archive ${customer.name}? They will be hidden from the normal customer list and new-repair-order selector, but their history will remain.`)) {
       return;
     }
 
@@ -1894,7 +1894,7 @@ function RepairOrderApp({ user }: { user: User }) {
     }
     const roCount = repairOrders.filter((ro) => ro.customer_id === customer.id).length;
     if (roCount > 0) {
-      setError(`${customer.name} has ${roCount} work order${roCount === 1 ? "" : "s"}. Archive the customer instead, or delete those work orders first.`);
+      setError(`${customer.name} has ${roCount} repair order${roCount === 1 ? "" : "s"}. Archive the customer instead, or delete those repair orders first.`);
       return;
     }
 
@@ -1964,7 +1964,7 @@ function RepairOrderApp({ user }: { user: User }) {
         </button>
         <nav>
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
-            {isTechnicianOnly ? "My jobs" : "Work orders"}
+            {isTechnicianOnly ? "My jobs" : "Repair orders"}
           </button>
           {currentStaff && (
             <button className={view === "my_stats" ? "active" : ""} onClick={() => setView("my_stats")}>
@@ -2035,7 +2035,7 @@ function RepairOrderApp({ user }: { user: User }) {
         {error && <div className="error-banner no-print">{error}</div>}
         {isOwner && staffResolved && !loading && !settings.business_name?.trim() && setupSkipped && (
           <div className="notice notice-warn no-print" style={{ marginBottom: 16 }}>
-            Add your shop&apos;s name, address and phone in <strong>Settings</strong> — they print on every estimate, work order and invoice.
+            Add your shop&apos;s name, address and phone in <strong>Settings</strong> — they print on every estimate, repair order and invoice.
           </div>
         )}
         {canWrite && settings.subscription_status === "past_due" && !loading && (
@@ -2056,10 +2056,10 @@ function RepairOrderApp({ user }: { user: User }) {
           <div className="billing-banner no-print">
             <span>
               {settings.subscription_status === "trialing"
-                ? `You've exceeded your free trial limit of ${settings.trial_ro_limit} repair orders. Existing work orders are still viewable, but creating or editing anything is paused until this shop subscribes.`
+                ? `You've exceeded your free trial limit of ${settings.trial_ro_limit} repair orders. Existing repair orders are still viewable, but creating or editing anything is paused until this shop subscribes.`
                 : settings.subscription_status === "past_due"
-                  ? "This shop's payment method still hasn't been fixed, so the account is now read-only. Existing work orders are still viewable, but creating or editing anything is paused until billing is resolved."
-                  : "This shop's subscription needs attention. Existing work orders are still viewable, but creating or editing anything is paused until it's resolved."}
+                  ? "This shop's payment method still hasn't been fixed, so the account is now read-only. Existing repair orders are still viewable, but creating or editing anything is paused until billing is resolved."
+                  : "This shop's subscription needs attention. Existing repair orders are still viewable, but creating or editing anything is paused until it's resolved."}
             </span>
             {isOwner ? (
               <button className="button small primary" onClick={() => setView("settings")}>
@@ -2080,7 +2080,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onDone={(changes) => {
               setSettings((current) => ({ ...current, ...changes }));
               setView("dashboard");
-              notify("You're all set. Start your first work order whenever you're ready.", "success");
+              notify("You're all set. Start your first repair order whenever you're ready.", "success");
             }}
             onSkip={() => {
               try { sessionStorage.setItem("shop-setup-skipped", "1"); } catch { /* storage blocked */ }
@@ -2760,7 +2760,7 @@ function SalesReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
       </div>
 
       {!rows.length ? (
-        <div className="empty-state">No completed or paid work orders yet — reports will fill in as jobs are finished and paid.</div>
+        <div className="empty-state">No completed or paid repair orders yet — reports will fill in as jobs are finished and paid.</div>
       ) : (
         <div className="table-wrap">
         <table>
@@ -2874,7 +2874,7 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
       <form className="panel shop-setup-card" onSubmit={finish}>
         <span className="shop-setup-step">Welcome</span>
         <h1>Set up your shop</h1>
-        <p className="muted">This prints on every estimate, work order and invoice. It takes about a minute, and you can change any of it later in Settings.</p>
+        <p className="muted">This prints on every estimate, repair order and invoice. It takes about a minute, and you can change any of it later in Settings.</p>
 
         <div className="form-grid two">
           <label className="span-two">Shop name *
@@ -3162,8 +3162,8 @@ function Dashboard({
   return (
     <section className="ro-list-page">
       <div className="page-heading ro-list-heading">
-        <h1>{isTechnician ? (techScope === "mine" ? "My jobs" : techScope === "team" ? "Team jobs" : "All jobs") : "Work orders"}</h1>
-        {canCreate && <button className="button primary" onClick={onNew}>+ New work order</button>}
+        <h1>{isTechnician ? (techScope === "mine" ? "My jobs" : techScope === "team" ? "Team jobs" : "All jobs") : "Repair orders"}</h1>
+        {canCreate && <button className="button primary" onClick={onNew}>+ New repair order</button>}
       </div>
 
       <div className="ro-list-tools">
@@ -3184,7 +3184,7 @@ function Dashboard({
       </div>
 
       {!isTechnician && (
-        <div className="stage-chips" role="group" aria-label="Show work orders by stage">
+        <div className="stage-chips" role="group" aria-label="Show repair orders by stage">
           {chips.map((chip) => {
             const count = countOf(chip.key);
             if (count === 0 && chip.key !== "active" && chip.key !== "all" && chip.key !== filter) return null;
@@ -3216,7 +3216,7 @@ function Dashboard({
                       ? "Nothing matches that search."
                       : isTechnician
                         ? techScope === "mine" ? "No cars assigned to you right now." : "No open jobs here right now."
-                        : filter === "active" ? "No active work orders. Start one with New work order." : "Nothing in this stage right now."}
+                        : filter === "active" ? "No active repair orders. Start one with New repair order." : "Nothing in this stage right now."}
                   </td>
                 </tr>
               )}
@@ -3281,7 +3281,7 @@ function RepairOrderEditor({
   initialCustomerId: string;
   initialVehicleId: string;
   initialTab: WorkspaceTab;
-  /** Which document the switcher starts on (Estimate / Work Order / Invoice). */
+  /** Which document the switcher starts on (Estimate / Repair Order / Invoice). */
   initialDocMode?: DocumentMode;
   onDocModeChange?: (mode: DocumentMode) => void;
   onInspection?: () => void;
@@ -4151,10 +4151,10 @@ function RepairOrderEditor({
 
       const afterOk = options.afterWrite ? await options.afterWrite() : true;
       setBusy(false);
-      if (!previewMode && afterOk) notify(options.doneMessage ?? (initialRo ? `RO #${padRo(initialRo.ro_number)} saved.` : "Work order saved."), "success");
+      if (!previewMode && afterOk) notify(options.doneMessage ?? (initialRo ? `RO #${padRo(initialRo.ro_number)} saved.` : "Repair order saved."), "success");
       onSaved(roId, options.status === "completed" ? "invoice" : options.status === "open" ? "work_order" : workspaceTab, previewMode, print, options.openSend);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "The work order could not be saved.");
+      setMessage(caught instanceof Error ? caught.message : "The repair order could not be saved.");
       setBusy(false);
     }
   }
@@ -4222,7 +4222,7 @@ function RepairOrderEditor({
               : stage === "in_shop" && allApprovedWorkDone && awaitingOk.length === 0
                 ? { label: "Close & invoice", onClick: () => void closeAndInvoice() }
                 : stage === "in_shop"
-              ? { label: "Print work order", onClick: () => void save("work_order", true) }
+              ? { label: "Print repair order", onClick: () => void save("work_order", true) }
               : { label: "Send estimate", onClick: () => setSendKind("estimate") };
 
   const soloShopForJobs = !settings.team_features_enabled;
@@ -4442,7 +4442,7 @@ function RepairOrderEditor({
         <button className="button ghost" onClick={onCancel}>← Back</button>
         <div className="ro-action-title">
           <div className="ro-action-title-row">
-            <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : "New Work Order"}</h1>
+            <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : "New Repair Order"}</h1>
             {initialRo && (
               <span className={`stage-pill stage-${stage}`}>
                 {isTechnician
@@ -4470,7 +4470,7 @@ function RepairOrderEditor({
               <MoreMenu items={[
                 mainAction?.label !== "Send estimate" && stage !== "voided" && { label: "Send estimate", onClick: () => setSendKind("estimate") },
                 { label: "Print estimate", onClick: () => void save("estimate", true) },
-                mainAction?.label !== "Print work order" && { label: "Print work order", onClick: () => void save("work_order", true) },
+                mainAction?.label !== "Print repair order" && { label: "Print repair order", onClick: () => void save("work_order", true) },
                 (stage === "invoiced" || stage === "paid") && mainAction?.label !== "Print invoice" && { label: "Print invoice", onClick: () => void save("invoice", true) },
                 !soloShop && (stage === "in_shop" || stage === "write_up" || stage === "waiting") && { label: "Mark ready for advisor", onClick: () => void markWorkComplete(true) },
                 !soloShop && stage === "ready" && { label: "Send back to the shop", onClick: () => void markWorkComplete(false) },
@@ -4514,7 +4514,7 @@ function RepairOrderEditor({
       )}
 
       {!initialRo && (
-        <div className="notice workspace-notice">Save this new work order once before previewing or printing documents.</div>
+        <div className="notice workspace-notice">Save this new repair order once before previewing or printing documents.</div>
       )}
       {/* Techs see "Approved · go ahead" on each job instead of this money panel. */}
       {!isTechnician && hasCustomerAuthorizationResponse && currentAuthorization && (
@@ -4753,7 +4753,7 @@ function RepairOrderEditor({
                 <div className="section-heading">
                   <div>
                     <h2>Invoice for {customerForm.name || "New customer"}</h2>
-                    <p className="muted">Changes made to the charges below also change the work order and estimate.</p>
+                    <p className="muted">Changes made to the charges below also change the repair order and estimate.</p>
                   </div>
                   {initialRo && <span className={`badge ${paid ? "paid" : "unpaid"}`}>{paid ? "Paid" : "Unpaid"}</span>}
                 </div>
@@ -4771,7 +4771,7 @@ function RepairOrderEditor({
                   <div>
                     <span>Job status</span>
                     <strong>{statusLabel(status)}</strong>
-                    <small>Switch back to Work Order to edit customer, vehicle, or job details.</small>
+                    <small>Switch back to Repair Order to edit customer, vehicle, or job details.</small>
                   </div>
                 </div>
                 {concern && <div className="invoice-concern"><span>Services requested / performed</span><p>{concern}</p></div>}
@@ -5712,7 +5712,7 @@ function MoreMenu({ items, label, ariaLabel = "More actions", small = false }: {
   );
 }
 
-const DOC_MODE_LABEL: Record<DocumentMode, string> = { estimate: "Estimate", work_order: "Work Order", invoice: "Invoice" };
+const DOC_MODE_LABEL: Record<DocumentMode, string> = { estimate: "Estimate", work_order: "Repair Order", invoice: "Invoice" };
 
 function ChargeLine({
   item,
@@ -5960,11 +5960,11 @@ function CustomerProfile({
         <div>
           <button className="back-link" onClick={onBack}>← All customers</button>
           <h1>{customer.name}</h1>
-          <p>Customer profile, vehicles, and full work-order history.</p>
+          <p>Customer profile, vehicles, and full repair-order history.</p>
         </div>
         <div className="button-row">
           <button className="button primary" onClick={() => onNew(customer.id, "")} disabled={Boolean(customer.archived_at)}>
-            + New Work Order
+            + New Repair Order
           </button>
           <button className="button ghost" onClick={() => onArchive(customer)}>
             {customer.archived_at ? "Restore customer" : "Archive customer"}
@@ -5994,7 +5994,7 @@ function CustomerProfile({
             <div className="section-heading">
               <div>
                 <h2>Vehicles</h2>
-                <p className="muted">Start a new work order directly on the correct vehicle.</p>
+                <p className="muted">Start a new repair order directly on the correct vehicle.</p>
               </div>
             </div>
             <div className="profile-vehicle-grid">
@@ -6014,10 +6014,10 @@ function CustomerProfile({
                       <div><dt>VIN</dt><dd>{vehicle.vin || "—"}</dd></div>
                       <div><dt>Plate</dt><dd>{vehicle.license_plate?.trim() ? [vehicle.license_plate, vehicle.plate_state].filter(Boolean).join(" ") : "—"}</dd></div>
                       <div><dt>Latest mileage</dt><dd>{latestMileage ? latestMileage.toLocaleString() : "—"}</dd></div>
-                      <div><dt>History</dt><dd>{vehicleHistory.length} work order{vehicleHistory.length === 1 ? "" : "s"}</dd></div>
+                      <div><dt>History</dt><dd>{vehicleHistory.length} repair order{vehicleHistory.length === 1 ? "" : "s"}</dd></div>
                     </dl>
                     <button className="button small secondary" onClick={() => onNew(customer.id, vehicle.id)} disabled={Boolean(customer.archived_at)}>
-                      + New Work Order for This Vehicle
+                      + New Repair Order for This Vehicle
                     </button>
                   </article>
                 );
@@ -6030,7 +6030,7 @@ function CustomerProfile({
             <div className="section-heading wrap">
               <div>
                 <h2>Service history</h2>
-                <p className="muted">Every past work order for this customer, newest first.</p>
+                <p className="muted">Every past repair order for this customer, newest first.</p>
               </div>
               <div className="history-filters">
                 <select value={vehicleFilter} onChange={(event) => setVehicleFilter(event.target.value)}>
@@ -6067,7 +6067,7 @@ function CustomerProfile({
                       <td>{new Date(ro.created_at).toLocaleDateString()}</td>
                       <td>{[ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "—"}</td>
                       <td className="history-description">{[...(ro.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order).map((line) => line.concern).filter(Boolean).join(" · ") || ro.customer_concern || "—"}</td>
-                      {/* Same stage names as the work order list. */}
+                      {/* Same stage names as the repair order list. */}
                       <td><span className={`stage-pill stage-${stageOfRo(ro)}`}>{RO_STAGE_LABEL[stageOfRo(ro)]}</span></td>
                       <td>{money(repairOrderTotal(ro))}</td>
                       <td className="actions-cell profile-actions-cell">
@@ -6076,7 +6076,7 @@ function CustomerProfile({
                     </tr>
                   ))}
                   {!history.length && (
-                    <tr><td colSpan={7} className="empty-state">No work orders match this filter.</td></tr>
+                    <tr><td colSpan={7} className="empty-state">No repair orders match this filter.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -7043,7 +7043,7 @@ function SettingsPanel({
                 <button type="button" className="button ghost" disabled={logoUploading} onClick={() => void removeLogo()}>Remove</button>
               )}
             </div>
-            <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>PNG, JPG, WEBP, or SVG. Shown on estimates, work orders, invoices, and customer emails.</p>
+            <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>PNG, JPG, WEBP, or SVG. Shown on estimates, repair orders, invoices, and customer emails.</p>
           </label>
           <div className="span-two">
             <strong>Invoice and estimate style</strong>
@@ -7588,7 +7588,7 @@ function DocumentView({
   autoPrint = false,
   onAutoPrintDone,
 }: {
-  /** Techs only ever see the work order, with no prices or totals. */
+  /** Techs only ever see the repair order, with no prices or totals. */
   isTechnician?: boolean;
   /** Print as soon as the document (and its photos) are ready. */
   autoPrint?: boolean;
@@ -7756,8 +7756,8 @@ function DocumentView({
   const decisions = authorization?.line_decisions ?? {};
   const hasCustomerResponse = hasAuthorizationResponse(authorization);
   const decisionSummary = authorizationDecisionSummary(authorization);
-  // Pending technician requests show on the shop's work order only — never on the estimate or invoice.
-  // Jobs the customer declined in person stay on the shop's work order (marked) and get their own
+  // Pending technician requests show on the shop's repair order only — never on the estimate or invoice.
+  // Jobs the customer declined in person stay on the shop's repair order (marked) and get their own
   // "declined" list on the invoice; they never appear as charges on the estimate or invoice.
   const visibleItems = isWorkOrder ? items : items.filter((item) => !isPendingReview(item) && item.job_status !== "declined");
   const pricedItems = isEstimate ? visibleItems : authorizedLineItems(items, authorization, ro.invoice_overrides);
@@ -7809,7 +7809,7 @@ function DocumentView({
     return groups;
   })();
 
-  // Line A / B / C… with their jobs. Lines with no jobs still print on the work order and invoice
+  // Line A / B / C… with their jobs. Lines with no jobs still print on the repair order and invoice
   // when they have text (e.g. "could not duplicate"); jobs not on any line print last.
   const documentLines = [...(ro.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order);
   const jobGroups = groupedDocumentItems.filter((group) => group.title);
@@ -7910,7 +7910,7 @@ function DocumentView({
     return rows;
   };
 
-  const title = isEstimate ? "Estimate" : isWorkOrder ? "Work Order" : "Invoice";
+  const title = isEstimate ? "Estimate" : isWorkOrder ? "Repair Order" : "Invoice";
   const documentSubtitle = isEstimate
     ? "Proposed work and estimated pricing"
     : isWorkOrder
@@ -7927,7 +7927,7 @@ function DocumentView({
       : isWorkOrder
         ? "Customer concern / work requested"
         : "Services requested / performed";
-  const finalTotalLabel = isEstimate ? "Estimated total" : isWorkOrder ? "Work order total" : "Invoice total";
+  const finalTotalLabel = isEstimate ? "Estimated total" : isWorkOrder ? "Repair order total" : "Invoice total";
   const className = isEstimate ? "document-estimate" : isWorkOrder ? "document-repair-order" : "document-invoice";
   return (
     <section className="document-shell">
@@ -8105,7 +8105,7 @@ function DocumentView({
             <span>Engine: {vehicle?.engine || "—"}</span>
           </section>
           <section>
-            <h3>{isEstimate ? "Estimate details" : isWorkOrder ? "Work order details" : "Invoice details"}</h3>
+            <h3>{isEstimate ? "Estimate details" : isWorkOrder ? "Repair order details" : "Invoice details"}</h3>
             <span>Mileage in: {ro.mileage_in?.toLocaleString() || "—"}</span>
             {!isEstimate && <span>Mileage out: {ro.mileage_out?.toLocaleString() || "—"}</span>}
             {isWorkOrder && <span>Status: {currentStatusLabel}</span>}
