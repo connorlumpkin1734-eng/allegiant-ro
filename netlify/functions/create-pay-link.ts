@@ -1,3 +1,4 @@
+import { alertsFrom } from "../../lib/email-from";
 // Staff-only. Creates the single "pay this invoice" link a shop shares with a customer; the customer
 // then chooses card/bank or Zelle on the public /pay page (see pay-invoice.ts). Only the hash of the
 // token is stored. Same owner/advisor/admin permission rule as create-payment-session.ts.
@@ -15,7 +16,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,

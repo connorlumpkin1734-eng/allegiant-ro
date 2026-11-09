@@ -14,6 +14,7 @@ type RepairOrderRow = {
 import { pickRecipient, resolveCustomerSender } from "../../lib/shop-caller";
 import { getInspectionShare, inspectionSummaryHtml, type InspectionShare } from "../../lib/inspection-share";
 import { amountBlock, brandFromSettings, emailButton, escapeHtml, lineTable, money, renderCustomerEmail, renderCustomerText, totalsTable, type LineRow } from "../../lib/customer-email";
+import { fromAddress } from "../../lib/email-from";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -143,7 +144,7 @@ export default async (request: Request) => {
   // Shared platform sending domain: every shop sends from the same verified address (so we're not
   // starting sender reputation from zero per tenant), but the display name is the shop's own name,
   // and Reply-To routes the customer's reply to the shop's real inbox, not this platform mailbox.
-  const fromEmail = `${snapshot.businessName} <estimates@allegiantautocare.com>`;
+  const fromEmail = fromAddress(String(snapshot.businessName ?? ""), "estimates");
   const replyToEmail = (settings.business_email as string) || undefined;
 
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");

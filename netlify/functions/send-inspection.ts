@@ -7,6 +7,7 @@
 import { pickRecipient, resolveCustomerSender } from "../../lib/shop-caller";
 import { brandFromSettings, escapeHtml, paragraph, renderCustomerEmail, renderCustomerText } from "../../lib/customer-email";
 import { getInspectionShare, inspectionSummaryHtml } from "../../lib/inspection-share";
+import { fromAddress } from "../../lib/email-from";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -76,7 +77,7 @@ export default async (request: Request) => {
   // Shared platform sending domain, tenant display name, Reply-To back to the shop — same
   // pattern used for invoices and estimates so every tenant isn't starting sender reputation
   // from zero, while replies still land with the actual shop.
-  const fromEmail = `${businessName} <inspections@allegiantautocare.com>`;
+  const fromEmail = fromAddress(businessName, "inspections");
   const replyToEmail = (settings.business_email as string) || undefined;
 
   const reportUrl = share.url;

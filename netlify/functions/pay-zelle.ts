@@ -1,3 +1,4 @@
+import { alertsFrom, fromAddress } from "../../lib/email-from";
 // Public, unauthenticated endpoint behind the /pay-zelle page. GET returns the shop's Zelle info
 // and amount due for a token; POST records that the customer says they've sent payment and emails
 // the shop to go verify it in their own bank app. Nothing here ever marks an invoice paid — only
@@ -19,7 +20,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
@@ -138,7 +139,7 @@ async function handler(request: Request): Promise<Response> {
         method: "POST",
         headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: `${businessName} <notifications@allegiantautocare.com>`,
+          from: fromAddress(businessName, "notifications"),
           to: [settings.business_email],
           subject: `Zelle payment claimed — Invoice ${roLabel}`,
           text: `${customerName} says they just sent ${amount} via Zelle for Invoice ${roLabel}.\n\nCheck your bank app to confirm the money actually arrived, then open this invoice in the app and click "Confirm payment received." Nothing is marked paid until you confirm it yourself.`,

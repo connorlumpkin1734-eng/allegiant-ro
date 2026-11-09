@@ -6,6 +6,7 @@
 // the same 404 (never reveal which, same reasoning as a missing-vs-unauthorized photo).
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { alertsFrom } from "../../lib/email-from";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -21,7 +22,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,

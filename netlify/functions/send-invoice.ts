@@ -22,6 +22,7 @@
 
 import { pickRecipient } from "../../lib/shop-caller";
 import { amountBlock, brandFromSettings, emailButton, escapeHtml, lineTable, money, renderCustomerEmail, renderCustomerText, totalsTable, type LineRow } from "../../lib/customer-email";
+import { alertsFrom, fromAddress } from "../../lib/email-from";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -40,7 +41,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
@@ -257,7 +258,7 @@ async function handler(request: Request): Promise<Response> {
   // Shared platform sending domain: every shop sends from the same verified address (so we're not
   // starting sender reputation from zero per tenant), but the display name is the shop's own name,
   // and Reply-To routes the customer's reply to the shop's real inbox, not this platform mailbox.
-  const fromEmail = `${businessName} <invoices@allegiantautocare.com>`;
+  const fromEmail = fromAddress(businessName, "invoices");
   const replyToEmail = (settings.business_email as string) || undefined;
   const stripeAccountId = settings.stripe_account_id as string | null;
   const stripeChargesEnabled = Boolean(settings.stripe_charges_enabled);

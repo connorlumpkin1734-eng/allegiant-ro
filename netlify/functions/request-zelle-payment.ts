@@ -1,3 +1,4 @@
+import { alertsFrom } from "../../lib/email-from";
 // Generates a one-time, unguessable link a shop can send to their customer to pay an invoice via
 // Zelle. Zelle has no business API — there's nothing to "charge" here, just a payments row that
 // records who owes what and a token the public pay-zelle page can look up. Mirrors the
@@ -19,7 +20,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,

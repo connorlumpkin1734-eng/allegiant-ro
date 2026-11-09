@@ -1,3 +1,4 @@
+import { alertsFrom } from "../../lib/email-from";
 // Public, token-gated. The customer opens ONE link and chooses how to pay:
 //   GET  ?token=…                      -> invoice summary + which payment methods this shop offers
 //   POST { token, method: "card" }     -> creates a fresh Stripe Checkout session, returns its URL
@@ -19,7 +20,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,

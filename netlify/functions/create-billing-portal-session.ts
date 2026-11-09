@@ -1,3 +1,4 @@
+import { alertsFrom } from "../../lib/email-from";
 // Returns a Stripe Billing Portal link so a shop owner can update their card, see past invoices,
 // or cancel — without us ever building custom card-management UI or touching card data ourselves.
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -17,7 +18,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,

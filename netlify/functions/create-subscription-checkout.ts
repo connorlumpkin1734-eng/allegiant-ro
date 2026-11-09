@@ -1,3 +1,4 @@
+import { alertsFrom } from "../../lib/email-from";
 // Starts a Stripe Checkout session for a shop to SUBSCRIBE to the platform itself (this is us
 // billing the shop, unlike create-payment-session.ts which is a shop billing its own customer via
 // their own connected Stripe account). Created directly on the platform's own Stripe account — no
@@ -24,7 +25,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,

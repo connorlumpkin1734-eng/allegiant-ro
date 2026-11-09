@@ -1,3 +1,4 @@
+import { alertsFrom, fromAddress } from "../../lib/email-from";
 // Receives Stripe webhook events. Three kinds matter here:
 //  - `account.updated` (platform-level, sent for every connected account): keeps each shop's
 //    stripe_onboarding_complete/charges_enabled/payouts_enabled flags in sync without the owner
@@ -42,7 +43,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
@@ -269,7 +270,7 @@ async function handler(request: Request): Promise<Response> {
             method: "POST",
             headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
             body: JSON.stringify({
-              from: "Allegiant RO Billing <billing@allegiantautocare.com>",
+              from: fromAddress(`${process.env.EMAIL_PRODUCT_NAME || "RO Runner"} Billing`, "billing"),
               to: [existing.business_email],
               subject: `Action needed: your payment method failed`,
               text: `Hi,\n\nWe weren't able to charge the card on file for ${businessName}'s subscription. You have 7 days to update your payment method before the account goes read-only (existing work orders stay viewable, but creating or editing anything will pause).\n\nUpdate your payment method: ${billingUrl}\n\nIf you've already fixed this, you can ignore this email — we'll pick up the update automatically.`,

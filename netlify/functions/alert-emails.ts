@@ -4,6 +4,7 @@
 // they just saw. One email per person per run, listing their new alerts.
 
 import { brandFromSettings, escapeHtml, paragraph, renderCustomerEmail, renderCustomerText } from "../../lib/customer-email";
+import { fromAddress } from "../../lib/email-from";
 
 type AlertRow = { id: string; owner_id: string; recipient_user_id: string; title: string; body: string | null; created_at: string };
 
@@ -97,7 +98,7 @@ async function handler(): Promise<Response> {
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: `${brand.name} <alerts@allegiantautocare.com>`,
+        from: fromAddress(brand.name, "alerts"),
         to: [person.email],
         subject: mine.length === 1 ? mine[0].title : `${mine.length} shop alerts: ${mine[0].title}`,
         text,

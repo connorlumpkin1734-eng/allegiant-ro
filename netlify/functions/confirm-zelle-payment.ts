@@ -1,3 +1,4 @@
+import { alertsFrom } from "../../lib/email-from";
 // Staff-only. This is the ONLY place a Zelle payment is actually marked paid — a human has to
 // click this after checking their own bank app, whether or not the customer clicked "I've sent
 // payment" first. Mirrors what the Stripe webhook does automatically: flips payments.status to
@@ -19,7 +20,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,

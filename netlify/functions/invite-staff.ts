@@ -1,3 +1,4 @@
+import { alertsFrom, fromAddress } from "../../lib/email-from";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
@@ -15,7 +16,7 @@ async function notifyError(functionName: string, error: unknown, request: Reques
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Allegiant RO Alerts <alerts@allegiantautocare.com>",
+        from: alertsFrom(),
         to: ["connor.lumpkin1734@gmail.com"],
         subject: `[Allegiant RO] ${functionName} threw an error`,
         text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
@@ -160,7 +161,7 @@ async function handler(request: Request): Promise<Response> {
   if (resendKey) {
     try {
       const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(request.url).origin;
-      const fromEmail = `${businessName} <notifications@allegiantautocare.com>`;
+      const fromEmail = fromAddress(businessName, "notifications");
       const replyToEmail = shopSettings.business_email || undefined;
       const emailResponse = await fetch("https://api.resend.com/emails", {
         method: "POST",
