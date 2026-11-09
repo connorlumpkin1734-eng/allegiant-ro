@@ -1122,7 +1122,9 @@ function AuthScreen() {
       if (result.error) {
         setMessage(result.error.message);
       } else if (!result.data.session) {
-        setMessage("Account created. Check your email to confirm it, then sign in.");
+        // Supabase answers the same way for a brand-new email and one that's already registered
+        // (so nobody can probe which emails have accounts), so the message has to cover both.
+        setMessage("Check your email for a link to confirm your account, then sign in. Already have an account with this email? Sign in instead, or use Forgot password.");
       }
       setBusy(false);
       return;
@@ -1441,6 +1443,10 @@ function RepairOrderApp({ user }: { user: User }) {
   const [error, setError] = useToastMessage("error");
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [reportsTab, setReportsTab] = useState<"sales" | "team">("sales");
+  // "Finish later" on the first-run shop setup; remembered for this browser session only.
+  const [setupSkipped, setSetupSkipped] = useState(() => {
+    try { return sessionStorage.getItem("shop-setup-skipped") === "1"; } catch { return false; }
+  });
   const [stripeOAuthCode, setStripeOAuthCode] = useState<string | null>(null);
   const [stripeReturnPending, setStripeReturnPending] = useState(false);
 
@@ -2028,7 +2034,7 @@ function RepairOrderApp({ user }: { user: User }) {
       <Toaster />
       <main className="main-area">
         {error && <div className="error-banner no-print">{error}</div>}
-        {isOwner && staffResolved && !loading && !settings.business_name?.trim() && (
+        {isOwner && staffResolved && !loading && !settings.business_name?.trim() && setupSkipped && (
           <div className="notice notice-warn no-print" style={{ marginBottom: 16 }}>
             Add your shop&apos;s name, address and phone in <strong>Settings</strong> — they print on every estimate, work order and invoice.
           </div>
@@ -2067,6 +2073,21 @@ function RepairOrderApp({ user }: { user: User }) {
         )}
         {loading ? (
           <div className="panel">Loading shop data…</div>
+        ) : isOwner && staffResolved && !settings.business_name?.trim() && !setupSkipped ? (
+          <ShopSetup
+            ownerId={user.id}
+            accountEmail={user.email ?? ""}
+            settings={settings}
+            onDone={(changes) => {
+              setSettings((current) => ({ ...current, ...changes }));
+              setView("dashboard");
+              notify("You're all set. Start your first work order whenever you're ready.", "success");
+            }}
+            onSkip={() => {
+              try { sessionStorage.setItem("shop-setup-skipped", "1"); } catch { /* storage blocked */ }
+              setSetupSkipped(true);
+            }}
+          />
         ) : view === "dashboard" ? (
           <Dashboard
             repairOrders={repairOrders}
@@ -2797,6 +2818,119 @@ function SalesReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
         rent, tools or other shop expenses. Check your filing frequency and what counts as taxable with your accountant or the Texas Comptroller.
       </p>
     </div>
+  );
+}
+
+/** First sign-in for a new shop: the few details that print on every estimate and invoice, before anything else. */
+function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
+  ownerId: string;
+  accountEmail: string;
+  settings: Settings;
+  onDone: (changes: Partial<Settings>) => void;
+  onSkip: () => void;
+}) {
+  const [name, setName] = useState(settings.business_name || "");
+  const [phone, setPhone] = useState(settings.business_phone || "");
+  const [email, setEmail] = useState(settings.business_email || accountEmail || "");
+  const [street, setStreet] = useState("");
+  const [city, setCity] = useState("");
+  const [state, setState] = useState("TX");
+  const [zip, setZip] = useState("");
+  const [hours, setHours] = useState(settings.business_hours || "");
+  const [laborRate, setLaborRate] = useState(String(settings.default_labor_rate || 100));
+  const [taxRate, setTaxRate] = useState(settings.sales_tax_rate ? String(settings.sales_tax_rate) : "");
+  const [team, setTeam] = useState<"solo" | "team">(settings.team_features_enabled ? "team" : "solo");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+
+  async function finish(event: FormEvent) {
+    event.preventDefault();
+    const rate = Number(laborRate.replace(/[$,\s]/g, ""));
+    const tax = taxRate.trim() ? Number(taxRate.replace(/[%\s]/g, "")) : 0;
+    if (!name.trim()) return setProblem("Enter your shop's name.");
+    if (!phone.trim()) return setProblem("Enter the shop phone number customers should call.");
+    if (!Number.isFinite(rate) || rate <= 0) return setProblem("Enter your labor rate per hour, like 120.");
+    if (!Number.isFinite(tax) || tax < 0 || tax > 20) return setProblem("Sales tax should be a percent, like 8.25 (or leave it blank for none).");
+    const cityLine = [city.trim(), [state.trim(), zip.trim()].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+    const changes: Partial<Settings> = {
+      business_name: name.trim(),
+      business_phone: phone.trim(),
+      business_email: email.trim(),
+      business_address: [street.trim(), cityLine].filter(Boolean).join(" "),
+      business_hours: hours.trim() || null,
+      default_labor_rate: rate,
+      sales_tax_rate: tax,
+      team_features_enabled: team === "team",
+    };
+    setBusy(true);
+    setProblem("");
+    const { error } = await supabase.from("settings").update(changes).eq("owner_id", ownerId);
+    setBusy(false);
+    if (error) return setProblem(`Couldn't save: ${error.message}`);
+    onDone(changes);
+  }
+
+  return (
+    <section className="shop-setup">
+      <form className="panel shop-setup-card" onSubmit={finish}>
+        <span className="shop-setup-step">Welcome</span>
+        <h1>Set up your shop</h1>
+        <p className="muted">This prints on every estimate, work order and invoice. It takes about a minute, and you can change any of it later in Settings.</p>
+
+        <div className="form-grid two">
+          <label className="span-two">Shop name *
+            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Smith's Auto Repair" />
+          </label>
+          <label>Phone *
+            <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="214-555-0100" />
+          </label>
+          <label>Email customers can reply to
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+          </label>
+          <label className="span-two">Street address
+            <input value={street} onChange={(event) => setStreet(event.target.value)} placeholder="123 Main St" />
+          </label>
+          <label>City
+            <input value={city} onChange={(event) => setCity(event.target.value)} />
+          </label>
+          <div className="shop-setup-statezip">
+            <label>State
+              <input value={state} maxLength={2} onChange={(event) => setState(event.target.value.toUpperCase())} />
+            </label>
+            <label>ZIP
+              <input inputMode="numeric" value={zip} onChange={(event) => setZip(event.target.value)} />
+            </label>
+          </div>
+          <label className="span-two">Hours <span className="muted" style={{ fontWeight: 400 }}>(optional)</span>
+            <input value={hours} onChange={(event) => setHours(event.target.value)} placeholder="Mon–Fri 8–5" />
+          </label>
+          <label>Labor rate ($ per hour) *
+            <input inputMode="decimal" value={laborRate} onChange={(event) => setLaborRate(event.target.value)} />
+          </label>
+          <label>Sales tax rate %
+            <input inputMode="decimal" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} placeholder="8.25" />
+          </label>
+        </div>
+
+        <fieldset className="shop-setup-team">
+          <legend>Who works in the shop?</legend>
+          <label className={`shop-setup-choice${team === "solo" ? " active" : ""}`}>
+            <input type="radio" name="team" checked={team === "solo"} onChange={() => setTeam("solo")} />
+            <span><strong>Just me</strong><small>I write the ROs and do the work. Keeps the app simple.</small></span>
+          </label>
+          <label className={`shop-setup-choice${team === "team" ? " active" : ""}`}>
+            <input type="radio" name="team" checked={team === "team"} onChange={() => setTeam("team")} />
+            <span><strong>I have techs or advisors</strong><small>Add their logins later in Settings → Staff.</small></span>
+          </label>
+        </fieldset>
+
+        {problem && <div className="notice notice-warn">{problem}</div>}
+        <div className="shop-setup-actions">
+          <button type="button" className="button ghost" onClick={onSkip}>Finish later</button>
+          <button type="submit" className="button primary" disabled={busy}>{busy ? "Saving…" : "Save and start"}</button>
+        </div>
+      </form>
+    </section>
   );
 }
 

@@ -2556,3 +2556,24 @@ select option { background-color: var(--panel); color: var(--ink); }
 .job-approval-chip.declined select { background-color: var(--danger-tint); color: var(--danger-text); }
 .job-status-badge.declined { color: var(--danger-text); background: var(--danger-tint); }
 .service-job-card.job-status-declined { opacity: 0.7; }
+
+/* ---- First-run shop setup ---- */
+.shop-setup { display: flex; justify-content: center; padding: 8px 0 40px; }
+.shop-setup-card { width: 100%; max-width: 640px; padding: 28px; }
+.shop-setup-card h1 { margin: 4px 0 6px; }
+.shop-setup-card > p { margin: 0 0 20px; }
+.shop-setup-step { color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.shop-setup-statezip { display: grid; grid-template-columns: 90px 1fr; gap: 12px; }
+.shop-setup-team { margin: 20px 0 16px; padding: 0; border: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.shop-setup-team legend { margin-bottom: 8px; font-weight: 800; }
+.shop-setup-choice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.shop-setup-choice.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.shop-setup-choice input { margin-top: 3px; }
+.shop-setup-choice span { display: flex; flex-direction: column; gap: 2px; }
+.shop-setup-choice small { color: var(--muted); }
+.shop-setup-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.shop-setup-actions .button.primary { min-width: 180px; }
+@media (max-width: 760px) {
+  .shop-setup-card { padding: 18px 16px; }
+  .shop-setup-team { grid-template-columns: 1fr; }
+}
