@@ -2652,3 +2652,14 @@ select option { background-color: var(--panel); color: var(--ink); }
 .username-hint.available { color: #3ccf7a; }
 .username-hint.taken, .username-hint.invalid { color: var(--danger-text); }
 .password-mismatch { color: var(--danger-text); font-size: 12px; font-weight: 600; }
+.shop-setup-logo { display: flex; flex-direction: column; gap: 8px; }
+.shop-setup-logo-label { font-size: 13px; font-weight: 700; }
+.shop-setup-logo-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.shop-setup-logo-preview {
+  width: 180px; height: 72px; display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px; overflow: hidden;
+}
+.shop-setup-logo-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.shop-setup-logo-preview span { color: #555; font-weight: 800; font-size: 14px; text-align: center; overflow-wrap: anywhere; }
+.shop-setup-logo-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.shop-setup-logo small { font-size: 12px; }

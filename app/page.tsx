@@ -2888,6 +2888,28 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
   const [team, setTeam] = useState<"solo" | "team">(settings.team_features_enabled ? "team" : "solo");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
+  const [logoPath, setLogoPath] = useState<string | null>(settings.logo_path ?? null);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const logoPickerRef = useRef<HTMLInputElement>(null);
+  const setupLogoUrl = logoPublicUrl(logoPath);
+
+  // Uploads right away so they see it; saved onto the shop with "Save and start".
+  async function pickLogo(file: File) {
+    if (!/^image\/(png|jpeg|webp|svg\+xml)$/.test(file.type)) return setProblem("Logo needs to be a PNG, JPG, WEBP or SVG image.");
+    if (file.size > 5 * 1024 * 1024) return setProblem("That logo file is over 5 MB. Try a smaller version.");
+    setLogoBusy(true);
+    setProblem("");
+    const extension = file.name.split(".").pop()?.toLowerCase() || "png";
+    const path = `${ownerId}/logo-${Date.now()}.${extension}`;
+    const { error } = await supabase.storage.from("shop-branding").upload(path, file, { contentType: file.type });
+    if (error) {
+      setProblem(`Couldn't upload the logo: ${error.message}`);
+    } else {
+      if (logoPath && logoPath !== settings.logo_path) await supabase.storage.from("shop-branding").remove([logoPath]);
+      setLogoPath(path);
+    }
+    setLogoBusy(false);
+  }
 
   async function finish(event: FormEvent) {
     event.preventDefault();
@@ -2907,6 +2929,7 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
       default_labor_rate: rate,
       sales_tax_rate: tax,
       team_features_enabled: team === "team",
+      logo_path: logoPath,
     };
     setBusy(true);
     setProblem("");
@@ -2927,6 +2950,37 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
           <label className="span-two">Shop name *
             <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Smith's Auto Repair" />
           </label>
+          <div className="span-two shop-setup-logo">
+            <span className="shop-setup-logo-label">Logo <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></span>
+            <div className="shop-setup-logo-row">
+              <div className="shop-setup-logo-preview">
+                {setupLogoUrl
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={setupLogoUrl} alt="Your shop logo" />
+                  : <span>{name.trim() || "Your logo"}</span>}
+              </div>
+              <input
+                ref={logoPickerRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                style={{ display: "none" }}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void pickLogo(file);
+                  event.target.value = "";
+                }}
+              />
+              <div className="shop-setup-logo-actions">
+                <button type="button" className="button secondary" disabled={logoBusy} onClick={() => logoPickerRef.current?.click()}>
+                  {logoBusy ? "Uploading…" : setupLogoUrl ? "Change logo" : "Upload logo"}
+                </button>
+                {setupLogoUrl && !logoBusy && (
+                  <button type="button" className="button ghost" onClick={() => setLogoPath(null)}>Remove</button>
+                )}
+              </div>
+            </div>
+            <small className="muted">Goes on your estimates, invoices and customer emails. No logo? Your shop name prints instead.</small>
+          </div>
           <label>Phone *
             <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="214-555-0100" />
           </label>
