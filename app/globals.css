@@ -2663,3 +2663,10 @@ select option { background-color: var(--panel); color: var(--ink); }
 .shop-setup-logo-preview span { color: #555; font-weight: 800; font-size: 14px; text-align: center; overflow-wrap: anywhere; }
 .shop-setup-logo-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .shop-setup-logo small { font-size: 12px; }
+.badge.needs-tech { color: var(--warn-text); background: var(--warn-tint); }
+.needs-tech-head { display: flex; align-items: center; gap: 8px; }
+.ro-list-hint { margin: -4px 0 10px; font-size: 13px; }
+.needs-tech-panel { border-left: 4px solid var(--warn-text); }
+.dispatch-team-fixed { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.dispatch-team-fixed span { font-weight: 700; }
+.staff-lead-warning { display: block; margin-top: 4px; color: var(--warn-text); font-size: 12px; font-weight: 600; }

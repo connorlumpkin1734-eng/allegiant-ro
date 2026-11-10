@@ -104,6 +104,8 @@ type StaffMember = {
   can_view_all_work: boolean;
   is_admin: boolean;
   active: boolean;
+  /** Lead technician: sees all of their team's ROs and assigns their team's techs. */
+  is_team_lead?: boolean;
 };
 
 /** City/state/zip line. A state on its own (the form defaults to TX) isn't an address, so it shows nothing. */
@@ -1388,6 +1390,7 @@ type CurrentStaff = {
   can_view_all_work: boolean;
   is_admin: boolean;
   must_change_password: boolean;
+  is_team_lead?: boolean;
 };
 
 function RepairOrderApp({ user }: { user: User }) {
@@ -1398,6 +1401,8 @@ function RepairOrderApp({ user }: { user: User }) {
   const isAdminAccess = isOwner || Boolean(currentStaff?.is_admin);
   const isTechnicianOnly = Boolean(currentStaff) && currentStaff!.role === "technician" && !currentStaff!.is_admin;
   const isAdvisorOnly = Boolean(currentStaff) && currentStaff!.role === "service_advisor" && !currentStaff!.is_admin;
+  // A lead tech runs their team's board: sees all of the team's work and hands it out.
+  const leadTeamId = isTechnicianOnly && currentStaff?.is_team_lead ? currentStaff.team_id : null;
   const ownerId = currentStaff?.owner_id ?? user.id;
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   // Browser tab shows the shop's own name.
@@ -1555,7 +1560,7 @@ function RepairOrderApp({ user }: { user: User }) {
     let cancelled = false;
     supabase
       .from("staff")
-      .select("id, owner_id, role, team_id, can_view_all_work, is_admin, must_change_password, name, username, email")
+      .select("id, owner_id, role, team_id, can_view_all_work, is_admin, must_change_password, name, username, email, is_team_lead")
       .eq("auth_user_id", user.id)
       .maybeSingle()
       .then(({ data }) => {
@@ -2141,7 +2146,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onOpenCustomer={openCustomer}
             canCreate={!isTechnicianOnly}
             isTechnician={isTechnicianOnly}
-            techFilterFor={isTechnicianOnly && currentStaff ? { staffId: currentStaff.id, teamId: currentStaff.team_id } : null}
+            techFilterFor={isTechnicianOnly && currentStaff ? { staffId: currentStaff.id, teamId: currentStaff.team_id, isLead: Boolean(leadTeamId) } : null}
           />
         ) : view === "editor" ? (
           <RepairOrderEditor
@@ -2150,6 +2155,7 @@ function RepairOrderApp({ user }: { user: User }) {
             ownerId={ownerId}
             isTechnician={isTechnicianOnly}
             isAdvisor={isAdvisorOnly}
+            leadTeamId={leadTeamId}
             settings={settings}
             customers={customers}
             vehicles={vehicles}
@@ -3127,7 +3133,7 @@ function Dashboard({
   /** Techs see the work, not the money: no estimate or total. */
   isTechnician?: boolean;
   /** Set for technicians: enables the Mine / Team / All filter. */
-  techFilterFor?: { staffId: string; teamId: string | null } | null;
+  techFilterFor?: { staffId: string; teamId: string | null; isLead?: boolean } | null;
   repairOrders: RepairOrder[];
   onNew: () => void;
   onOpen: (id: string, mode: DocumentMode) => void;
@@ -3137,11 +3143,14 @@ function Dashboard({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ListFilter>("active");
   // Techs land on their own cars.
-  const [techScope, setTechScope] = useState<"mine" | "team" | "all">(techFilterFor ? "mine" : "all");
+  const [techScope, setTechScope] = useState<"mine" | "team" | "all">(techFilterFor ? (techFilterFor.isLead && techFilterFor.teamId ? "team" : "mine") : "all");
   const normalized = search.toLowerCase().trim();
 
   const isMine = (ro: RepairOrder) => Boolean(techFilterFor && (ro.repair_order_technicians ?? []).some((row) => row.staff_id === techFilterFor.staffId));
   const isMyTeam = (ro: RepairOrder) => Boolean(techFilterFor?.teamId && ro.team_id === techFilterFor.teamId);
+  const isLead = Boolean(techFilterFor?.isLead && techFilterFor.teamId);
+  // A lead's team cars that nobody has been put on yet.
+  const needsTech = (ro: RepairOrder) => isLead && isMyTeam(ro) && !(ro.repair_order_technicians ?? []).length;
   const inScope = (ro: RepairOrder) => !techFilterFor || techScope === "all" || (techScope === "mine" ? isMine(ro) : isMine(ro) || isMyTeam(ro));
   const matchesSearch = (ro: RepairOrder) => {
     if (!normalized) return true;
@@ -3172,6 +3181,12 @@ function Dashboard({
   const techActive = current.filter(({ stage }) => stage === "write_up" || stage === "waiting" || stage === "in_shop").filter(({ ro }) => matchesSearch(ro));
   const techHandedOff = current.filter(({ stage }) => stage === "ready").filter(({ ro }) => matchesSearch(ro));
   const rows = isTechnician ? techActive : scoped.filter(passesFilter).filter(({ ro }) => matchesSearch(ro));
+  // Lead tech: team cars with no tech on them yet, whatever the Mine/Team/All filter says.
+  const unassignedTeamRows = isLead
+    ? repairOrders.filter((ro) => !ro.archived_at && needsTech(ro))
+        .map((ro) => ({ ro, stage: stageOfRo(ro) }))
+        .filter(({ stage }) => stage === "write_up" || stage === "waiting" || stage === "in_shop")
+    : [];
 
   const chips: Array<{ key: ListFilter; label: string }> = [
     { key: "active", label: "Active" },
@@ -3224,6 +3239,9 @@ function Dashboard({
           <div className="badge-row">
             <span className={`stage-pill stage-${stage}`}>{stageText}</span>
             {ro.archived_at && <span className="badge archived">Archived</span>}
+            {needsTech(ro) && !ro.archived_at && stage !== "invoiced" && stage !== "paid" && stage !== "voided" && (
+              <span className="badge needs-tech">Needs a tech</span>
+            )}
             {pending > 0 && !ro.archived_at && (
               <span className="badge recommendation">{isTechnician ? `${pending} sent for pricing` : `${pending} to price`}</span>
             )}
@@ -3304,6 +3322,22 @@ function Dashboard({
         </div>
       )}
 
+      {isLead && unassignedTeamRows.length > 0 && !normalized && (
+        <>
+          <h2 className="ro-list-subhead needs-tech-head">Needs a tech <span className="stage-chip-count">{unassignedTeamRows.length}</span></h2>
+          <p className="muted ro-list-hint">Your team&apos;s cars nobody is on yet. Open one and pick a tech under Dispatch.</p>
+          <div className="panel ro-list-panel needs-tech-panel">
+            <div className="table-wrap">
+              <table className="ro-list-table">
+                {head}
+                <tbody>{unassignedTeamRows.map((row) => renderRow(row))}</tbody>
+              </table>
+            </div>
+          </div>
+          <h2 className="ro-list-subhead">{techScope === "mine" ? "My jobs" : techScope === "team" ? "All team jobs" : "All jobs"}</h2>
+        </>
+      )}
+
       <div className="panel ro-list-panel">
         <div className="table-wrap">
           <table className="ro-list-table">
@@ -3348,6 +3382,7 @@ function RepairOrderEditor({
   ownerId,
   isTechnician,
   isAdvisor = false,
+  leadTeamId = null,
   settings,
   customers,
   vehicles,
@@ -3375,6 +3410,8 @@ function RepairOrderEditor({
   isTechnician: boolean;
   /** A service advisor who isn't an admin (pricing permissions apply). */
   isAdvisor?: boolean;
+  /** Set when a lead tech is signed in: the team they lead (they can assign that team's techs). */
+  leadTeamId?: string | null;
   settings: Settings;
   customers: Customer[];
   vehicles: Vehicle[];
@@ -4947,9 +4984,10 @@ function RepairOrderEditor({
             </>
           )}
 
-      {canRestructureRo && settings.team_features_enabled && (
+      {settings.team_features_enabled && (canRestructureRo || (leadTeamId && initialRo && initialRo.team_id === leadTeamId)) && (
         <TechnicianAssignment
           ownerId={ownerId}
+          leadTeamId={canRestructureRo ? null : leadTeamId}
           repairOrderId={initialRo?.id ?? null}
           workMode={settings.tech_work_mode ?? "technician"}
           initialTeamId={initialRo?.team_id ?? null}
@@ -5191,6 +5229,7 @@ type DispatchDraft = { teamId: string | null; techIds: string[] };
 
 function TechnicianAssignment({
   ownerId,
+  leadTeamId = null,
   repairOrderId,
   workMode,
   initialTeamId,
@@ -5201,6 +5240,8 @@ function TechnicianAssignment({
   /** Called after a pick is written straight to a saved RO. */
   onSaved?: () => void;
   ownerId: string;
+  /** A lead tech: only their own team's techs, and the team itself can't be changed. */
+  leadTeamId?: string | null;
   /** Null while writing up a new RO: picks are held here and saved along with the RO. */
   repairOrderId: string | null;
   workMode: TechWorkMode;
@@ -5228,7 +5269,8 @@ function TechnicianAssignment({
     ]);
     if (staffResult.error) setMessage(staffResult.error.message);
     if (assignmentsResult.error) setMessage(assignmentsResult.error.message);
-    setTechnicians((staffResult.data ?? []) as StaffMember[]);
+    const allTechs = (staffResult.data ?? []) as StaffMember[];
+    setTechnicians(leadTeamId ? allTechs.filter((tech) => tech.team_id === leadTeamId) : allTechs);
     setTeams((teamsResult.data ?? []) as Team[]);
     setAssignedIds(((assignmentsResult.data ?? []) as Array<{ staff_id: string }>).map((row) => row.staff_id));
     setLoading(false);
@@ -5272,7 +5314,9 @@ function TechnicianAssignment({
     setBusy(false);
   }
   const teamName = (id: string | null) => teams.find((team) => team.id === id)?.name;
-  const help = workMode === "open"
+  const help = leadTeamId
+    ? `You lead ${teamName(leadTeamId) ?? "this team"}: pick who on the team works this car. They'll see it on their list.`
+    : workMode === "open"
     ? "Open shop: every tech can already work this RO. Tag who's on it so everyone knows."
     : workMode === "team"
       ? "Pick the team that has this car — everyone on it can work it. Add a specific tech if needed."
@@ -5291,7 +5335,9 @@ function TechnicianAssignment({
         <p className="muted">Loading…</p>
       ) : (
         <div className="dispatch-body">
-          {teams.length > 0 && (
+          {leadTeamId ? (
+            <div className="dispatch-team dispatch-team-fixed"><span>Team</span><strong>{teamName(leadTeamId) ?? "Your team"}</strong></div>
+          ) : teams.length > 0 && (
             <label className="dispatch-team">
               Team
               <select value={teamId ?? ""} disabled={busy} onChange={(event) => void chooseTeam(event.target.value || null)}>
@@ -5303,7 +5349,7 @@ function TechnicianAssignment({
           <div className="dispatch-techs">
             <span className="dispatch-label">Technicians</span>
             {!technicians.length ? (
-              <span className="muted">No active technicians yet. Add them in Settings → Staff &amp; Teams.</span>
+              <span className="muted">{leadTeamId ? "No other techs on your team yet. The owner adds them in Settings → Staff." : "No active technicians yet. Add them in Settings → Staff & Teams."}</span>
             ) : (
               <div className="dispatch-tech-buttons">
                 {sortedTechs.map((tech) => {
@@ -7454,7 +7500,7 @@ function SettingsPanel({
               </label>
             ))}
             <p className="muted" style={{ margin: "8px 0 0", fontSize: 12 }}>
-              A lead tech or shop foreman set to &quot;All shop work&quot; below can always see and work every repair order.
+              A <strong>lead technician</strong> always sees every repair order sent to their team and assigns their team&apos;s techs to it. A foreman set to &quot;All shop work&quot; sees everything in the shop.
             </p>
           </fieldset>
         )}
@@ -7488,7 +7534,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
   const [newTeamName, setNewTeamName] = useState("");
   const [teamBusy, setTeamBusy] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
-  const [inviteForm, setInviteForm] = useState<{ name: string; email: string; username: string; employeeId: string; role: StaffRole; teamId: string; canViewAllWork: boolean; isAdmin: boolean }>({
+  const [inviteForm, setInviteForm] = useState<{ name: string; email: string; username: string; employeeId: string; role: StaffRole | "lead"; teamId: string; canViewAllWork: boolean; isAdmin: boolean }>({
     name: "", email: "", username: "", employeeId: "", role: "technician", teamId: "", canViewAllWork: false, isAdmin: false,
   });
   const [createdCredentials, setCreatedCredentials] = useState<{ email: string; username: string; password: string; emailSent: boolean } | null>(null);
@@ -7583,6 +7629,10 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
       setMessage("That username is already taken. Try another.");
       return;
     }
+    if (inviteForm.role === "lead" && !inviteForm.teamId) {
+      setMessage("A lead technician needs a team to lead. Pick their team.");
+      return;
+    }
     setInviteBusy(true);
     setMessage("");
     setCreatedCredentials(null);
@@ -7595,7 +7645,9 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
-          name, email, username, role: inviteForm.role,
+          name, email, username,
+          role: inviteForm.role === "lead" ? "technician" : inviteForm.role,
+          isTeamLead: inviteForm.role === "lead",
           employeeId: inviteForm.employeeId.trim() || null,
           teamId: inviteForm.teamId || null,
           canViewAllWork: inviteForm.canViewAllWork,
@@ -7734,10 +7786,22 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
                     </td>
                     <td>{member.email}</td>
                     <td>
-                      <select value={member.role} onChange={(event) => void updateStaff(member.id, { role: event.target.value as StaffRole })}>
+                      <select
+                        value={member.role === "technician" && member.is_team_lead ? "lead" : member.role}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          void updateStaff(member.id, value === "lead"
+                            ? { role: "technician", is_team_lead: true }
+                            : { role: value as StaffRole, is_team_lead: false });
+                        }}
+                      >
                         <option value="technician">Technician</option>
+                        <option value="lead">Lead technician</option>
                         <option value="service_advisor">Service advisor</option>
                       </select>
+                      {member.role === "technician" && member.is_team_lead && !member.team_id && (
+                        <small className="staff-lead-warning">Pick a team to lead →</small>
+                      )}
                     </td>
                     <td>
                       <select value={member.team_id || ""} onChange={(event) => void updateStaff(member.id, { team_id: event.target.value || null })}>
@@ -7748,7 +7812,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
                     <td>
                       <select value={member.can_view_all_work ? "all" : "own"} onChange={(event) => void updateStaff(member.id, { can_view_all_work: event.target.value === "all" })}>
                         <option value="own">{member.role === "technician" ? "Follows shop setting" : "Their own ROs only"}</option>
-                        <option value="all">{member.role === "technician" ? "All shop work (lead / foreman)" : "All shop work"}</option>
+                        <option value="all">{member.role === "technician" ? "All shop work (foreman)" : "All shop work"}</option>
                       </select>
                     </td>
                     <td>
@@ -7813,8 +7877,9 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
           </label>
           <label>
             Role
-            <select value={inviteForm.role} onChange={(event) => setInviteForm({ ...inviteForm, role: event.target.value as StaffRole })}>
+            <select value={inviteForm.role} onChange={(event) => setInviteForm({ ...inviteForm, role: event.target.value as StaffRole | "lead" })}>
               <option value="technician">Technician</option>
+              <option value="lead">Lead technician — assigns their team&apos;s work</option>
               <option value="service_advisor">Service advisor</option>
             </select>
           </label>

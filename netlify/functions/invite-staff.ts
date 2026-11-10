@@ -72,7 +72,7 @@ async function handler(request: Request): Promise<Response> {
   const owner = await userResponse.json() as { id: string };
 
   const body = await request.json().catch(() => ({})) as {
-    name?: string; email?: string; username?: string; employeeId?: string | null; role?: string; teamId?: string | null; canViewAllWork?: boolean; isAdmin?: boolean;
+    name?: string; email?: string; username?: string; employeeId?: string | null; role?: string; teamId?: string | null; canViewAllWork?: boolean; isAdmin?: boolean; isTeamLead?: boolean;
   };
   const name = (body.name || "").trim();
   const email = (body.email || "").trim().toLowerCase();
@@ -84,6 +84,8 @@ async function handler(request: Request): Promise<Response> {
     return json({ error: "Username must be 3-20 characters, letters/numbers/underscore only." }, 400);
   }
   if (role !== "technician" && role !== "service_advisor") return json({ error: "Choose a role." }, 400);
+  const isTeamLead = role === "technician" && Boolean(body.isTeamLead);
+  if (isTeamLead && !body.teamId) return json({ error: "A lead technician needs a team to lead." }, 400);
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
 
@@ -106,6 +108,13 @@ async function handler(request: Request): Promise<Response> {
   );
   const usernameRows = usernameCheck.ok ? await usernameCheck.json() as Array<{ id: string }> : [];
   if (usernameRows.length) return json({ error: "That username is already taken. Try another." }, 400);
+  // Owners can have a sign-in username too; it comes from the same pool.
+  const ownerNameCheck = await fetch(
+    `${supabaseUrl}/rest/v1/settings?select=id&owner_username=eq.${encodeURIComponent(usernameLower)}&limit=1`,
+    { headers: serviceHeaders }
+  );
+  const ownerNameRows = ownerNameCheck.ok ? await ownerNameCheck.json() as Array<{ id: string }> : [];
+  if (ownerNameRows.length) return json({ error: "That username is already taken. Try another." }, 400);
 
   const tempPassword = generateTempPassword();
   const createUserResponse = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
@@ -133,6 +142,7 @@ async function handler(request: Request): Promise<Response> {
       team_id: body.teamId || null,
       can_view_all_work: Boolean(body.canViewAllWork),
       is_admin: Boolean(body.isAdmin),
+      is_team_lead: isTeamLead,
       active: true,
       must_change_password: true,
     }),
