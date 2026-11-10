@@ -1,4 +1,4 @@
-import { alertsFrom } from "../../lib/email-from";
+import { notifyError } from "../../lib/platform-alert";
 // Starts a Stripe Checkout session for a shop to SUBSCRIBE to the platform itself (this is us
 // billing the shop, unlike create-payment-session.ts which is a shop billing its own customer via
 // their own connected Stripe account). Created directly on the platform's own Stripe account — no
@@ -16,25 +16,6 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 // Best-effort alert email to Connor when this function throws an uncaught exception — otherwise a
 // bug or an upstream outage (Stripe/Supabase/Resend down) fails silently with nobody finding out
 // until a shop or customer complains. Never lets the alert itself break the real response.
-async function notifyError(functionName: string, error: unknown, request: Request) {
-  try {
-    const resendKey = process.env.RESEND_API_KEY;
-    if (!resendKey) return;
-    const detail = error instanceof Error ? `${error.message}\n\n${error.stack || ""}` : String(error);
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: alertsFrom(),
-        to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[ROrunner] ${functionName} threw an error`,
-        text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
-      }),
-    });
-  } catch {
-    // If Resend itself is down there's nothing more we can do here.
-  }
-}
 
 async function handler(request: Request): Promise<Response> {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);

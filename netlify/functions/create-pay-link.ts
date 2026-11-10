@@ -1,4 +1,4 @@
-import { alertsFrom } from "../../lib/email-from";
+import { notifyError } from "../../lib/platform-alert";
 // Staff-only. Creates the single "pay this invoice" link a shop shares with a customer; the customer
 // then chooses card/bank or Zelle on the public /pay page (see pay-invoice.ts). Only the hash of the
 // token is stored. Same owner/advisor/admin permission rule as create-payment-session.ts.
@@ -7,25 +7,6 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   headers: { "Content-Type": "application/json" },
 });
 
-async function notifyError(functionName: string, error: unknown, request: Request) {
-  try {
-    const resendKey = process.env.RESEND_API_KEY;
-    if (!resendKey) return;
-    const detail = error instanceof Error ? `${error.message}\n\n${error.stack || ""}` : String(error);
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: alertsFrom(),
-        to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[ROrunner] ${functionName} threw an error`,
-        text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
-      }),
-    });
-  } catch {
-    // Nothing more to do if the alert itself fails.
-  }
-}
 
 async function hashToken(token: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));

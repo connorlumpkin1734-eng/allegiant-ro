@@ -1,42 +1,22 @@
 // Public, no-login Terms of Service. Linked from the signup screen and the in-app footer.
 //
-// ⚠️ ENTITY PLACEHOLDER: the LLC that will operate this service hasn't been formed yet, so this
-// document currently names "Allegiant Auto Care" as the operator. The instant the LLC exists,
-// every "CHANGE ME" marker below must be swapped for the real legal entity name, state of
-// formation, and registered contact address — do a find for "CHANGE ME" in this file.
-const LAST_UPDATED = "September 30, 2026";
+// Operator is named as "ROrunner" (no company formed yet). When an LLC exists, put its legal name
+// (and state of formation) in OPERATOR and update LAST_UPDATED.
+const LAST_UPDATED = "November 9, 2026";
+const OPERATOR = "ROrunner";
+const CONTACT_EMAIL = "support@rorunner.com";
 
 export default function TermsPage() {
   return (
     <main className="approval-shell">
       <article className="approval-card" style={{ maxWidth: 760 }}>
-        <div
-          style={{
-            background: "#fff3cd",
-            border: "2px solid #e0a800",
-            borderRadius: 10,
-            padding: "14px 18px",
-            marginBottom: 24,
-            fontWeight: 700,
-            color: "#7a5900",
-          }}
-        >
-          ⚠️ CHANGE ME: This document names &quot;Allegiant Auto Care&quot; as the operator because
-          the LLC isn&apos;t formed yet. Replace every &quot;CHANGE ME&quot; marker below with the
-          real legal entity name, state of formation, and registered address before relying on this
-          for shops other than your own.
-        </div>
-
         <h1 style={{ margin: "0 0 4px" }}>Terms of Service</h1>
         <p style={{ color: "#8493a6", fontSize: 13, marginTop: 0 }}>Last updated: {LAST_UPDATED}</p>
 
         <p>
           These Terms of Service (&quot;Terms&quot;) govern access to and use of the repair order
-          management software (the &quot;Service&quot;) provided by Allegiant Auto Care{" "}
-          <strong>(CHANGE ME: legal entity name, e.g. &quot;[Your LLC Name], a Texas limited
-          liability company&quot;)</strong>, with a registered address at{" "}
-          <strong>CHANGE ME: registered address</strong> (&quot;we,&quot; &quot;us,&quot; or
-          &quot;our&quot;). By creating an account or using the Service, you agree to these Terms on
+          management software (the &quot;Service&quot;) provided by {OPERATOR} (&quot;we,&quot;
+          &quot;us,&quot; or &quot;our&quot;). By creating an account or using the Service, you agree to these Terms on
           behalf of yourself and the business you represent (&quot;you&quot; or &quot;your
           shop&quot;).
         </p>
@@ -132,13 +112,11 @@ export default function TermsPage() {
         <h2>12. Governing law</h2>
         <p>
           These Terms are governed by the laws of the State of Texas, without regard to its conflict
-          of law principles.{" "}
-          <strong>CHANGE ME: confirm this is still correct once the LLC&apos;s state of formation is
-          final.</strong>
+          of law principles.
         </p>
 
         <h2>13. Contact</h2>
-        <p>Questions about these Terms can be sent to connor.lumpkin1734@gmail.com.</p>
+        <p>Questions about these Terms can be sent to <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.</p>
       </article>
     </main>
   );

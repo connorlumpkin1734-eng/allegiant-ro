@@ -1,38 +1,21 @@
 // Public, no-login Privacy Policy. Linked from the signup screen and the in-app footer.
 //
-// ⚠️ ENTITY PLACEHOLDER: same as /terms — this names "Allegiant Auto Care" as the operator until
-// the LLC is formed. Find "CHANGE ME" in this file and update it once the entity exists.
-const LAST_UPDATED = "September 30, 2026";
+// Operator is named as "ROrunner" (no company formed yet). When an LLC exists, put its legal name
+// (and state of formation) in OPERATOR and update LAST_UPDATED.
+const LAST_UPDATED = "November 9, 2026";
+const OPERATOR = "ROrunner";
+const CONTACT_EMAIL = "support@rorunner.com";
 
 export default function PrivacyPage() {
   return (
     <main className="approval-shell">
       <article className="approval-card" style={{ maxWidth: 760 }}>
-        <div
-          style={{
-            background: "#fff3cd",
-            border: "2px solid #e0a800",
-            borderRadius: 10,
-            padding: "14px 18px",
-            marginBottom: 24,
-            fontWeight: 700,
-            color: "#7a5900",
-          }}
-        >
-          ⚠️ CHANGE ME: This document names &quot;Allegiant Auto Care&quot; as the operator because
-          the LLC isn&apos;t formed yet. Replace every &quot;CHANGE ME&quot; marker below with the
-          real legal entity name and registered address before relying on this for shops other than
-          your own.
-        </div>
-
         <h1 style={{ margin: "0 0 4px" }}>Privacy Policy</h1>
         <p style={{ color: "#8493a6", fontSize: 13, marginTop: 0 }}>Last updated: {LAST_UPDATED}</p>
 
         <p>
-          This Privacy Policy explains what information Allegiant Auto Care{" "}
-          <strong>(CHANGE ME: legal entity name)</strong>, with a registered address at{" "}
-          <strong>CHANGE ME: registered address</strong> (&quot;we,&quot; &quot;us,&quot; or
-          &quot;our&quot;), collects through the repair order management software (the
+          This Privacy Policy explains what information {OPERATOR} (&quot;we,&quot; &quot;us,&quot; or
+          &quot;our&quot;) collects through the repair order management software (the
           &quot;Service&quot;), and how we use it.
         </p>
 
@@ -138,7 +121,7 @@ export default function PrivacyPage() {
         <h2>10. Contact and data requests</h2>
         <p>
           Questions about this policy, or requests to access, correct, or delete your information,
-          can be sent to connor.lumpkin1734@gmail.com.
+          can be sent to <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
         </p>
 
         <h2>11. Changes to this policy</h2>

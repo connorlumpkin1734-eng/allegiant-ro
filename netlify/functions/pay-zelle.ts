@@ -1,3 +1,4 @@
+import { notifyError } from "../../lib/platform-alert";
 import { alertsFrom, fromAddress } from "../../lib/email-from";
 // Public, unauthenticated endpoint behind the /pay-zelle page. GET returns the shop's Zelle info
 // and amount due for a token; POST records that the customer says they've sent payment and emails
@@ -11,25 +12,6 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 // Best-effort alert email to Connor when this function throws an uncaught exception — otherwise a
 // bug or an upstream outage (Stripe/Supabase/Resend down) fails silently with nobody finding out
 // until a shop or customer complains. Never lets the alert itself break the real response.
-async function notifyError(functionName: string, error: unknown, request: Request) {
-  try {
-    const resendKey = process.env.RESEND_API_KEY;
-    if (!resendKey) return;
-    const detail = error instanceof Error ? `${error.message}\n\n${error.stack || ""}` : String(error);
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: alertsFrom(),
-        to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[ROrunner] ${functionName} threw an error`,
-        text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
-      }),
-    });
-  } catch {
-    // If Resend itself is down there's nothing more we can do here.
-  }
-}
 
 
 const escapeHtml = (value: unknown) => String(value ?? "")

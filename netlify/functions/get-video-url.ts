@@ -1,3 +1,4 @@
+import { notifyError } from "../../lib/platform-alert";
 // Returns a short-lived presigned URL to play back one video clip stored in R2. Authorization is
 // delegated to Postgres RLS rather than reimplemented here: the lookup runs as the CALLER'S OWN
 // Supabase session (their JWT, not the service-role key), so the same "Staff can view scoped
@@ -6,32 +7,12 @@
 // the same 404 (never reveal which, same reasoning as a missing-vs-unauthorized photo).
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { alertsFrom } from "../../lib/email-from";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
 });
 
-async function notifyError(functionName: string, error: unknown, request: Request) {
-  try {
-    const resendKey = process.env.RESEND_API_KEY;
-    if (!resendKey) return;
-    const detail = error instanceof Error ? `${error.message}\n\n${error.stack || ""}` : String(error);
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: alertsFrom(),
-        to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[ROrunner] ${functionName} threw an error`,
-        text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
-      }),
-    });
-  } catch {
-    // If Resend itself is down there's nothing more we can do here.
-  }
-}
 
 function r2Client() {
   const accountId = process.env.R2_ACCOUNT_ID;

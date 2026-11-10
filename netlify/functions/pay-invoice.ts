@@ -1,4 +1,4 @@
-import { alertsFrom } from "../../lib/email-from";
+import { notifyError } from "../../lib/platform-alert";
 // Public, token-gated. The customer opens ONE link and chooses how to pay:
 //   GET  ?token=…                      -> invoice summary + which payment methods this shop offers
 //   POST { token, method: "card" }     -> creates a fresh Stripe Checkout session, returns its URL
@@ -11,25 +11,6 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   headers: { "Content-Type": "application/json" },
 });
 
-async function notifyError(functionName: string, error: unknown, request: Request) {
-  try {
-    const resendKey = process.env.RESEND_API_KEY;
-    if (!resendKey) return;
-    const detail = error instanceof Error ? `${error.message}\n\n${error.stack || ""}` : String(error);
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: alertsFrom(),
-        to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[ROrunner] ${functionName} threw an error`,
-        text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
-      }),
-    });
-  } catch {
-    // Nothing more to do if the alert itself fails.
-  }
-}
 
 type LineItem = { item_type: string; quantity: number; unit_price: number; taxable: boolean; service_group_id: string | null; job_status?: string | null };
 type InvoiceOverrides = Record<string, { note: string; recorded_at: string; recorded_by: string }>;

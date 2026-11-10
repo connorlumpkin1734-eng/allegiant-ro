@@ -1,3 +1,4 @@
+import { notifyError } from "../../lib/platform-alert";
 // Issues a presigned PUT URL so the browser can upload a video clip directly to Cloudflare R2 —
 // never through this function's own body, which would hit Netlify's function payload size limit
 // long before a real video file does. The actual estimate_videos row is inserted by the client
@@ -9,32 +10,12 @@
 // supabase/migrations/20261004_estimate_videos.sql.
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { alertsFrom } from "../../lib/email-from";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
 });
 
-async function notifyError(functionName: string, error: unknown, request: Request) {
-  try {
-    const resendKey = process.env.RESEND_API_KEY;
-    if (!resendKey) return;
-    const detail = error instanceof Error ? `${error.message}\n\n${error.stack || ""}` : String(error);
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: alertsFrom(),
-        to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[ROrunner] ${functionName} threw an error`,
-        text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
-      }),
-    });
-  } catch {
-    // If Resend itself is down there's nothing more we can do here.
-  }
-}
 
 const ALLOWED_CONTENT_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
 

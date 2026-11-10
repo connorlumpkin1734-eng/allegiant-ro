@@ -1,3 +1,4 @@
+import { notifyError } from "../../lib/platform-alert";
 // Runs automatically every night (see `config.schedule` below) and writes a full snapshot of the
 // database to Netlify Blobs — this project is on Supabase's free plan, which has NO automated
 // backups at all (daily backups are a paid Pro-plan feature, PITR is a separate paid add-on on top
@@ -17,36 +18,16 @@
 // credentials, no new third-party account. Storage is Netlify Blobs, which every Netlify site gets
 // automatically with no setup.
 import { getStore } from "@netlify/blobs";
-import { alertsFrom } from "../../lib/email-from";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "Content-Type": "application/json" },
 });
 
-// Best-effort alert email to Connor when this function throws an uncaught exception. A backup job
+// Best-effort platform alert (see lib/platform-alert.ts) when this function throws. A backup job
 // is exactly the kind of thing that can silently stop working for weeks with nobody noticing until
 // the day it's actually needed — so unlike other functions, this one alerts on BOTH a hard crash
 // and a soft failure (e.g. one table's export came back empty when it shouldn't have).
-async function notifyError(functionName: string, error: unknown, request: Request) {
-  try {
-    const resendKey = process.env.RESEND_API_KEY;
-    if (!resendKey) return;
-    const detail = error instanceof Error ? `${error.message}\n\n${error.stack || ""}` : String(error);
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: alertsFrom(),
-        to: ["connor.lumpkin1734@gmail.com"],
-        subject: `[ROrunner] ${functionName} threw an error`,
-        text: `${functionName} (${request.method} ${request.url}) threw an uncaught error:\n\n${detail}`,
-      }),
-    });
-  } catch {
-    // If Resend itself is down there's nothing more we can do here.
-  }
-}
 
 // Every public table except rate_limits (ephemeral, self-regenerating, no backup value).
 const TABLES = [
