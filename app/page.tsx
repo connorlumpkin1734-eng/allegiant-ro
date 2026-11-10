@@ -251,6 +251,85 @@ function pendingRecommendationCount(items: Array<Pick<LineItem, "service_group_i
   return new Set(items.filter((item) => item.job_status === "pending_review" && item.service_group_id).map((item) => item.service_group_id)).size;
 }
 
+/** A customer tapped "I sent it" on a Zelle payment and the shop hasn't confirmed it yet. */
+function zelleAwaitingConfirm(ro: Pick<RepairOrder, "paid" | "payments">) {
+  return !ro.paid && (ro.payments ?? []).some((payment) => payment.processor === "zelle" && payment.status === "processing");
+}
+
+// Any not-yet-confirmed Zelle payment for this RO, with the button that marks it paid. Shown on
+// the RO screen and the invoice preview so staff see it the moment they open the RO. RLS already
+// scopes the lookup to the caller's own shop (owner, admin or advisor).
+function ZelleConfirmBanner({ roId, refreshKey, onPaid }: { roId: string; refreshKey?: unknown; onPaid: () => void }) {
+  const [pending, setPending] = useState<{ id: string; amount: number; status: string } | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void supabase
+      .from("payments")
+      .select("id,amount,status")
+      .eq("repair_order_id", roId)
+      .eq("processor", "zelle")
+      .in("status", ["pending", "processing"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const row = data?.[0] as { id: string; amount: number; status: string } | undefined;
+        setPending(row ? { id: row.id, amount: Number(row.amount), status: row.status } : null);
+      });
+    return () => { cancelled = true; };
+  }, [roId, refreshKey]);
+
+  async function confirm() {
+    if (!pending) return;
+    setBusy(true);
+    setError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/confirm-zelle-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ paymentId: pending.id, note }),
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not confirm the payment.");
+      setPending(null);
+      onPaid();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not confirm the payment.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!pending) return null;
+  const amount = pending.amount.toLocaleString("en-US", { style: "currency", currency: "usd" });
+  return (
+    <div className="no-print notice notice-warn" style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+      <span style={{ flex: "1 1 100%" }}>
+        {pending.status === "processing"
+          ? <>Customer says they sent <strong>{amount}</strong> by Zelle. Check your bank app, then confirm. <strong>It isn&apos;t marked paid until you do.</strong></>
+          : <>A Zelle payment for <strong>{amount}</strong> is waiting on the customer. Once the money is in your bank, you can confirm it here.</>}
+      </span>
+      <input
+        placeholder="Optional note (e.g. last 4 of transfer)"
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        style={{ flex: "1 1 220px", minWidth: 180 }}
+      />
+      <button type="button" className="button success" disabled={busy} onClick={() => void confirm()}>
+        {busy ? "Confirming…" : "Confirm payment received"}
+      </button>
+      {error && <span style={{ flex: "1 1 100%", color: "var(--danger-text)" }}>{error}</span>}
+    </div>
+  );
+}
+
 function StageTrack({ stage, solo = false }: { stage: RoStage; solo?: boolean }) {
   if (stage === "voided") return <div className="stage-track voided" aria-label="RO stage">Voided</div>;
   // One-person shop: there's no tech handing the car to an advisor, so that step is left out.
@@ -613,6 +692,8 @@ type RepairOrder = {
   team_id?: string | null;
   repair_order_technicians?: Array<{ staff_id: string; staff?: { name: string } | null }>;
   teams?: { name: string } | null;
+  /** Just enough to spot a Zelle payment the shop still has to confirm. Advisors/owners only (RLS). */
+  payments?: Array<{ processor: string; status: string }>;
   latest_estimate_authorization?: EstimateAuthorization | null;
 };
 
@@ -1501,7 +1582,7 @@ function RepairOrderApp({ user }: { user: User }) {
       supabase.from("vehicles").select("*").order("year", { ascending: false }),
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status)")
         .order("created_at", { ascending: false }),
       supabase
         .from("estimate_authorizations")
@@ -1680,7 +1761,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status)")
         .eq("id", id)
         .single(),
       supabase
@@ -1720,7 +1801,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status)")
         .eq("id", id)
         .single(),
       supabase
@@ -1755,7 +1836,7 @@ function RepairOrderApp({ user }: { user: User }) {
     setError("");
     const { data, error: fetchError } = await supabase
       .from("repair_orders")
-      .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name)")
+      .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status)")
       .eq("id", id)
       .single();
 
@@ -3243,7 +3324,7 @@ function Dashboard({
     const decision = authorizationDecisionSummary(authorization);
     const stageText = isTechnician
       ? stage === "ready" ? "Sent to advisor" : stage === "waiting" ? "Waiting on customer OK" : RO_STAGE_LABEL[stage]
-      : stage === "ready" ? "Ready for you" : RO_STAGE_LABEL[stage];
+      : stage === "ready" ? "Ready for you" : zelleAwaitingConfirm(ro) ? "Zelle sent · confirm" : RO_STAGE_LABEL[stage];
     return (
       <tr
         key={ro.id}
@@ -3269,7 +3350,7 @@ function Dashboard({
         </td>
         <td className="ro-cell-stage" data-label="Stage">
           <div className="badge-row">
-            <span className={`stage-pill stage-${stage}`}>{stageText}</span>
+            <span className={`stage-pill stage-${!isTechnician && zelleAwaitingConfirm(ro) ? "zelle" : stage}`}>{stageText}</span>
             {ro.archived_at && <span className="badge archived">Archived</span>}
             {needsTech(ro) && !ro.archived_at && stage !== "invoiced" && stage !== "paid" && stage !== "voided" && (
               <span className="badge needs-tech">Needs a tech</span>
@@ -4741,6 +4822,9 @@ function RepairOrderEditor({
         </div>
       )}
       {initialRo && !isTechnician && <StageTrack stage={stage} solo={soloShop} />}
+      {initialRo && !isTechnician && !initialRo.paid && (
+        <ZelleConfirmBanner roId={initialRo.id} onPaid={() => { reloadFromServer(); onBackgroundRefresh?.(); }} />
+      )}
       {initialRo && !isTechnician && stage === "ready" && (
         <div className="handoff-banner">
           <strong>The tech sent this to you.</strong>
@@ -8189,10 +8273,6 @@ function DocumentView({
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [paymentLink, setPaymentLink] = useState("");
   const [paymentError, setPaymentError] = useState("");
-  const [zelleError, setZelleError] = useState("");
-  const [pendingZellePayment, setPendingZellePayment] = useState<{ id: string; amount: number; status: string } | null>(null);
-  const [zelleConfirmBusy, setZelleConfirmBusy] = useState(false);
-  const [zelleConfirmNote, setZelleConfirmNote] = useState("");
   const mode: DocumentMode = isTechnician ? "work_order" : requestedMode;
   const [sendKind, setSendKind] = useState<"estimate" | "invoice" | null>(null);
   const [hasInspection, setHasInspection] = useState(false);
@@ -8227,55 +8307,10 @@ function DocumentView({
     }
   }
 
-  async function confirmZellePayment() {
-    if (!pendingZellePayment) return;
-    setZelleConfirmBusy(true);
-    try {
-      const { data } = await supabase.auth.getSession();
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("Your session expired. Sign in again.");
-      const response = await fetch("/.netlify/functions/confirm-zelle-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ paymentId: pendingZellePayment.id, note: zelleConfirmNote }),
-      });
-      const body = await response.json() as { message?: string; error?: string };
-      if (!response.ok) throw new Error(body.error || "Could not confirm the payment.");
-      setPendingZellePayment(null);
-      onPaid();
-    } catch (caught) {
-      setZelleError(caught instanceof Error ? caught.message : "Could not confirm the payment.");
-    } finally {
-      setZelleConfirmBusy(false);
-    }
-  }
-
   const isEstimate = mode === "estimate";
   const isWorkOrder = mode === "work_order";
   const isInvoice = mode === "invoice";
 
-  // Surface any not-yet-confirmed Zelle payment for this invoice so staff see it the moment they
-  // open it, without having to remember to check. RLS already scopes this to the caller's own shop.
-  useEffect(() => {
-    let cancelled = false;
-    if (!isInvoice) return;
-    supabase
-      .from("payments")
-      .select("id,amount,status")
-      .eq("repair_order_id", ro.id)
-      .eq("processor", "zelle")
-      .in("status", ["pending", "processing"])
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .then(({ data }) => {
-        if (cancelled) return;
-        const row = data?.[0] as { id: string; amount: number; status: string } | undefined;
-        setPendingZellePayment(row ? { id: row.id, amount: Number(row.amount), status: row.status } : null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isInvoice, ro.id, paymentLink]);
 
   useEffect(() => {
     let cancelled = false;
@@ -8579,31 +8614,7 @@ function DocumentView({
           )}
         </div>
       )}
-      {zelleError && (
-        <div className="no-print error-banner" style={{ margin: "0 0 16px" }}>
-          <span>{zelleError}</span>
-        </div>
-      )}
-      {pendingZellePayment && (
-        <div className="no-print notice notice-warn" style={{ margin: "0 0 16px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <span>
-            {pendingZellePayment.status === "processing" ? (
-              <>Customer says they sent <strong>{pendingZellePayment.amount.toLocaleString("en-US", { style: "currency", currency: "usd" })}</strong> via Zelle. <strong>Nothing is marked paid until you confirm it below</strong> — check your bank app first.</>
-            ) : (
-              <>A Zelle payment link for <strong>{pendingZellePayment.amount.toLocaleString("en-US", { style: "currency", currency: "usd" })}</strong> is awaiting the customer. You can still confirm it manually below once the money arrives.</>
-            )}
-          </span>
-          <input
-            placeholder="Optional note (e.g. last 4 of transfer)"
-            value={zelleConfirmNote}
-            onChange={(event) => setZelleConfirmNote(event.target.value)}
-            style={{ flex: "1 1 220px", minWidth: 180 }}
-          />
-          <button type="button" className="button success" disabled={zelleConfirmBusy} onClick={() => void confirmZellePayment()}>
-            {zelleConfirmBusy ? "Confirming…" : "Confirm payment received"}
-          </button>
-        </div>
-      )}
+      {isInvoice && <ZelleConfirmBanner roId={ro.id} refreshKey={paymentLink} onPaid={onPaid} />}
       <article ref={documentRef} className={`document-page ${className} tpl-${settings.document_template || "standard"} ${ro.status === "voided" ? "voided-document" : ""} ${isTechnician ? "hide-prices" : ""}`}>
         {ro.status === "voided" && <div className="void-watermark">VOID</div>}
 
