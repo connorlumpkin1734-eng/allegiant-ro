@@ -2684,3 +2684,21 @@ select option { background-color: var(--panel); color: var(--ink); }
 .assign-pill.open { color: var(--warn-text); background: var(--warn-tint); }
 .assign-pill.assigned { color: #3ccf7a; background: rgba(60, 207, 122, 0.14); }
 .dispatch-confirm { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 8px; border: 1px solid var(--warn-text); border-radius: 8px; font-size: 13px; }
+
+/* Dispatch: searchable tech picker once a shop has more than 4 techs */
+.tech-picker { position: relative; margin-top: 8px; max-width: 420px; }
+.tech-picker-input { width: 100%; }
+.tech-picker-list {
+  position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 4px);
+  list-style: none; margin: 0; padding: 4px; max-height: 280px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+.tech-picker-list button {
+  width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.tech-picker-list button:hover, .tech-picker-list button:focus-visible { background: var(--line); }
+.tech-picker-list small { color: var(--muted); font-size: 12px; }
+.tech-picker-list small.same-team { color: var(--accent); font-weight: 700; }
+.tech-picker-empty { padding: 10px 12px; color: var(--muted); font-size: 13px; }
+.dispatch-tech-buttons:empty { display: none; }

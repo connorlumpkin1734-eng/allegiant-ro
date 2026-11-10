@@ -5292,6 +5292,8 @@ function TechnicianAssignment({
   // Techs who recommended work on this car that isn't done: they keep the car unless overridden.
   const [recommenderIds, setRecommenderIds] = useState<string[]>([]);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [techSearch, setTechSearch] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   async function loadAll() {
     if (repairOrderId) {
       const { data } = await supabase.from("line_items").select("recommended_by, job_status, job_progress").eq("repair_order_id", repairOrderId).not("recommended_by", "is", null);
@@ -5399,8 +5401,9 @@ function TechnicianAssignment({
             {!technicians.length ? (
               <span className="muted">{leadTeamId ? "No other techs on your team yet. The owner adds them in Settings → Staff." : "No active technicians yet. Add them in Settings → Staff & Teams."}</span>
             ) : (
+              <>
               <div className="dispatch-tech-buttons">
-                {sortedTechs.map((tech) => {
+                {(sortedTechs.length > 4 ? sortedTechs.filter((tech) => assignedIds.includes(tech.id)) : sortedTechs).map((tech) => {
                   const assigned = assignedIds.includes(tech.id);
                   const recommended = recommenderIds.includes(tech.id);
                   if (assigned && confirmRemove === tech.id) {
@@ -5428,6 +5431,52 @@ function TechnicianAssignment({
                   );
                 })}
               </div>
+
+            {sortedTechs.length > 4 && (() => {
+              // Bigger shops: a searchable list instead of a wall of buttons. Team techs first.
+              const query = techSearch.trim().toLowerCase();
+              const options = sortedTechs.filter((tech) => !assignedIds.includes(tech.id)
+                && (!query || tech.name.toLowerCase().includes(query) || (teamName(tech.team_id) ?? "").toLowerCase().includes(query)));
+              return (
+                <div className="tech-picker">
+                  <input
+                    type="search"
+                    className="tech-picker-input"
+                    placeholder={assignedIds.length ? "Add another tech…" : "Search techs to add…"}
+                    value={techSearch}
+                    disabled={busy}
+                    onFocus={() => setPickerOpen(true)}
+                    onBlur={() => window.setTimeout(() => setPickerOpen(false), 150)}
+                    onChange={(event) => { setTechSearch(event.target.value); setPickerOpen(true); }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && options[0]) {
+                        event.preventDefault();
+                        void toggle(options[0].id, true);
+                        setTechSearch("");
+                      }
+                      if (event.key === "Escape") setPickerOpen(false);
+                    }}
+                  />
+                  {pickerOpen && (
+                    <ul className="tech-picker-list" role="listbox">
+                      {options.length ? options.map((tech) => (
+                        <li key={tech.id}>
+                          <button
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => { void toggle(tech.id, true); setTechSearch(""); }}
+                          >
+                            <span>{tech.name}</span>
+                            {tech.team_id && <small className={tech.team_id === teamId ? "same-team" : ""}>{teamName(tech.team_id)}</small>}
+                          </button>
+                        </li>
+                      )) : <li className="tech-picker-empty">{query ? "No tech matches that." : "Everyone's already on this car."}</li>}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()}
+              </>
             )}
           </div>
         </div>
@@ -6193,7 +6242,7 @@ function CustomerDirectory({
                 <th>Contact</th>
                 <th>Address</th>
                 <th>Vehicles</th>
-                <th>WOs</th>
+                <th>ROs</th>
                 <th></th>
                 <th></th>
               </tr>
