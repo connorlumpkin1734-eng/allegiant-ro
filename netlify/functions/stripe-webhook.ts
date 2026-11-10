@@ -75,6 +75,39 @@ function mapSubscriptionStatus(stripeStatus: string): "active" | "past_due" | "c
   return null; // "incomplete" etc: not yet a real subscription, nothing to sync
 }
 
+// Fee, net and payment method for a payment on a shop's connected account. Returns {} if Stripe
+// hasn't recorded the fee yet or the lookup fails; a failure here must never stop the invoice from
+// being marked paid.
+async function stripeFeeFields(paymentIntentId: string, connectedAccount: string, stripeSecretKey: string): Promise<Record<string, unknown>> {
+  const fields: Record<string, unknown> = {};
+  try {
+    const headers = { Authorization: `Bearer ${stripeSecretKey}`, "Stripe-Account": connectedAccount };
+    const intentResponse = await fetch(
+      `https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}?expand[]=latest_charge.balance_transaction`,
+      { headers }
+    );
+    if (!intentResponse.ok) return fields;
+    type Balance = { fee?: number; net?: number };
+    const intent = await intentResponse.json() as {
+      latest_charge?: { payment_method_details?: { type?: string }; balance_transaction?: Balance | string | null } | string | null;
+    };
+    const charge = intent.latest_charge && typeof intent.latest_charge === "object" ? intent.latest_charge : null;
+    if (charge?.payment_method_details?.type) fields.payment_method_type = charge.payment_method_details.type;
+    let balance: Balance | null = charge && charge.balance_transaction && typeof charge.balance_transaction === "object" ? charge.balance_transaction : null;
+    if (!balance && typeof charge?.balance_transaction === "string") {
+      const balanceResponse = await fetch(`https://api.stripe.com/v1/balance_transactions/${encodeURIComponent(charge.balance_transaction)}`, { headers });
+      if (balanceResponse.ok) balance = await balanceResponse.json() as Balance;
+    }
+    if (balance && typeof balance.fee === "number") {
+      fields.fee_amount = balance.fee / 100;
+      if (typeof balance.net === "number") fields.net_amount = balance.net / 100;
+    }
+  } catch {
+    // Leave the fields unset.
+  }
+  return fields;
+}
+
 async function handler(request: Request): Promise<Response> {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
 
@@ -149,29 +182,15 @@ async function handler(request: Request): Promise<Response> {
 
     // Best-effort: look up what Stripe charged to process this payment (fee and net) and which method
     // was used. A failure here must never stop the invoice from being marked paid.
+    // Stripe often attaches the fee to the charge a moment after checkout completes, so give it a
+    // few short tries.
     const feeFields: Record<string, unknown> = {};
-    try {
-      const connectedAccount = event.account || payment.processor_account_id;
-      if (stripeSecretKey && connectedAccount && session.payment_intent) {
-        const intentResponse = await fetch(
-          `https://api.stripe.com/v1/payment_intents/${encodeURIComponent(session.payment_intent)}?expand[]=latest_charge.balance_transaction`,
-          { headers: { Authorization: `Bearer ${stripeSecretKey}`, "Stripe-Account": connectedAccount } }
-        );
-        if (intentResponse.ok) {
-          const intent = await intentResponse.json() as {
-            latest_charge?: { payment_method_details?: { type?: string }; balance_transaction?: { fee?: number; net?: number } | string | null } | string | null;
-          };
-          const charge = typeof intent.latest_charge === "object" ? intent.latest_charge : null;
-          const balance = charge && typeof charge.balance_transaction === "object" ? charge.balance_transaction : null;
-          if (balance && typeof balance.fee === "number") {
-            feeFields.fee_amount = balance.fee / 100;
-            if (typeof balance.net === "number") feeFields.net_amount = balance.net / 100;
-          }
-          if (charge?.payment_method_details?.type) feeFields.payment_method_type = charge.payment_method_details.type;
-        }
+    const connectedAccount = event.account || payment.processor_account_id;
+    if (stripeSecretKey && connectedAccount && session.payment_intent) {
+      for (let attempt = 0; attempt < 4 && feeFields.fee_amount === undefined; attempt++) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1500));
+        Object.assign(feeFields, await stripeFeeFields(session.payment_intent, connectedAccount, stripeSecretKey));
       }
-    } catch {
-      // Leave fee fields unset; the payment itself is still recorded below.
     }
 
     await fetch(`${supabaseUrl}/rest/v1/payments?id=eq.${payment.id}`, {
@@ -182,6 +201,21 @@ async function handler(request: Request): Promise<Response> {
       method: "PATCH", headers: serviceHeaders,
       body: JSON.stringify({ paid: true, paid_at: new Date().toISOString() }),
     });
+    return json({ received: true });
+  }
+
+  // Backstop for the fee lookup above: Stripe sends charge.updated once the fee is attached. Only
+  // fills a payment that's still missing its fee.
+  if (event.type === "charge.updated") {
+    const charge = event.data.object as { payment_intent?: string; balance_transaction?: string | null };
+    const connectedAccount = event.account;
+    if (!stripeSecretKey || !connectedAccount || !charge.payment_intent || !charge.balance_transaction) return json({ received: true });
+    const feeFields = await stripeFeeFields(charge.payment_intent, connectedAccount, stripeSecretKey);
+    if (feeFields.fee_amount !== undefined) {
+      await fetch(`${supabaseUrl}/rest/v1/payments?processor_payment_id=eq.${encodeURIComponent(charge.payment_intent)}&fee_amount=is.null`, {
+        method: "PATCH", headers: serviceHeaders, body: JSON.stringify(feeFields),
+      });
+    }
     return json({ received: true });
   }
 
