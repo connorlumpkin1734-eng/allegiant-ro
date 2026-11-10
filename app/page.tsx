@@ -1486,15 +1486,18 @@ function RepairOrderApp({ user }: { user: User }) {
 
     let loadedSettings = settingsResult.data as Settings | null;
     if (!loadedSettings && isOwner) {
-      const { data, error: insertError } = await supabase
+      // A brand-new shop's first sign-in can run this twice at once (initial load + sign-in event).
+      // Whichever gets there second must not fail on the row the first one just created.
+      const { error: insertError } = await supabase
         .from("settings")
-        .insert({ ...defaultSettings, owner_id: user.id })
-        .select()
-        .single();
-      if (insertError) {
-        setError(insertError.message);
+        .upsert({ ...defaultSettings, owner_id: user.id }, { onConflict: "owner_id", ignoreDuplicates: true });
+      const { data, error: readError } = insertError
+        ? { data: null, error: insertError }
+        : await supabase.from("settings").select("*").eq("owner_id", user.id).maybeSingle();
+      if (readError) {
+        setError(readError.message);
       } else {
-        loadedSettings = data as Settings;
+        loadedSettings = data as Settings | null;
       }
     }
 
@@ -1968,8 +1971,12 @@ function RepairOrderApp({ user }: { user: User }) {
               src={logoPublicUrl(settings.logo_path) ?? undefined}
               alt={settings.business_name}
             />
-          ) : (
+          ) : settings.business_name.trim() ? (
             <span className="topbar-logo-text">{settings.business_name}</span>
+          ) : (
+            // A brand-new shop has no name or logo yet; show the product instead of an empty box.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="topbar-logo" src="/rorunner-logo.png" alt="ROrunner" />
           )}
         </button>
         <nav>
