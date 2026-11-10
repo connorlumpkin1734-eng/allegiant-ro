@@ -1,4 +1,5 @@
 import { notifyError } from "../../lib/platform-alert";
+import { activeCardProcessor, cardMethodsLabel, createSquareCheckout } from "../../lib/square";
 // Public, token-gated. The customer opens ONE link and chooses how to pay:
 //   GET  ?token=…                      -> invoice summary + which payment methods this shop offers
 //   POST { token, method: "card" }     -> creates a fresh Stripe Checkout session, returns its URL
@@ -93,11 +94,11 @@ async function handler(request: Request): Promise<Response> {
   if (new Date(link.expires_at).getTime() < Date.now()) return json({ error: "This payment link has expired. Please contact the shop for a new one." }, 410);
 
   const [settingsResponse, roResponse, authorizationResponse] = await Promise.all([
-    fetch(`${supabaseUrl}/rest/v1/settings?select=business_name,zelle_recipient,stripe_account_id,stripe_charges_enabled,subscription_status&owner_id=eq.${link.owner_id}&limit=1`, { headers: serviceHeaders }),
+    fetch(`${supabaseUrl}/rest/v1/settings?select=business_name,zelle_recipient,stripe_account_id,stripe_charges_enabled,square_location_id,card_processor,subscription_status&owner_id=eq.${link.owner_id}&limit=1`, { headers: serviceHeaders }),
     fetch(`${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,paid,status,invoice_overrides,customers(email),line_items(item_type,quantity,unit_price,taxable,service_group_id,job_status)&id=eq.${encodeURIComponent(link.repair_order_id)}&owner_id=eq.${link.owner_id}&limit=1`, { headers: serviceHeaders }),
     fetch(`${supabaseUrl}/rest/v1/estimate_authorizations?select=status,line_decisions&repair_order_id=eq.${encodeURIComponent(link.repair_order_id)}&order=sent_at.desc&limit=1`, { headers: serviceHeaders }),
   ]);
-  const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<{ business_name: string | null; zelle_recipient: string | null; stripe_account_id: string | null; stripe_charges_enabled: boolean; subscription_status: string }> : [])[0];
+  const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<{ business_name: string | null; zelle_recipient: string | null; stripe_account_id: string | null; stripe_charges_enabled: boolean; square_location_id: string | null; card_processor: string | null; subscription_status: string }> : [])[0];
   const ro = (roResponse.ok ? await roResponse.json() as RepairOrderRow[] : [])[0];
   const authorization = (authorizationResponse.ok ? await authorizationResponse.json() as EstimateAuthorization[] : [])[0] ?? null;
   if (!settings || !ro || ro.status === "voided") return json({ error: "This payment link is invalid or has expired." }, 404);
@@ -108,7 +109,8 @@ async function handler(request: Request): Promise<Response> {
   const total = subtotal + Math.max(0, taxable) * (Number(ro.tax_rate) / 100);
 
   const trialBlocked = settings.subscription_status === "trialing";
-  const cardAvailable = !trialBlocked && Boolean(stripeSecretKey && settings.stripe_account_id && settings.stripe_charges_enabled);
+  const cardProcessor = trialBlocked ? null : activeCardProcessor(settings);
+  const cardAvailable = Boolean(cardProcessor);
   const zelleAvailable = !trialBlocked && Boolean(settings.zelle_recipient);
 
   if (request.method === "GET") {
@@ -118,6 +120,7 @@ async function handler(request: Request): Promise<Response> {
       amount: total,
       alreadyPaid: Boolean(ro.paid),
       methods: { card: cardAvailable, zelle: zelleAvailable },
+      cardLabel: cardMethodsLabel(cardProcessor),
     });
   }
 
@@ -140,10 +143,20 @@ async function handler(request: Request): Promise<Response> {
   }
 
   if (method === "card") {
-    if (!cardAvailable || !stripeSecretKey || !settings.stripe_account_id) return json({ error: "Card and bank payment isn't available for this invoice." }, 400);
+    if (!cardAvailable) return json({ error: "Card payment isn't available for this invoice." }, 400);
     const roDigits = String(ro.ro_number).padStart(4, "0");
     const businessName = settings.business_name || "";
     const statusParams = `ro_number=${roDigits}${businessName ? `&business=${encodeURIComponent(businessName)}` : ""}`;
+
+    if (cardProcessor === "square" && settings.square_location_id) {
+      const checkout = await createSquareCheckout({ supabaseUrl, serviceHeaders }, {
+        ownerId: link.owner_id, repairOrderId: ro.id, locationId: settings.square_location_id, total,
+        name: `Invoice #${roDigits}${businessName ? ` — ${businessName}` : ""}`,
+        buyerEmail: ro.customers?.email, siteUrl, statusParams,
+      });
+      return "url" in checkout ? json({ url: checkout.url }) : json({ error: checkout.error }, 400);
+    }
+    if (!stripeSecretKey || !settings.stripe_account_id) return json({ error: "Card payment isn't available for this invoice." }, 400);
     const sessionParams = new URLSearchParams({
       mode: "payment",
       "payment_method_types[0]": "card",

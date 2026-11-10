@@ -1,3 +1,4 @@
+import { activeCardProcessor } from "../../lib/square";
 import { notifyError } from "../../lib/platform-alert";
 // Staff-only. Creates the single "pay this invoice" link a shop shares with a customer; the customer
 // then chooses card/bank or Zelle on the public /pay page (see pay-invoice.ts). Only the hash of the
@@ -47,15 +48,15 @@ async function handler(request: Request): Promise<Response> {
     ownerId = staff.owner_id;
   }
 
-  const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=stripe_account_id,stripe_charges_enabled,zelle_recipient,subscription_status&owner_id=eq.${ownerId}&limit=1`, { headers: serviceHeaders });
-  const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<{ stripe_account_id: string | null; stripe_charges_enabled: boolean; zelle_recipient: string | null; subscription_status: string }> : [])[0];
+  const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=stripe_account_id,stripe_charges_enabled,square_location_id,card_processor,zelle_recipient,subscription_status&owner_id=eq.${ownerId}&limit=1`, { headers: serviceHeaders });
+  const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<{ stripe_account_id: string | null; stripe_charges_enabled: boolean; square_location_id: string | null; card_processor: string | null; zelle_recipient: string | null; subscription_status: string }> : [])[0];
   if (!settings) return json({ error: "Shop settings not found." }, 404);
   if (settings.subscription_status === "trialing") {
     return json({ error: "Payment processing isn't available during the free trial. Subscribe to accept customer payments." }, 403);
   }
-  const card = Boolean(settings.stripe_account_id && settings.stripe_charges_enabled);
+  const card = Boolean(activeCardProcessor(settings));
   const zelle = Boolean(settings.zelle_recipient);
-  if (!card && !zelle) return json({ error: "Connect Stripe or add a Zelle phone number or email in Settings before collecting payment." }, 400);
+  if (!card && !zelle) return json({ error: "Connect Stripe or Square, or add a Zelle phone number or email in Settings before collecting payment." }, 400);
 
   const roResponse = await fetch(`${supabaseUrl}/rest/v1/repair_orders?select=id,paid,status&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}&limit=1`, { headers: serviceHeaders });
   const ro = (roResponse.ok ? await roResponse.json() as Array<{ id: string; paid: boolean; status: string }> : [])[0];

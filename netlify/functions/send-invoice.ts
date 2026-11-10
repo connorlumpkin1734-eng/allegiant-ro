@@ -24,6 +24,7 @@ import { notifyError } from "../../lib/platform-alert";
 import { pickRecipient } from "../../lib/shop-caller";
 import { amountBlock, brandFromSettings, emailButton, escapeHtml, lineTable, money, renderCustomerEmail, renderCustomerText, totalsTable, type LineRow } from "../../lib/customer-email";
 import { alertsFrom, fromAddress } from "../../lib/email-from";
+import { activeCardProcessor, cardMethodsLabel } from "../../lib/square";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -254,7 +255,8 @@ async function handler(request: Request): Promise<Response> {
   // page, which creates the actual Stripe session / Zelle request only when they choose. Nothing
   // here ever marks the invoice paid. If recording the link fails, send the invoice without it
   // rather than blocking the email.
-  const canPayByCard = Boolean(stripeSecretKey && stripeAccountId && stripeChargesEnabled);
+  const cardProcessor = activeCardProcessor({ stripe_account_id: stripeAccountId, stripe_charges_enabled: stripeChargesEnabled, square_location_id: settings.square_location_id as string | null, card_processor: settings.card_processor as string | null });
+  const canPayByCard = Boolean(cardProcessor);
   const canPayByZelle = Boolean(zelleRecipient);
   let payLinkUrl: string | null = null;
   if (!ro.paid && total > 0 && !trialBlocked && (canPayByCard || canPayByZelle)) {
@@ -270,7 +272,7 @@ async function handler(request: Request): Promise<Response> {
       payLinkUrl = null;
     }
   }
-  const payMethodsLabel = [canPayByCard && "card or bank transfer", canPayByZelle && "Zelle"].filter(Boolean).join(" or ");
+  const payMethodsLabel = [canPayByCard && cardMethodsLabel(cardProcessor), canPayByZelle && "Zelle"].filter(Boolean).join(" or ");
 
   const brand = brandFromSettings(settings, supabaseUrl);
   const vehicle = [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ");

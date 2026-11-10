@@ -2,14 +2,15 @@
 import { useEffect, useState } from "react";
 
 // Public, no-login page the customer lands on from the invoice email (or a link the shop sends).
-// One link, one choice: pay by card / bank transfer (Stripe) or by Zelle. Nothing here marks the
-// invoice paid — Stripe's webhook does that for card/bank, and the shop confirms Zelle by hand.
+// One link, one choice: pay by card (through the shop's Stripe or Square) or by Zelle. Nothing here
+// marks the invoice paid — the processor's webhook does that for cards, and the shop confirms Zelle by hand.
 type Info = {
   businessName: string;
   roNumber: number | null;
   amount: number;
   alreadyPaid: boolean;
   methods: { card: boolean; zelle: boolean };
+  cardLabel?: string;
 };
 
 export default function PayPage() {
@@ -92,7 +93,7 @@ export default function PayPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   {info.methods.card && (
                     <button type="button" className="button primary" disabled={Boolean(busy)} onClick={() => void choose("card")} style={{ minHeight: 48 }}>
-                      {busy === "card" ? "Opening secure checkout…" : "Pay by card or bank transfer"}
+                      {busy === "card" ? "Opening secure checkout…" : `Pay by ${info.cardLabel || "card"}`}
                     </button>
                   )}
                   {info.methods.zelle && (

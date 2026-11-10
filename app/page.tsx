@@ -73,6 +73,12 @@ type Settings = {
   stripe_onboarding_complete: boolean;
   stripe_charges_enabled: boolean;
   stripe_payouts_enabled: boolean;
+  // The shop's own Square account (OAuth), the other card processor. Set by the server only.
+  square_merchant_id?: string | null;
+  square_location_id?: string | null;
+  square_location_name?: string | null;
+  /** Which connected processor invoices use for card payments. */
+  card_processor?: "stripe" | "square" | null;
   // Manual, no-API payment method: customer pays the shop directly via Zelle, and a staff member
   // confirms receipt themselves. See request-zelle-payment.ts / confirm-zelle-payment.ts.
   zelle_recipient: string | null;
@@ -6647,6 +6653,112 @@ function PaymentsPanel({
   );
 }
 
+const SQUARE_RETURN_MESSAGES: Record<string, string> = {
+  connected: "Square account connected. Invoices now take card payments through Square.",
+  declined: "Square wasn't connected — the request was cancelled on Square's page.",
+  expired: "That Square connection attempt timed out. Click Connect Square to try again.",
+  "no-location": "Your Square account has no active location that can take card payments. Set one up in Square, then connect again.",
+  error: "Square couldn't be connected. Try again, or contact support@rorunner.com.",
+};
+
+// The shop's own Square account, as the other card processor. Payments go straight to the shop's
+// Square account and Square charges the shop its own fees.
+function SquarePanel({ ownerId, settings, onStatusChanged }: { ownerId: string; settings: Settings; onStatusChanged: () => void }) {
+  const [busy, setBusy] = useState<"" | "connect" | "disconnect" | "processor">("");
+  const [message, setMessage] = useToastMessage();
+  const squareConnected = Boolean(settings.square_location_id);
+  const stripeReady = Boolean(settings.stripe_account_id && settings.stripe_charges_enabled);
+  const active = settings.card_processor === "square" && squareConnected ? "square"
+    : settings.card_processor === "stripe" && stripeReady ? "stripe"
+    : stripeReady ? "stripe" : squareConnected ? "square" : null;
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("square");
+    if (!result) return;
+    setMessage(SQUARE_RETURN_MESSAGES[result] || SQUARE_RETURN_MESSAGES.error);
+    params.delete("square");
+    const query = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+    if (result === "connected") onStatusChanged();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function call(action: "connect" | "disconnect") {
+    setBusy(action);
+    setMessage("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/square-connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ action }),
+      });
+      const body = await response.json() as { url?: string; error?: string };
+      if (!response.ok) throw new Error(body.error || "Square request failed.");
+      if (action === "connect" && body.url) {
+        window.location.href = body.url;
+        return;
+      }
+      setMessage("Square disconnected.");
+      onStatusChanged();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Square request failed.");
+    }
+    setBusy("");
+  }
+
+  async function chooseProcessor(processor: "stripe" | "square") {
+    setBusy("processor");
+    const { error } = await supabase.from("settings").update({ card_processor: processor }).eq("owner_id", ownerId);
+    setBusy("");
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    onStatusChanged();
+  }
+
+  return (
+    <div className="panel settings-panel">
+      <h2 style={{ marginTop: 0 }}>Square</h2>
+      <p className="muted" style={{ marginTop: -6, fontSize: 13 }}>
+        Already use Square? Connect your Square account and customers pay invoices through Square instead. Money goes
+        straight to your Square account and Square charges you its normal fees. We never hold your funds or take a cut.
+      </p>
+      {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}
+      {squareConnected ? (
+        <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="button small primary" style={{ pointerEvents: "none" }}>Connected</span>
+          <span className="muted" style={{ fontSize: 13 }}>Square location: {settings.square_location_name || "your main location"}</span>
+          <button type="button" className="button secondary small" disabled={busy !== ""} onClick={() => {
+            if (window.confirm("Disconnect Square? Invoices will stop offering card payment through Square.")) void call("disconnect");
+          }}>
+            {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
+          </button>
+        </div>
+      ) : (
+        <button type="button" className="button primary" style={{ marginTop: 14 }} disabled={busy !== ""} onClick={() => void call("connect")}>
+          {busy === "connect" ? "Opening Square…" : "Connect Square"}
+        </button>
+      )}
+      {squareConnected && stripeReady && (
+        <fieldset style={{ marginTop: 16, border: "1px solid #e7eaf0", borderRadius: 10, padding: "10px 14px" }}>
+          <legend style={{ fontSize: 13, fontWeight: 600 }}>Card payments on invoices go through</legend>
+          {(["stripe", "square"] as const).map((processor) => (
+            <label key={processor} className="checkbox-row" style={{ marginTop: 6 }}>
+              <input type="radio" name="card-processor" checked={active === processor} disabled={busy !== ""} onChange={() => void chooseProcessor(processor)} />
+              {processor === "stripe" ? "Stripe" : "Square"}
+            </label>
+          ))}
+        </fieldset>
+      )}
+    </div>
+  );
+}
+
 function BillingPanel({ settings }: { settings: Settings }) {
   const [busy, setBusy] = useState<"" | "subscribe" | "portal">("");
   const [message, setMessage] = useToastMessage();
@@ -7323,7 +7435,10 @@ function SettingsPanel({
   }
 
   const logoUrl = logoPublicUrl(form.logo_path);
-  const [section, setSection] = useState<SettingsSection>(() => (pendingStripeOAuthCode || stripeReturnPending ? "payments" : "shop"));
+  const [section, setSection] = useState<SettingsSection>(() => (
+    pendingStripeOAuthCode || stripeReturnPending || (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("square"))
+      ? "payments" : "shop"
+  ));
 
   return (
     <section>
@@ -7541,6 +7656,7 @@ function SettingsPanel({
         onStripeReturnHandled={onStripeReturnHandled}
         onStatusChanged={onStripeStatusChanged}
       />}
+      {section === "payments" && isOwner && <SquarePanel ownerId={ownerId} settings={initialSettings} onStatusChanged={onStripeStatusChanged} />}
 
       {section === "staff" && <div className="panel settings-panel">
         <h2 style={{ marginTop: 0 }}>Staff accounts</h2>
@@ -8427,7 +8543,7 @@ function DocumentView({
           {isEstimate && ro.status !== "voided" && (
             <button className="button primary" onClick={() => setSendKind("estimate")}>Send estimate</button>
           )}
-          {isInvoice && !ro.paid && ro.status !== "voided" && (settings.stripe_charges_enabled || settings.zelle_recipient) && settings.subscription_status !== "trialing" && (
+          {isInvoice && !ro.paid && ro.status !== "voided" && (settings.stripe_charges_enabled || settings.square_location_id || settings.zelle_recipient) && settings.subscription_status !== "trialing" && (
             <button className="button secondary" disabled={paymentBusy} onClick={() => void collectPayment()}>
               {paymentBusy ? "Starting…" : "Collect payment"}
             </button>
@@ -8455,7 +8571,7 @@ function DocumentView({
             <span>{paymentError}</span>
           ) : (
             <>
-              <span>Payment link ready. Customer pays by {[settings.stripe_charges_enabled && "card or bank", settings.zelle_recipient && "Zelle"].filter(Boolean).join(" or ")}. Copy it to them, or open it to pay together right now.{settings.zelle_recipient ? <> <strong>Zelle payments aren&apos;t marked paid until you confirm them.</strong></> : null}</span>
+              <span>Payment link ready. Customer pays by {[(settings.card_processor === "square" && settings.square_location_id) || (!settings.stripe_charges_enabled && settings.square_location_id) ? "card" : settings.stripe_charges_enabled && "card or bank", settings.zelle_recipient && "Zelle"].filter(Boolean).join(" or ")}. Copy it to them, or open it to pay together right now.{settings.zelle_recipient ? <> <strong>Zelle payments aren&apos;t marked paid until you confirm them.</strong></> : null}</span>
               <input readOnly value={paymentLink} onFocus={(event) => event.target.select()} style={{ flex: "1 1 320px", minWidth: 220 }} />
               <button type="button" className="button secondary" onClick={() => void navigator.clipboard.writeText(paymentLink)}>Copy link</button>
               <a className="button primary" href={paymentLink} target="_blank" rel="noopener noreferrer">Open</a>

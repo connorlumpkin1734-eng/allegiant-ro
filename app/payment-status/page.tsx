@@ -16,6 +16,16 @@ export default function PaymentStatusPage() {
     setStatus(rawStatus === "success" || rawStatus === "canceled" ? rawStatus : "");
     setBusiness(params.get("business") || "");
     setRoNumber(params.get("ro_number") || "");
+    // Back from Square checkout: ask the server to confirm with Square so the shop sees it paid
+    // right away (Square's webhook does the same thing in the background).
+    const squarePayment = params.get("square_payment");
+    if (rawStatus === "success" && squarePayment) {
+      void fetch("/.netlify/functions/square-payment-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment: squarePayment }),
+      }).catch(() => undefined);
+    }
   }, []);
 
   const isSuccess = status === "success";
