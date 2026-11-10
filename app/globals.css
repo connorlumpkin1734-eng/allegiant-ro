@@ -2127,7 +2127,7 @@ tbody tr:hover { background: var(--panel-header); }
 .dispatch-heading .muted { font-size: 13px; }
 .dispatch-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 24px; }
 .dispatch-team { min-width: 220px; }
-.dispatch-techs { display: flex; flex-direction: column; gap: 6px; }
+.dispatch-techs { display: flex; flex-direction: column; gap: 6px; flex: 1 1 260px; min-width: 0; }
 .dispatch-label { color: var(--ink); font-size: 13px; font-weight: 700; }
 .dispatch-tech-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .dispatch-team-tag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--accent-tint); color: var(--accent); font-size: 10px; text-transform: uppercase; }
