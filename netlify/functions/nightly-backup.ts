@@ -53,8 +53,11 @@ const TABLES = [
   "settings", "customers", "vehicles", "repair_orders", "concern_lines", "line_items",
   "multipoint_inspections", "estimate_photos", "estimate_videos", "estimate_authorizations",
   "teams", "staff", "repair_order_technicians", "payments", "payment_links", "video_share_links",
-  "platform_config", "platform_admins", "site_visits", "user_preferences",
+  "platform_config", "platform_admins", "site_visits", "user_preferences", "notifications",
 ] as const;
+
+// Paging needs a stable sort; most tables have an id, these don't.
+const ORDER_BY: Partial<Record<(typeof TABLES)[number], string>> = { user_preferences: "user_id" };
 
 // How many nightly snapshots to keep around — at one a day this is ~3 weeks of history, which is
 // already more generous than Supabase's own 7-day Pro-plan default, at effectively zero storage cost
@@ -69,7 +72,8 @@ async function fetchAllRows(supabaseUrl: string, serviceHeaders: Record<string, 
   const pageSize = 1000;
   let offset = 0;
   for (;;) {
-    const response = await fetch(`${supabaseUrl}/rest/v1/${table}?select=*&order=id.asc`, {
+    const orderBy = ORDER_BY[table as (typeof TABLES)[number]] ?? "id";
+    const response = await fetch(`${supabaseUrl}/rest/v1/${table}?select=*&order=${orderBy}.asc`, {
       headers: { ...serviceHeaders, Range: `${offset}-${offset + pageSize - 1}` },
     });
     if (!response.ok) throw new Error(`Exporting ${table} failed (HTTP ${response.status}): ${await response.text()}`);
