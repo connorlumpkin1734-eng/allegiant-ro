@@ -88,9 +88,12 @@ export default async (request: Request) => {
       display_name: settings.business_name || undefined,
       identity: { country: "us", entity_type: "company" },
       configuration: { merchant: { capabilities: { card_payments: { requested: true } } } },
-      // Express-dashboard accounts require the platform (us) to own fees and losses.
-      defaults: { responsibilities: { fees_collector: "application", losses_collector: "application" } },
-      dashboard: "express",
+      // The shop pays its own Stripe fees and Stripe (not ROrunner) is liable for the shop's
+      // negative balances and disputes. That requires the full Stripe Dashboard; the Express
+      // dashboard would make the platform pay fees and cover losses. ROrunner never pays for a
+      // shop's payments.
+      defaults: { responsibilities: { fees_collector: "stripe", losses_collector: "stripe" } },
+      dashboard: "full",
     };
     const createResponse = await fetch("https://api.stripe.com/v2/core/accounts", {
       method: "POST", headers: stripeV2Headers, body: JSON.stringify(createBody),

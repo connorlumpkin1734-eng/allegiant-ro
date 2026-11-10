@@ -6605,7 +6605,8 @@ function PaymentsPanel({
       <h2 style={{ marginTop: 0 }}>Payments</h2>
       <p className="muted" style={{ marginTop: -6, fontSize: 13 }}>
         Connect your shop&apos;s own Stripe account so customer card and bank-transfer (ACH) payments go straight to your
-        bank. Money never passes through us — we don&apos;t hold or move your funds.
+        bank. Money never passes through us — we don&apos;t hold or move your funds. Stripe charges its normal processing
+        fees to your Stripe account (cards are 2.9% + 30¢); we don&apos;t add anything on top.
       </p>
       {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}
 
@@ -6614,7 +6615,7 @@ function PaymentsPanel({
           <div style={{ flex: "1 1 260px", border: "1px solid #e7eaf0", borderRadius: 10, padding: 16 }}>
             <strong>Quick setup</strong>
             <p className="muted" style={{ fontSize: 13, margin: "6px 0 12px" }}>
-              A few minutes, Stripe-hosted signup. Best if you don&apos;t already use Stripe for anything else.
+              A few minutes, Stripe-hosted signup that creates your own Stripe account. Best if you don&apos;t already use Stripe.
             </p>
             <button type="button" className="button primary" disabled={busy !== ""} onClick={() => void connect("express")}>
               {busy === "express" ? "Starting…" : "Connect with Stripe"}
@@ -6637,7 +6638,7 @@ function PaymentsPanel({
               {fullyReady ? "Connected & ready" : status.onboardingComplete ? "Connected — verification pending" : "Onboarding not finished"}
             </span>
             <span className="muted" style={{ fontSize: 13 }}>
-              {status.accountType === "standard" ? "Standard account" : "Express account"} · Charges {status.chargesEnabled ? "enabled" : "disabled"} · Payouts {status.payoutsEnabled ? "enabled" : "disabled"}
+              Stripe account · Charges {status.chargesEnabled ? "enabled" : "disabled"} · Payouts {status.payoutsEnabled ? "enabled" : "disabled"}
             </span>
           </div>
           <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>

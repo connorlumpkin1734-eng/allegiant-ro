@@ -61,7 +61,9 @@ export default function TermsPage() {
           customers, that processing relationship and those funds are between you, your customer, and
           the payment processor. We are not a party to those transactions, do not hold your funds, and
           are not responsible for payment processor outages, holds, or disputes — those are governed
-          by the payment processor&apos;s own terms.
+          by the payment processor&apos;s own terms. You pay the payment processor&apos;s fees, and you
+          are responsible for refunds, chargebacks, disputes, and any negative balance on your payment
+          processor account. We do not pay or cover any of these for you.
         </p>
 
         <h2>6. Your data</h2>
