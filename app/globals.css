@@ -2440,6 +2440,9 @@ tbody tr:hover { background: var(--panel-header); }
   .ro-list-table .ro-cell-stage { grid-column: 1; margin-top: 6px; }
   .ro-list-table .ro-cell-total { grid-column: 2; align-self: end; }
   .ro-list-table .ro-cell-date { display: none; }
+  /* Who has it: one line across the bottom of the card. */
+  .ro-list-table .ro-cell-assigned { grid-column: 1 / -1; order: 5; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; min-width: 0; }
+  .ro-list-table .ro-cell-assigned strong, .ro-list-table .ro-cell-assigned small { display: inline; margin: 0; }
   .ro-list-table tr.ro-empty { display: block; }
   .ro-list-table tr.ro-empty td { padding: 24px 8px; }
 }
@@ -2672,3 +2675,12 @@ select option { background-color: var(--panel); color: var(--ink); }
 .dispatch-team-fixed { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .dispatch-team-fixed span { font-weight: 700; }
 .staff-lead-warning { display: block; margin-top: 4px; color: var(--warn-text); font-size: 12px; font-weight: 600; }
+
+/* RO list: who has the car */
+.ro-cell-assigned { min-width: 150px; }
+.ro-cell-assigned strong { display: block; font-size: 13px; margin-top: 3px; }
+.ro-cell-assigned small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.assign-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; }
+.assign-pill.open { color: var(--warn-text); background: var(--warn-tint); }
+.assign-pill.assigned { color: #3ccf7a; background: rgba(60, 207, 122, 0.14); }
+.dispatch-confirm { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 8px; border: 1px solid var(--warn-text); border-radius: 8px; font-size: 13px; }

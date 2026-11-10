@@ -605,7 +605,8 @@ type RepairOrder = {
   line_items?: LineItem[];
   concern_lines?: ConcernLine[];
   team_id?: string | null;
-  repair_order_technicians?: Array<{ staff_id: string }>;
+  repair_order_technicians?: Array<{ staff_id: string; staff?: { name: string } | null }>;
+  teams?: { name: string } | null;
   latest_estimate_authorization?: EstimateAuthorization | null;
 };
 
@@ -1494,7 +1495,7 @@ function RepairOrderApp({ user }: { user: User }) {
       supabase.from("vehicles").select("*").order("year", { ascending: false }),
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name)")
         .order("created_at", { ascending: false }),
       supabase
         .from("estimate_authorizations")
@@ -1673,7 +1674,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name)")
         .eq("id", id)
         .single(),
       supabase
@@ -1713,7 +1714,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name)")
         .eq("id", id)
         .single(),
       supabase
@@ -1748,7 +1749,7 @@ function RepairOrderApp({ user }: { user: User }) {
     setError("");
     const { data, error: fetchError } = await supabase
       .from("repair_orders")
-      .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id)")
+      .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name)")
       .eq("id", id)
       .single();
 
@@ -3211,6 +3212,20 @@ function Dashboard({
     { key: "archived", label: "Archived" },
   ];
 
+  // Who has the car: shown to advisors/owners, and to a lead for their team.
+  const showAssigned = !isTechnician || isLead;
+  const assignedCell = (ro: RepairOrder) => {
+    const techs = (ro.repair_order_technicians ?? []).map((row) => row.staff?.name).filter(Boolean) as string[];
+    const team = ro.teams?.name;
+    return (
+      <td className="ro-cell-assigned" data-label="Assigned">
+        {techs.length
+          ? <><span className="assign-pill assigned">Assigned</span><strong>{techs.join(", ")}</strong></>
+          : <span className="assign-pill open">Open</span>}
+        {team && <small>{team}</small>}
+      </td>
+    );
+  };
   const open = (ro: RepairOrder, stage: RoStage) => onOpen(ro.id, !isTechnician && (stage === "invoiced" || stage === "paid") ? "invoice" : "work_order");
   const vehicleName = (ro: RepairOrder) => [ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "No vehicle";
   const concernOf = (ro: RepairOrder) => (ro.concern_lines ?? []).map((line) => line.concern).filter(Boolean)[0] || ro.customer_concern || "";
@@ -3270,6 +3285,7 @@ function Dashboard({
             <small className="ro-cell-note declined">✕ Declined {compactDecisionTitles(decision.declined)}</small>
           )}
         </td>
+        {showAssigned && assignedCell(ro)}
         {!isTechnician && <td className="ro-cell-total" data-label="Total">{money(repairOrderTotal(ro))}</td>}
         <td className="ro-cell-date" data-label="Opened">{new Date(ro.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</td>
       </tr>
@@ -3283,6 +3299,7 @@ function Dashboard({
         <th>Vehicle</th>
         <th>Customer</th>
         <th>Stage</th>
+        {showAssigned && <th>Assigned</th>}
         {!isTechnician && <th className="ro-cell-total">Total</th>}
         <th>Opened</th>
       </tr>
@@ -3357,7 +3374,7 @@ function Dashboard({
               {rows.map((row) => renderRow(row))}
               {!rows.length && (
                 <tr className="ro-empty">
-                  <td colSpan={isTechnician ? 5 : 6} className="empty-state">
+                  <td colSpan={(isTechnician ? 5 : 6) + (showAssigned ? 1 : 0)} className="empty-state">
                     {normalized
                       ? "Nothing matches that search."
                       : isTechnician
@@ -4561,6 +4578,7 @@ function RepairOrderEditor({
               priceEditable={item.item_type === "part" ? partPriceEditable : canRestructureRo}
               laborRateEditable={laborRateEditable}
               canRemove={canRestructureRo || (isTechnician && !savedLineIds.has(item.id))}
+              laborLocked={isTechnician && !canRestructureRo && jobStatus === "authorized" && item.item_type === "labor" && savedLineIds.has(item.id)}
               descriptionHint={item.item_type === "labor"
                 ? `Optional — same as job${first.service_group_title?.trim() ? `: ${first.service_group_title.trim()}` : ""}`
                 : item.item_type === "part" ? "Part name or number" : undefined}
@@ -4573,7 +4591,8 @@ function RepairOrderEditor({
             label="+ Add"
             small
             items={[
-              { label: "Labor", onClick: () => addItem("labor", group.id) },
+              // Approved work's labor is what the customer OK'd; a tech adds more as a new recommendation.
+              !(isTechnician && !canRestructureRo && jobStatus === "authorized") && { label: "Labor", onClick: () => addItem("labor", group.id) },
               canAddPartLine && { label: "Part", onClick: () => addItem("part", group.id) },
               initialRo && workspaceTab === "work_order" && {
                 label: "Photo or video",
@@ -5270,7 +5289,16 @@ function TechnicianAssignment({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useToastMessage();
+  // Techs who recommended work on this car that isn't done: they keep the car unless overridden.
+  const [recommenderIds, setRecommenderIds] = useState<string[]>([]);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   async function loadAll() {
+    if (repairOrderId) {
+      const { data } = await supabase.from("line_items").select("recommended_by, job_status, job_progress").eq("repair_order_id", repairOrderId).not("recommended_by", "is", null);
+      setRecommenderIds([...new Set(((data ?? []) as Array<{ recommended_by: string; job_status: string | null; job_progress: string | null }>)
+        .filter((row) => row.job_status !== "declined" && row.job_progress !== "done")
+        .map((row) => row.recommended_by))]);
+    }
     const [staffResult, assignmentsResult, teamsResult] = await Promise.all([
       supabase.from("staff").select("*").eq("role", "technician").eq("active", true).order("name"),
       repairOrderId
@@ -5298,12 +5326,21 @@ function TechnicianAssignment({
       });
       return;
     }
+    // Taking off a tech who recommended open work on this car needs a second, deliberate tap.
+    if (!assign && recommenderIds.includes(staffId) && confirmRemove !== staffId) {
+      setConfirmRemove(staffId);
+      return;
+    }
     setBusy(true);
     setMessage("");
+    const force = !assign && confirmRemove === staffId;
+    setConfirmRemove(null);
     const { error } = assign
       ? await supabase.from("repair_order_technicians").insert({ owner_id: ownerId, repair_order_id: repairOrderId, staff_id: staffId })
-      : await supabase.from("repair_order_technicians").delete().eq("repair_order_id", repairOrderId).eq("staff_id", staffId);
-    if (error) setMessage(error.message);
+      : await supabase.rpc("remove_tech_from_ro", { p_ro: repairOrderId, p_staff: staffId, p_force: force });
+    if (error) setMessage(/RECOMMENDED_WORK/.test(error.message)
+      ? "That tech recommended work on this car that isn't done yet, so they stay on it. Tap them again and choose Remove anyway to override."
+      : error.message);
     else onSaved?.();
     await loadAll();
     setBusy(false);
@@ -5365,6 +5402,16 @@ function TechnicianAssignment({
               <div className="dispatch-tech-buttons">
                 {sortedTechs.map((tech) => {
                   const assigned = assignedIds.includes(tech.id);
+                  const recommended = recommenderIds.includes(tech.id);
+                  if (assigned && confirmRemove === tech.id) {
+                    return (
+                      <span key={tech.id} className="dispatch-confirm">
+                        <span>{tech.name} recommended work here that isn&apos;t done.</span>
+                        <button type="button" className="button small danger" disabled={busy} onClick={() => void toggle(tech.id, false)}>Remove anyway</button>
+                        <button type="button" className="button small ghost" onClick={() => setConfirmRemove(null)}>Keep</button>
+                      </span>
+                    );
+                  }
                   return (
                     <button
                       key={tech.id}
@@ -5376,6 +5423,7 @@ function TechnicianAssignment({
                     >
                       {assigned ? "✓ " : "+ "}{tech.name}
                       {workMode === "team" && teamId && tech.team_id === teamId && <span className="dispatch-team-tag">team</span>}
+                      {assigned && recommended && <span className="dispatch-team-tag" title="Recommended work on this car — stays on it by default">recommended</span>}
                     </button>
                   );
                 })}
@@ -5997,8 +6045,11 @@ function ChargeLine({
   laborRateEditable,
   canRemove = true,
   descriptionHint,
+  laborLocked = false,
 }: {
   descriptionHint?: string;
+  /** A tech on a job the customer already approved: the labor (hours, wording) is fixed. */
+  laborLocked?: boolean;
   item: LineItem;
   changeItem: (id: string, field: keyof LineItem, rawValue: string | boolean | number) => void;
   removeItem: () => void;
@@ -6018,11 +6069,11 @@ function ChargeLine({
       </span>
       <label className="description-field">
         Description
-        <input data-line-desc={item.id} value={item.description} placeholder={descriptionHint} onChange={(event) => changeItem(item.id, "description", event.target.value)} />
+        <input data-line-desc={item.id} value={item.description} placeholder={descriptionHint} disabled={laborLocked} onChange={(event) => changeItem(item.id, "description", event.target.value)} />
       </label>
-      <label>
+      <label title={laborLocked ? "The customer approved this labor. Extra time goes in as a new recommendation." : undefined}>
         {item.item_type === "labor" ? "Hours" : "Qty"}
-        <NumberInput value={item.quantity} maxDecimals={2} onChange={(value) => changeItem(item.id, "quantity", value)} />
+        <NumberInput value={item.quantity} maxDecimals={2} disabled={laborLocked} onChange={(value) => changeItem(item.id, "quantity", value)} />
       </label>
       {isPart && !hideCostAndMargin && (
         <>
