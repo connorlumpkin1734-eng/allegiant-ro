@@ -6611,25 +6611,15 @@ function PaymentsPanel({
       {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}
 
       {!connected ? (
-        <div style={{ marginTop: 14, display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 260px", border: "1px solid #e7eaf0", borderRadius: 10, padding: 16 }}>
-            <strong>Quick setup</strong>
-            <p className="muted" style={{ fontSize: 13, margin: "6px 0 12px" }}>
-              A few minutes, Stripe-hosted signup that creates your own Stripe account. Best if you don&apos;t already use Stripe.
-            </p>
-            <button type="button" className="button primary" disabled={busy !== ""} onClick={() => void connect("express")}>
-              {busy === "express" ? "Starting…" : "Connect with Stripe"}
-            </button>
-          </div>
-          <div style={{ flex: "1 1 260px", border: "1px solid #e7eaf0", borderRadius: 10, padding: 16 }}>
-            <strong>I already have Stripe</strong>
-            <p className="muted" style={{ fontSize: 13, margin: "6px 0 12px" }}>
-              Log into your existing Stripe account and link it directly — full control stays in your own Stripe dashboard.
-            </p>
-            <button type="button" className="button secondary" disabled={busy !== ""} onClick={() => void connect("standard")}>
-              {busy === "standard" ? "Starting…" : "Connect existing Stripe account"}
-            </button>
-          </div>
+        <div style={{ marginTop: 14, border: "1px solid #e7eaf0", borderRadius: 10, padding: 16, maxWidth: 520 }}>
+          <strong>Connect your Stripe account</strong>
+          <p className="muted" style={{ fontSize: 13, margin: "6px 0 12px" }}>
+            Log into your shop&apos;s Stripe account and link it. No Stripe account yet? You can create one on the
+            same Stripe screen. Everything stays in your own Stripe dashboard.
+          </p>
+          <button type="button" className="button primary" disabled={busy !== ""} onClick={() => void connect("standard")}>
+            {busy === "standard" ? "Starting…" : "Connect Stripe account"}
+          </button>
         </div>
       ) : (
         <div style={{ marginTop: 14 }}>

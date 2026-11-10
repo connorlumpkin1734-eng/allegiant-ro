@@ -75,6 +75,12 @@ export default async (request: Request) => {
     return json({ url: authorizeUrl.toString() });
   }
 
+  // Shops connect a Stripe account they own (above). Creating accounts for shops is switched off;
+  // this path only finishes onboarding for an account that was already created here.
+  if (!settings.stripe_account_id) {
+    return json({ error: "Connect your own Stripe account with \"Connect Stripe account\"." }, 400);
+  }
+
   const stripeV2Headers = {
     Authorization: `Bearer ${stripeSecretKey}`,
     "Content-Type": "application/json",
