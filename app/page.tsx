@@ -1054,6 +1054,7 @@ function AuthScreen() {
   const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [identifier, setIdentifier] = useState(""); // shop owner's email (signup), or username/email (login, forgot)
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useToastMessage();
   const [busy, setBusy] = useState(false);
 
@@ -1118,6 +1119,11 @@ function AuthScreen() {
     }
 
     if (mode === "signup") {
+      if (password !== confirmPassword) {
+        setMessage("The two passwords don't match. Type them again.");
+        setBusy(false);
+        return;
+      }
       const result = await supabase.auth.signUp({ email: identifier.trim(), password });
       if (result.error) {
         setMessage(result.error.message);
@@ -1180,6 +1186,22 @@ function AuthScreen() {
                 minLength={6}
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
               />
+            </label>
+          )}
+          {mode === "signup" && (
+            <label>
+              Confirm password
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                required
+                minLength={6}
+                autoComplete="new-password"
+              />
+              {confirmPassword && confirmPassword !== password && (
+                <span className="password-mismatch">Doesn't match yet</span>
+              )}
             </label>
           )}
           {mode === "signup" && (
