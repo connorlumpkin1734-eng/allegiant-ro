@@ -1964,6 +1964,9 @@ function RepairOrderApp({ user }: { user: User }) {
   };
 
   const returnFromEditor = () => {
+    // Some edits save the moment they're tapped (assigning a tech, marking a job done), so the list
+    // behind the editor can be stale even when nothing was "saved".
+    void loadData(false);
     if (editorReturnView === "customer_profile" && selectedCustomer) {
       setView("customer_profile");
     } else {
@@ -2008,7 +2011,7 @@ function RepairOrderApp({ user }: { user: User }) {
         </button>
         <nav>
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
-            {isTechnicianOnly ? "My jobs" : "Repair orders"}
+            {isTechnicianOnly ? (leadTeamId ? "Team jobs" : "My jobs") : "Repair orders"}
           </button>
           {currentStaff && (
             <button className={view === "my_stats" ? "active" : ""} onClick={() => setView("my_stats")}>
@@ -3149,6 +3152,14 @@ function Dashboard({
   const isMine = (ro: RepairOrder) => Boolean(techFilterFor && (ro.repair_order_technicians ?? []).some((row) => row.staff_id === techFilterFor.staffId));
   const isMyTeam = (ro: RepairOrder) => Boolean(techFilterFor?.teamId && ro.team_id === techFilterFor.teamId);
   const isLead = Boolean(techFilterFor?.isLead && techFilterFor.teamId);
+  // Who's signed in loads a beat after the list first draws; a lead should land on the team view.
+  const leadScopeSet = useRef(false);
+  useEffect(() => {
+    if (isLead && !leadScopeSet.current) {
+      leadScopeSet.current = true;
+      setTechScope("team");
+    }
+  }, [isLead]);
   // A lead's team cars that nobody has been put on yet.
   const needsTech = (ro: RepairOrder) => isLead && isMyTeam(ro) && !(ro.repair_order_technicians ?? []).length;
   const inScope = (ro: RepairOrder) => !techFilterFor || techScope === "all" || (techScope === "mine" ? isMine(ro) : isMine(ro) || isMyTeam(ro));

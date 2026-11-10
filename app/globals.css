@@ -724,6 +724,8 @@ tbody tr:hover { background: var(--panel-header); }
   color: white;
   padding: 4px 6px;
 }
+/* Inside the white logo box the shop name has to be dark, or it vanishes. */
+.brand-button .topbar-logo-text { color: #102a4c; }
 
 .document-logo {
   display: block;
