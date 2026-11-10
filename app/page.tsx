@@ -3910,8 +3910,18 @@ function RepairOrderEditor({
         : Promise.resolve({ error: null }),
     ]);
     const failed = jobResult.error || lineResult.error;
-    if (failed) setMessage(`Couldn't save the job status: ${failed.message}`);
-    else { toastList = toastList.filter((toast) => toast.kind !== "error"); emitToasts(); void syncEditVersion(); }
+    if (failed) { setMessage(`Couldn't save the job status: ${failed.message}`); return; }
+    toastList = toastList.filter((toast) => toast.kind !== "error"); emitToasts();
+    // Marking the last approved job Done moves the RO to "Ready for advisor" on its own (a database
+    // rule does it, and alerts the advisor). Pick that up here so the screen matches.
+    const { data: roNow } = await supabase.from("repair_orders").select("work_complete_at").eq("id", initialRo.id).maybeSingle();
+    const completeAt = (roNow as { work_complete_at: string | null } | null)?.work_complete_at ?? null;
+    if (completeAt && !workCompleteAt) {
+      setMessage(isTechnician ? "All approved work is done — sent to the advisor." : "All approved work is done — ready for advisor.");
+      onBackgroundRefresh?.();
+    }
+    setWorkCompleteAt(completeAt);
+    void syncEditVersion();
   }
 
   async function markWorkComplete(complete: boolean) {
