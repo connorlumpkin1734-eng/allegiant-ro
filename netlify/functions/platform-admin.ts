@@ -112,7 +112,7 @@ export default async (request: Request) => {
           // Always the permanent ROrunner product: the one Stripe made at checkout is inactive.
           "items[0][price_data][product]": await ensureSubscriptionProduct(stripeSecretKey),
           "items[0][price_data][unit_amount]": String(priceCents),
-          "items[0][price_data][recurring][interval]": item.price.recurring?.interval || "month",
+          "items[0][price_data][recurring][interval]": item.price?.recurring?.interval || "month",
           proration_behavior: "none",
         });
         const updateResponse = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(shop.stripe_subscription_id)}`, {
