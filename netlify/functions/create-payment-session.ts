@@ -1,3 +1,4 @@
+import { createConnectedCheckout } from "../../lib/stripe-checkout";
 import { notifyError } from "../../lib/platform-alert";
 // Creates a Stripe Checkout Session on the SHOP's own connected account (not the platform's) for
 // a repair order invoice, then records a `payments` row so the webhook can mark it paid.
@@ -144,8 +145,6 @@ async function handler(request: Request): Promise<Response> {
 
   const sessionParams = new URLSearchParams({
     mode: "payment",
-    "payment_method_types[0]": "card",
-    "payment_method_types[1]": "us_bank_account",
     "line_items[0][quantity]": "1",
     "line_items[0][price_data][currency]": "usd",
     "line_items[0][price_data][unit_amount]": String(amountCents),
@@ -157,17 +156,8 @@ async function handler(request: Request): Promise<Response> {
   });
   if (ro.customers?.email) sessionParams.set("customer_email", ro.customers.email);
 
-  const sessionResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${stripeSecretKey}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-      "Stripe-Account": settings.stripe_account_id,
-    },
-    body: sessionParams,
-  });
-  const session = await sessionResponse.json() as { id?: string; url?: string; error?: { message?: string } };
-  if (!sessionResponse.ok || !session.id || !session.url) {
+  const { ok: sessionOk, session } = await createConnectedCheckout(stripeSecretKey, settings.stripe_account_id, sessionParams);
+  if (!sessionOk || !session.id || !session.url) {
     return json({ error: session.error?.message || "Could not start a Stripe checkout session." }, 400);
   }
 

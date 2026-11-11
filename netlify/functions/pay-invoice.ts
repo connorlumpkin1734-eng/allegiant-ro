@@ -1,3 +1,4 @@
+import { createConnectedCheckout } from "../../lib/stripe-checkout";
 import { notifyError } from "../../lib/platform-alert";
 import { activeCardProcessor, cardMethodsLabel, createSquareCheckout } from "../../lib/square";
 // Public, token-gated. The customer opens ONE link and chooses how to pay:
@@ -159,8 +160,6 @@ async function handler(request: Request): Promise<Response> {
     if (!stripeSecretKey || !settings.stripe_account_id) return json({ error: "Card payment isn't available for this invoice." }, 400);
     const sessionParams = new URLSearchParams({
       mode: "payment",
-      "payment_method_types[0]": "card",
-      "payment_method_types[1]": "us_bank_account",
       "line_items[0][quantity]": "1",
       "line_items[0][price_data][currency]": "usd",
       "line_items[0][price_data][unit_amount]": String(Math.round(total * 100)),
@@ -172,13 +171,8 @@ async function handler(request: Request): Promise<Response> {
     });
     if (ro.customers?.email) sessionParams.set("customer_email", ro.customers.email);
 
-    const sessionResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${stripeSecretKey}`, "Content-Type": "application/x-www-form-urlencoded", "Stripe-Account": settings.stripe_account_id },
-      body: sessionParams,
-    });
-    const session = await sessionResponse.json() as { id?: string; url?: string; error?: { message?: string } };
-    if (!sessionResponse.ok || !session.id || !session.url) return json({ error: "Could not start checkout. Please try again." }, 400);
+    const { ok: sessionOk, session } = await createConnectedCheckout(stripeSecretKey, settings.stripe_account_id, sessionParams);
+    if (!sessionOk || !session.id || !session.url) return json({ error: "Could not start checkout. Please try again." }, 400);
 
     const paymentInsert = await fetch(`${supabaseUrl}/rest/v1/payments`, {
       method: "POST",
