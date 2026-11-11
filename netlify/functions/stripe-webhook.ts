@@ -113,7 +113,11 @@ async function handler(request: Request): Promise<Response> {
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Stripe sends a platform's events through two separate destinations, each with its own signing
+  // secret: connected shops' events (STRIPE_WEBHOOK_SECRET) and ROrunner's own account events such
+  // as shop subscriptions (STRIPE_PLATFORM_WEBHOOK_SECRET). Accept a signature from either.
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const platformWebhookSecret = process.env.STRIPE_PLATFORM_WEBHOOK_SECRET;
   const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
   const resendKey = process.env.RESEND_API_KEY;
   const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(request.url).origin;
@@ -123,7 +127,13 @@ async function handler(request: Request): Promise<Response> {
 
   const signatureHeader = request.headers.get("stripe-signature") || "";
   const rawBody = await request.text();
-  const validSignature = signatureHeader ? await verifyStripeSignature(rawBody, signatureHeader, webhookSecret) : false;
+  let validSignature = false;
+  for (const secret of [webhookSecret, platformWebhookSecret]) {
+    if (secret && signatureHeader && await verifyStripeSignature(rawBody, signatureHeader, secret)) {
+      validSignature = true;
+      break;
+    }
+  }
   if (!validSignature) return json({ error: "Invalid signature." }, 400);
 
   const event = JSON.parse(rawBody) as StripeEvent;
