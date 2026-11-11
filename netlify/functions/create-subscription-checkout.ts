@@ -1,4 +1,5 @@
 import { notifyError } from "../../lib/platform-alert";
+import { ensureSubscriptionProduct } from "../../lib/subscription-product";
 // Starts a Stripe Checkout session for a shop to SUBSCRIBE to the platform itself (this is us
 // billing the shop, unlike create-payment-session.ts which is a shop billing its own customer via
 // their own connected Stripe account). Created directly on the platform's own Stripe account — no
@@ -82,7 +83,7 @@ async function handler(request: Request): Promise<Response> {
     "line_items[0][price_data][currency]": "usd",
     "line_items[0][price_data][unit_amount]": String(settings.plan_price_cents),
     "line_items[0][price_data][recurring][interval]": "month",
-    "line_items[0][price_data][product_data][name]": `ROrunner subscription${settings.business_name ? ` — ${settings.business_name}` : ""}`,
+    "line_items[0][price_data][product]": await ensureSubscriptionProduct(stripeSecretKey),
     success_url: new URL("?billing=success", returnUrl).toString(),
     cancel_url: new URL("?billing=canceled", returnUrl).toString(),
     "metadata[owner_id]": user.id,

@@ -4,6 +4,7 @@
 // standalone platform_admins table (never any shop's settings row) before doing anything cross-tenant.
 // No shop owner or staff login, however privileged within their own shop, can ever reach this.
 import { getStore } from "@netlify/blobs";
+import { ensureSubscriptionProduct } from "../../lib/subscription-product";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -101,14 +102,15 @@ export default async (request: Request) => {
         error?: { message?: string };
       };
       const item = subscription.items?.data?.[0];
-      if (!subscriptionResponse.ok || !item?.price?.product) {
+      if (!subscriptionResponse.ok || !item) {
         return json({ error: `Couldn't load the shop's Stripe subscription, so the price wasn't changed. ${subscription.error?.message || ""}`.trim() }, 400);
       }
       if (subscription.status !== "canceled") {
         const update = new URLSearchParams({
           "items[0][id]": item.id,
           "items[0][price_data][currency]": "usd",
-          "items[0][price_data][product]": item.price.product,
+          // Always the permanent ROrunner product: the one Stripe made at checkout is inactive.
+          "items[0][price_data][product]": await ensureSubscriptionProduct(stripeSecretKey),
           "items[0][price_data][unit_amount]": String(priceCents),
           "items[0][price_data][recurring][interval]": item.price.recurring?.interval || "month",
           proration_behavior: "none",
