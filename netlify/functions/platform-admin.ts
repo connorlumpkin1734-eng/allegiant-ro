@@ -91,6 +91,7 @@ export default async (request: Request) => {
     // invoice (no proration, no charge today). Stripe first, so the app never shows a price the
     // shop isn't really paying.
     let message = "Price updated. The shop pays this when it subscribes.";
+    let currentPeriodEnd: string | null = null;
     if (shop.stripe_subscription_id && ["active", "past_due"].includes(shop.subscription_status)) {
       const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
       if (!stripeSecretKey) return json({ error: "Stripe isn't configured, so the price wasn't changed." }, 500);
@@ -120,16 +121,21 @@ export default async (request: Request) => {
           headers: { ...stripeHeaders, "Content-Type": "application/x-www-form-urlencoded" },
           body: update,
         });
+        const updated = await updateResponse.json().catch(() => ({})) as {
+          error?: { message?: string }; current_period_end?: number; items?: { data?: Array<{ current_period_end?: number }> };
+        };
         if (!updateResponse.ok) {
-          const failed = await updateResponse.json().catch(() => ({})) as { error?: { message?: string } };
-          return json({ error: `Stripe didn't accept the new price, so nothing changed. ${failed.error?.message || ""}`.trim() }, 400);
+          return json({ error: `Stripe didn't accept the new price, so nothing changed. ${updated.error?.message || ""}`.trim() }, 400);
         }
+        const periodEnd = updated.current_period_end ?? updated.items?.data?.[0]?.current_period_end;
+        if (periodEnd) currentPeriodEnd = new Date(periodEnd * 1000).toISOString();
         message = "Price updated. Their Stripe subscription bills the new price from their next invoice.";
       }
     }
 
     const response = await fetch(`${supabaseUrl}/rest/v1/settings?owner_id=eq.${body.ownerId}`, {
-      method: "PATCH", headers: serviceHeaders, body: JSON.stringify({ plan_price_cents: priceCents }),
+      method: "PATCH", headers: serviceHeaders,
+      body: JSON.stringify({ plan_price_cents: priceCents, ...(currentPeriodEnd ? { subscription_current_period_end: currentPeriodEnd } : {}) }),
     });
     if (!response.ok) return json({ error: `Stripe was updated but the app's price wasn't: ${await response.text()}` }, 500);
     return json({ message });
