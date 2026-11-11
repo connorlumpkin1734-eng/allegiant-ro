@@ -324,7 +324,20 @@ async function handler(request: Request): Promise<Response> {
               to: [existing.business_email],
               subject: `Action needed: your payment method failed`,
               text: `Hi,\n\nWe weren't able to charge the card on file for ${businessName}'s subscription. You have 7 days to update your payment method before the account goes read-only (existing repair orders stay viewable, but creating or editing anything will pause).\n\nUpdate your payment method: ${billingUrl}\n\nIf you've already fixed this, you can ignore this email — we'll pick up the update automatically.`,
-              html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;color:#102a4c"><h2 style="margin-bottom:4px">Action needed: your payment method failed</h2><p>We weren't able to charge the card on file for <strong>${escapeHtml(businessName)}</strong>'s subscription.</p><p>You have <strong>7 days</strong> to update your payment method before the account goes read-only. Existing repair orders stay viewable, but creating or editing anything will pause until it's fixed.</p><p><a href="${escapeHtml(billingUrl)}" style="display:inline-block;background:#2459a9;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:700">Update payment method</a></p><p style="color:#64748b;font-size:13px">If you've already fixed this, you can ignore this email — we'll pick up the update automatically.</p></div>`,
+              html: `<!doctype html><html><body style="margin:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e8f0">
+<tr><td style="background:#102a4c;padding:22px 26px;color:#ffffff">
+<img src="${escapeHtml(new URL("/rorunner-logo-white.png", siteUrl).toString())}" width="180" height="26" alt="ROrunner" style="display:block;border:0;width:180px;height:auto;max-width:180px">
+<div style="font-size:22px;font-weight:700;margin-top:16px">Action needed: your payment didn't go through</div>
+</td></tr>
+<tr><td style="padding:24px 26px;color:#1b2333;font-size:15px;line-height:1.5">
+<p style="margin:0 0 12px">We weren't able to charge the card on file for <strong>${escapeHtml(businessName)}</strong>'s ROrunner subscription.</p>
+<p style="margin:0 0 18px">You have <strong>7 days</strong> to update your payment method before the account goes read-only. Your repair orders stay viewable, but creating or editing anything pauses until it's fixed.</p>
+<p style="margin:0 0 18px"><a href="${escapeHtml(billingUrl)}" style="display:inline-block;background:#22d3ee;color:#04222a;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700">Update payment method</a></p>
+<p style="margin:0;font-size:13px;color:#5b6578">Already fixed it? You can ignore this email; we'll pick up the update automatically. Questions? Reply here or write to support@rorunner.com.</p>
+</td></tr></table>
+</td></tr></table></body></html>`,
             }),
           });
         } catch {
@@ -372,8 +385,8 @@ async function handler(request: Request): Promise<Response> {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f9;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e8f0">
 <tr><td style="background:#102a4c;padding:22px 26px;color:#ffffff">
-<div style="font-size:13px;letter-spacing:2px;font-weight:700;color:#22d3ee">RORUNNER</div>
-<div style="font-size:22px;font-weight:700;margin-top:6px">Payment received — thank you!</div>
+<img src="${escapeHtml(new URL("/rorunner-logo-white.png", siteUrl).toString())}" width="180" height="26" alt="ROrunner" style="display:block;border:0;width:180px;height:auto;max-width:180px">
+<div style="font-size:22px;font-weight:700;margin-top:16px">Payment received — thank you!</div>
 </td></tr>
 <tr><td style="padding:24px 26px">
 <p style="margin:0 0 16px;font-size:15px;color:#1b2333">Here's your receipt for <strong>${escapeHtml(shopName)}</strong>'s ROrunner subscription.</p>
