@@ -32,8 +32,10 @@ async function handler(request: Request): Promise<Response> {
   const signature = request.headers.get("x-square-hmacsha256-signature") || "";
   // Square signs the exact URL it was given. Behind Netlify the request URL can differ in host, so
   // check against the site's public URL as well.
-  const path = new URL(request.url).pathname;
-  const candidates = [request.url, `${process.env.URL || ""}${path}`].filter(Boolean);
+  // The query string is kept: production and sandbox subscriptions can't share one URL, so the
+  // production one is registered with ?env=live.
+  const { pathname, search } = new URL(request.url);
+  const candidates = [request.url, `${process.env.URL || ""}${pathname}${search}`, "https://rorunner.com" + pathname + search].filter(Boolean);
   let ok = false;
   for (const url of candidates) {
     if (signature && await validSignature(signatureKey, url, rawBody, signature)) { ok = true; break; }
