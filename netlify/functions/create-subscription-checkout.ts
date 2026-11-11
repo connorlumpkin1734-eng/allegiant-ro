@@ -96,6 +96,12 @@ async function handler(request: Request): Promise<Response> {
     // Stripe renamed "embedded" to "embedded_page" in API 2026-03-25.dahlia; try the current name
     // first and the older one if this account is on an earlier API version.
     sessionParams.set("ui_mode", "embedded_page");
+    // Match ROrunner's dark theme so the form blends into the Settings page.
+    sessionParams.set("branding_settings[background_color]", "#161922");
+    sessionParams.set("branding_settings[button_color]", "#22d3ee");
+    sessionParams.set("branding_settings[border_style]", "rounded");
+    sessionParams.set("branding_settings[font_family]", "inter");
+    sessionParams.set("branding_settings[display_name]", "ROrunner");
     sessionParams.set("return_url", new URL("?billing=success", returnUrl).toString());
   } else {
     sessionParams.set("success_url", new URL("?billing=success", returnUrl).toString());
@@ -106,6 +112,13 @@ async function handler(request: Request): Promise<Response> {
     method: "POST", headers: stripeHeaders, body: sessionParams,
   });
   let session = await sessionResponse.json() as { url?: string; client_secret?: string; error?: { message?: string; param?: string } };
+  if (embedded && !sessionResponse.ok && session.error?.param?.startsWith("branding_settings")) {
+    for (const key of [...sessionParams.keys()]) if (key.startsWith("branding_settings")) sessionParams.delete(key);
+    sessionResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST", headers: stripeHeaders, body: sessionParams,
+    });
+    session = await sessionResponse.json() as typeof session;
+  }
   if (embedded && !sessionResponse.ok && session.error?.param === "ui_mode") {
     sessionParams.set("ui_mode", "embedded");
     sessionResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
