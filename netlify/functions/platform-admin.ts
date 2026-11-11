@@ -5,6 +5,7 @@
 // No shop owner or staff login, however privileged within their own shop, can ever reach this.
 import { getStore } from "@netlify/blobs";
 import { ensureSubscriptionProduct } from "../../lib/subscription-product";
+import { fromAddress } from "../../lib/email-from";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -83,8 +84,8 @@ export default async (request: Request) => {
       return json({ error: "Missing or invalid shop/price." }, 400);
     }
     const priceCents = Math.round(body.planPriceCents);
-    const shopResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=stripe_subscription_id,subscription_status&owner_id=eq.${body.ownerId}&limit=1`, { headers: serviceHeaders });
-    const shop = (shopResponse.ok ? await shopResponse.json() as Array<{ stripe_subscription_id: string | null; subscription_status: string }> : [])[0];
+    const shopResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=stripe_subscription_id,subscription_status,plan_price_cents,business_name,business_email&owner_id=eq.${body.ownerId}&limit=1`, { headers: serviceHeaders });
+    const shop = (shopResponse.ok ? await shopResponse.json() as Array<{ stripe_subscription_id: string | null; subscription_status: string; plan_price_cents: number | null; business_name: string | null; business_email: string | null }> : [])[0];
     if (!shop) return json({ error: "Shop not found." }, 404);
 
     // A shop that's already subscribed: change what Stripe actually bills, starting with the next
@@ -138,6 +139,64 @@ export default async (request: Request) => {
       body: JSON.stringify({ plan_price_cents: priceCents, ...(currentPeriodEnd ? { subscription_current_period_end: currentPeriodEnd } : {}) }),
     });
     if (!response.ok) return json({ error: `Stripe was updated but the app's price wasn't: ${await response.text()}` }, 500);
+
+    // A subscribed shop gets told about a price change before it's billed (the Terms promise this).
+    const priceChanged = shop.plan_price_cents !== priceCents;
+    const resendKey = process.env.RESEND_API_KEY;
+    if (priceChanged && currentPeriodEnd && shop.business_email && resendKey) {
+      const siteUrl = process.env.URL || new URL(request.url).origin;
+      const dollars = (cents: number | null) => cents == null ? "" : (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+      const startDate = new Date(currentPeriodEnd).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+      const escapeHtml = (value: unknown) => String(value ?? "")
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+      const oldPrice = dollars(shop.plan_price_cents);
+      const newPrice = dollars(priceCents);
+      const shopName = shop.business_name || "your shop";
+      const lower = shop.plan_price_cents != null && priceCents < shop.plan_price_cents;
+      const settingsUrl = new URL("/#settings", siteUrl).toString();
+      const html = `<!doctype html><html><body style="margin:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e8f0">
+<tr><td style="background:#102a4c;padding:22px 26px;color:#ffffff">
+<img src="${escapeHtml(new URL("/rorunner-logo-white.png", siteUrl).toString())}" width="180" height="26" alt="ROrunner" style="display:block;border:0;width:180px;height:auto;max-width:180px">
+<div style="font-size:22px;font-weight:700;margin-top:16px">${lower ? "Good news: your price is going down" : "A heads-up about your ROrunner price"}</div>
+</td></tr>
+<tr><td style="padding:24px 26px;color:#1b2333;font-size:15px;line-height:1.5">
+<p style="margin:0 0 16px">The monthly price for <strong>${escapeHtml(shopName)}</strong>'s ROrunner subscription is changing.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-radius:12px;background:#f3f8fb;margin-bottom:16px"><tr>
+<td style="padding:16px;text-align:center"><div style="font-size:12px;color:#5b6578">Now</div><div style="font-size:22px;font-weight:700;color:#5b6578;text-decoration:line-through">${escapeHtml(oldPrice)}</div></td>
+<td style="padding:16px;text-align:center;font-size:22px;color:#5b6578">→</td>
+<td style="padding:16px;text-align:center"><div style="font-size:12px;color:#5b6578">Starting ${escapeHtml(startDate)}</div><div style="font-size:26px;font-weight:800;color:#102a4c">${escapeHtml(newPrice)}<span style="font-size:13px;color:#5b6578;font-weight:600">/month</span></div></td>
+</tr></table>
+<p style="margin:0 0 12px">The new price starts with your bill on <strong>${escapeHtml(startDate)}</strong>. Nothing changes for the month you've already paid for.</p>
+<p style="margin:0 0 18px;padding:14px;border-radius:10px;background:#f7f9fc;font-size:13px;color:#5b6578">Still no contract, still month to month. If this doesn't work for you, you can cancel any time before then from <a href="${escapeHtml(settingsUrl)}" style="color:#0e7490">Settings → Payments &amp; billing</a>, and your data is always yours to download.</p>
+<p style="margin:0;font-size:13px;color:#5b6578">Questions? Just reply to this email or write to support@rorunner.com.</p>
+</td></tr></table>
+</td></tr></table></body></html>`;
+      const text = [
+        `Your ROrunner price is changing: ${oldPrice}/month → ${newPrice}/month, starting with your bill on ${startDate}.`,
+        "Nothing changes for the month you've already paid for.",
+        "Still no contract, month to month. You can cancel any time before then in ROrunner under Settings → Payments & billing.",
+        "Questions? Reply to this email or write to support@rorunner.com.",
+      ].join("\n\n");
+      try {
+        const sent = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: fromAddress(`${process.env.EMAIL_PRODUCT_NAME || "ROrunner"} Billing`, "billing"),
+            to: [shop.business_email],
+            reply_to: "support@rorunner.com",
+            subject: lower ? `Your ROrunner price is going down to ${newPrice}/month` : `Your ROrunner price is changing to ${newPrice}/month on ${startDate}`,
+            html,
+            text,
+          }),
+        });
+        message += sent.ok ? ` ${shopName} was emailed about the change.` : " The notice email to the shop didn't send — let them know yourself.";
+      } catch {
+        message += " The notice email to the shop didn't send — let them know yourself.";
+      }
+    }
     return json({ message });
   }
 
