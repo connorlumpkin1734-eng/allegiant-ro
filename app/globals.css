@@ -2745,3 +2745,5 @@ select option { background-color: var(--panel); color: var(--ink); }
   .plan-card { padding: 18px; }
   .plan-card-amount { font-size: 38px; }
 }
+.processor-box { margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; padding: 16px; max-width: 620px; background: rgba(255, 255, 255, 0.02); }
+.processor-box > strong { font-size: 15px; }

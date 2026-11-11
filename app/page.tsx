@@ -6563,6 +6563,7 @@ function CustomerProfile({
 }
 
 function PaymentsPanel({
+  children,
   ownerId,
   settings,
   pendingStripeOAuthCode,
@@ -6571,6 +6572,8 @@ function PaymentsPanel({
   onStripeReturnHandled,
   onStatusChanged,
 }: {
+  /** Other processors (Square) shown inside the same Payments box. */
+  children?: ReactNode;
   ownerId: string;
   settings: Settings;
   pendingStripeOAuthCode: string | null;
@@ -6694,14 +6697,14 @@ function PaymentsPanel({
     <div className="panel settings-panel">
       <h2 style={{ marginTop: 0 }}>Payments</h2>
       <p className="muted" style={{ marginTop: -6, fontSize: 13 }}>
-        Connect your shop&apos;s own Stripe account so customer card and bank-transfer (ACH) payments go straight to your
-        bank. Money never passes through us — we don&apos;t hold or move your funds. Stripe charges its normal processing
-        fees to your Stripe account (cards are 2.9% + 30¢); we don&apos;t add anything on top.
+        Connect your shop&apos;s own Stripe or Square account so customers can pay invoices online, straight to your
+        bank. Money never passes through us — we don&apos;t hold or move your funds, and we don&apos;t add anything on top
+        of the processor&apos;s normal fees (Stripe cards are 2.9% + 30¢).
       </p>
       {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}
 
       {!connected ? (
-        <div style={{ marginTop: 14, border: "1px solid #e7eaf0", borderRadius: 10, padding: 16, maxWidth: 520 }}>
+        <div className="processor-box">
           <strong>Connect your Stripe account</strong>
           <p className="muted" style={{ fontSize: 13, margin: "6px 0 12px" }}>
             Log into your shop&apos;s Stripe account and link it. No Stripe account yet? You can create one on the
@@ -6733,6 +6736,7 @@ function PaymentsPanel({
           </div>
         </div>
       )}
+      {children}
     </div>
   );
 }
@@ -6806,11 +6810,11 @@ function SquarePanel({ ownerId, settings, onStatusChanged }: { ownerId: string; 
   }
 
   return (
-    <div className="panel settings-panel">
-      <h2 style={{ marginTop: 0 }}>Square</h2>
-      <p className="muted" style={{ marginTop: -6, fontSize: 13 }}>
-        Already use Square? Connect your Square account and customers pay invoices through Square instead. Money goes
-        straight to your Square account and Square charges you its normal fees. We never hold your funds or take a cut.
+    <div className="processor-box">
+      <strong>{squareConnected ? "Square" : "Or connect your Square account"}</strong>
+      <p className="muted" style={{ fontSize: 13, margin: "6px 0 0" }}>
+        Already use Square? Customers pay invoices through Square instead, straight into your Square account. Square
+        charges you its normal fees. We never hold your funds or take a cut.
       </p>
       {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}
       {squareConnected ? (
@@ -6845,7 +6849,9 @@ function SquarePanel({ ownerId, settings, onStatusChanged }: { ownerId: string; 
 
 // Stripe.js has to load from js.stripe.com (Stripe requires it); loaded once, only when needed.
 type StripeEmbeddedCheckout = { mount: (element: HTMLElement) => void; destroy: () => void };
-type StripeJs = { initEmbeddedCheckout: (options: { fetchClientSecret: () => Promise<string> }) => Promise<StripeEmbeddedCheckout> };
+type EmbeddedCheckoutInit = (options: { fetchClientSecret: () => Promise<string> }) => Promise<StripeEmbeddedCheckout>;
+// Newer Stripe.js calls it createEmbeddedCheckoutPage; older builds call it initEmbeddedCheckout.
+type StripeJs = { createEmbeddedCheckoutPage?: EmbeddedCheckoutInit; initEmbeddedCheckout?: EmbeddedCheckoutInit };
 let stripeJsPromise: Promise<((key: string) => StripeJs) | null> | null = null;
 function loadStripeJs() {
   if (!stripeJsPromise) {
@@ -6955,8 +6961,18 @@ function BillingPanel({ settings }: { settings: Settings }) {
         return;
       }
       embeddedRef.current?.destroy();
+      const stripe = makeStripe(STRIPE_PUBLISHABLE_KEY);
+      const init = stripe.createEmbeddedCheckoutPage?.bind(stripe) ?? stripe.initEmbeddedCheckout?.bind(stripe);
+      let checkout: StripeEmbeddedCheckout;
+      try {
+        if (!init) throw new Error("Embedded checkout isn't available.");
+        checkout = await init({ fetchClientSecret: async () => body.clientSecret as string });
+      } catch (embedError) {
+        console.warn("Embedded checkout failed; using Stripe's page instead.", embedError);
+        await hostedCheckout();
+        return;
+      }
       setCheckoutOpen(true);
-      const checkout = await makeStripe(STRIPE_PUBLISHABLE_KEY).initEmbeddedCheckout({ fetchClientSecret: async () => body.clientSecret as string });
       embeddedRef.current = checkout;
       // Wait a frame so the container is on the page.
       window.requestAnimationFrame(() => {
@@ -7908,8 +7924,9 @@ function SettingsPanel({
         stripeReturnPending={stripeReturnPending}
         onStripeReturnHandled={onStripeReturnHandled}
         onStatusChanged={onStripeStatusChanged}
-      />}
-      {section === "payments" && isOwner && <SquarePanel ownerId={ownerId} settings={initialSettings} onStatusChanged={onStripeStatusChanged} />}
+      >
+        {isOwner && <SquarePanel ownerId={ownerId} settings={initialSettings} onStatusChanged={onStripeStatusChanged} />}
+      </PaymentsPanel>}
 
       {section === "staff" && <div className="panel settings-panel">
         <h2 style={{ marginTop: 0 }}>Staff accounts</h2>

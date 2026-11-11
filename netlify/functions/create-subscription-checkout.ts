@@ -93,17 +93,27 @@ async function handler(request: Request): Promise<Response> {
     "subscription_data[metadata][owner_id]": user.id,
   });
   if (embedded) {
-    sessionParams.set("ui_mode", "embedded");
+    // Stripe renamed "embedded" to "embedded_page" in API 2026-03-25.dahlia; try the current name
+    // first and the older one if this account is on an earlier API version.
+    sessionParams.set("ui_mode", "embedded_page");
     sessionParams.set("return_url", new URL("?billing=success", returnUrl).toString());
   } else {
     sessionParams.set("success_url", new URL("?billing=success", returnUrl).toString());
     sessionParams.set("cancel_url", new URL("?billing=canceled", returnUrl).toString());
   }
 
-  const sessionResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+  let sessionResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST", headers: stripeHeaders, body: sessionParams,
   });
-  const session = await sessionResponse.json() as { url?: string; client_secret?: string; error?: { message?: string } };
+  let session = await sessionResponse.json() as { url?: string; client_secret?: string; error?: { message?: string; param?: string } };
+  if (embedded && !sessionResponse.ok && session.error?.param === "ui_mode") {
+    sessionParams.set("ui_mode", "embedded");
+    sessionResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST", headers: stripeHeaders, body: sessionParams,
+    });
+    session = await sessionResponse.json() as typeof session;
+  }
+  if (!sessionResponse.ok) console.error("[create-subscription-checkout] Stripe refused the session:", session.error?.message);
   if (embedded) {
     if (!sessionResponse.ok || !session.client_secret) {
       return json({ error: session.error?.message || "Could not start checkout." }, 400);
