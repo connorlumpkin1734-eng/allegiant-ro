@@ -1524,7 +1524,8 @@ function RepairOrderApp({ user }: { user: User }) {
   }
   function changeUiTheme(next: UiTheme) {
     applyUiTheme(next);
-    void supabase.from("user_preferences").upsert({ user_id: user.id, ui_theme: next, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    // ui_mode, not the older ui_theme column, so this choice never changes the current app's theme.
+    void supabase.from("user_preferences").upsert({ user_id: user.id, ui_mode: next, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
   }
   useEffect(() => {
     try {
@@ -1533,8 +1534,8 @@ function RepairOrderApp({ user }: { user: User }) {
     } catch {
       // Ignore — falls back to the default theme.
     }
-    void supabase.from("user_preferences").select("ui_theme").maybeSingle().then(({ data }) => {
-      const saved = normalizeUiTheme(data?.ui_theme);
+    void supabase.from("user_preferences").select("ui_theme,ui_mode").maybeSingle().then(({ data }) => {
+      const saved = normalizeUiTheme(data?.ui_mode) ?? normalizeUiTheme(data?.ui_theme);
       if (saved) applyUiTheme(saved);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
