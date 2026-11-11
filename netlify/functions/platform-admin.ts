@@ -154,10 +154,10 @@ export default async (request: Request) => {
       const shopName = shop.business_name || "your shop";
       const lower = shop.plan_price_cents != null && priceCents < shop.plan_price_cents;
       const settingsUrl = new URL("/#settings", siteUrl).toString();
-      const html = `<!doctype html><html><body style="margin:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif">
+      const html = `<!doctype html><html><head><meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark"><style>:root{color-scheme:light dark;supported-color-schemes:light dark}</style></head><body style="margin:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f9;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e8f0">
-<tr><td style="background:#102a4c;padding:22px 26px;color:#ffffff">
+<tr><td bgcolor="#102a4c" style="background-color:#102a4c;background-image:linear-gradient(#102a4c,#102a4c);padding:22px 26px;color:#ffffff">
 <img src="${escapeHtml(new URL("/rorunner-logo-white.png", siteUrl).toString())}" width="180" height="26" alt="ROrunner" style="display:block;border:0;width:180px;height:auto;max-width:180px">
 <div style="font-size:22px;font-weight:700;margin-top:16px">${lower ? "Good news: your price is going down" : "A heads-up about your ROrunner price"}</div>
 </td></tr>

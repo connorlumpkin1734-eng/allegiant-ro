@@ -324,10 +324,10 @@ async function handler(request: Request): Promise<Response> {
               to: [existing.business_email],
               subject: `Action needed: your payment method failed`,
               text: `Hi,\n\nWe weren't able to charge the card on file for ${businessName}'s subscription. You have 7 days to update your payment method before the account goes read-only (existing repair orders stay viewable, but creating or editing anything will pause).\n\nUpdate your payment method: ${billingUrl}\n\nIf you've already fixed this, you can ignore this email — we'll pick up the update automatically.`,
-              html: `<!doctype html><html><body style="margin:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif">
+              html: `<!doctype html><html><head><meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark"><style>:root{color-scheme:light dark;supported-color-schemes:light dark}</style></head><body style="margin:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f9;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e8f0">
-<tr><td style="background:#102a4c;padding:22px 26px;color:#ffffff">
+<tr><td bgcolor="#102a4c" style="background-color:#102a4c;background-image:linear-gradient(#102a4c,#102a4c);padding:22px 26px;color:#ffffff">
 <img src="${escapeHtml(new URL("/rorunner-logo-white.png", siteUrl).toString())}" width="180" height="26" alt="ROrunner" style="display:block;border:0;width:180px;height:auto;max-width:180px">
 <div style="font-size:22px;font-weight:700;margin-top:16px">Action needed: your payment didn't go through</div>
 </td></tr>
@@ -381,10 +381,10 @@ async function handler(request: Request): Promise<Response> {
     const row = (label: string, value: string) => value
       ? `<tr><td style="padding:8px 0;color:#5b6578;font-size:14px">${escapeHtml(label)}</td><td style="padding:8px 0;text-align:right;font-size:14px;color:#102a4c;font-weight:600">${escapeHtml(value)}</td></tr>`
       : "";
-    const html = `<!doctype html><html><body style="margin:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif">
+    const html = `<!doctype html><html><head><meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark"><style>:root{color-scheme:light dark;supported-color-schemes:light dark}</style></head><body style="margin:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f9;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e8f0">
-<tr><td style="background:#102a4c;padding:22px 26px;color:#ffffff">
+<tr><td bgcolor="#102a4c" style="background-color:#102a4c;background-image:linear-gradient(#102a4c,#102a4c);padding:22px 26px;color:#ffffff">
 <img src="${escapeHtml(new URL("/rorunner-logo-white.png", siteUrl).toString())}" width="180" height="26" alt="ROrunner" style="display:block;border:0;width:180px;height:auto;max-width:180px">
 <div style="font-size:22px;font-weight:700;margin-top:16px">Payment received — thank you!</div>
 </td></tr>
