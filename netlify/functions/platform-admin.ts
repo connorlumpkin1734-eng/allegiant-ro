@@ -81,11 +81,56 @@ export default async (request: Request) => {
     if (!body.ownerId || !Number.isFinite(body.planPriceCents) || body.planPriceCents < 0) {
       return json({ error: "Missing or invalid shop/price." }, 400);
     }
+    const priceCents = Math.round(body.planPriceCents);
+    const shopResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=stripe_subscription_id,subscription_status&owner_id=eq.${body.ownerId}&limit=1`, { headers: serviceHeaders });
+    const shop = (shopResponse.ok ? await shopResponse.json() as Array<{ stripe_subscription_id: string | null; subscription_status: string }> : [])[0];
+    if (!shop) return json({ error: "Shop not found." }, 404);
+
+    // A shop that's already subscribed: change what Stripe actually bills, starting with the next
+    // invoice (no proration, no charge today). Stripe first, so the app never shows a price the
+    // shop isn't really paying.
+    let message = "Price updated. The shop pays this when it subscribes.";
+    if (shop.stripe_subscription_id && ["active", "past_due"].includes(shop.subscription_status)) {
+      const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+      if (!stripeSecretKey) return json({ error: "Stripe isn't configured, so the price wasn't changed." }, 500);
+      const stripeHeaders = { Authorization: `Bearer ${stripeSecretKey}` };
+      const subscriptionResponse = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(shop.stripe_subscription_id)}`, { headers: stripeHeaders });
+      const subscription = await subscriptionResponse.json() as {
+        status?: string;
+        items?: { data?: Array<{ id: string; price?: { product?: string; recurring?: { interval?: string } } }> };
+        error?: { message?: string };
+      };
+      const item = subscription.items?.data?.[0];
+      if (!subscriptionResponse.ok || !item?.price?.product) {
+        return json({ error: `Couldn't load the shop's Stripe subscription, so the price wasn't changed. ${subscription.error?.message || ""}`.trim() }, 400);
+      }
+      if (subscription.status !== "canceled") {
+        const update = new URLSearchParams({
+          "items[0][id]": item.id,
+          "items[0][price_data][currency]": "usd",
+          "items[0][price_data][product]": item.price.product,
+          "items[0][price_data][unit_amount]": String(priceCents),
+          "items[0][price_data][recurring][interval]": item.price.recurring?.interval || "month",
+          proration_behavior: "none",
+        });
+        const updateResponse = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(shop.stripe_subscription_id)}`, {
+          method: "POST",
+          headers: { ...stripeHeaders, "Content-Type": "application/x-www-form-urlencoded" },
+          body: update,
+        });
+        if (!updateResponse.ok) {
+          const failed = await updateResponse.json().catch(() => ({})) as { error?: { message?: string } };
+          return json({ error: `Stripe didn't accept the new price, so nothing changed. ${failed.error?.message || ""}`.trim() }, 400);
+        }
+        message = "Price updated. Their Stripe subscription bills the new price from their next invoice.";
+      }
+    }
+
     const response = await fetch(`${supabaseUrl}/rest/v1/settings?owner_id=eq.${body.ownerId}`, {
-      method: "PATCH", headers: serviceHeaders, body: JSON.stringify({ plan_price_cents: Math.round(body.planPriceCents) }),
+      method: "PATCH", headers: serviceHeaders, body: JSON.stringify({ plan_price_cents: priceCents }),
     });
-    if (!response.ok) return json({ error: `Could not update price: ${await response.text()}` }, 500);
-    return json({ message: "Price updated." });
+    if (!response.ok) return json({ error: `Stripe was updated but the app's price wasn't: ${await response.text()}` }, 500);
+    return json({ message });
   }
 
   if (body.action === "update_status") {

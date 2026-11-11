@@ -7034,8 +7034,9 @@ function PlatformAdminPanel() {
     setBusyOwnerId(ownerId);
     setMessage("");
     try {
-      await call({ action: "update_price", ownerId, planPriceCents: Math.round(dollars * 100) });
+      const result = await call({ action: "update_price", ownerId, planPriceCents: Math.round(dollars * 100) }) as { message?: string } | undefined;
       await load();
+      if (result?.message) setMessage(result.message);
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Could not update price.");
     }
