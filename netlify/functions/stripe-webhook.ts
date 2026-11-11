@@ -108,6 +108,17 @@ async function stripeFeeFields(paymentIntentId: string, connectedAccount: string
   return fields;
 }
 
+// Renewal date of a subscription. Newer Stripe API versions keep it on the subscription item rather
+// than the subscription itself, so check both.
+type StripeSubscription = {
+  id: string; customer: string; status: string; current_period_end?: number;
+  items?: { data?: Array<{ current_period_end?: number }> };
+};
+function periodEndIso(subscription: Pick<StripeSubscription, "current_period_end" | "items">) {
+  const seconds = subscription.current_period_end ?? subscription.items?.data?.[0]?.current_period_end;
+  return seconds ? new Date(seconds * 1000).toISOString() : null;
+}
+
 async function handler(request: Request): Promise<Response> {
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
 
@@ -170,12 +181,25 @@ async function handler(request: Request): Promise<Response> {
     if (session.mode === "subscription") {
       const ownerId = session.metadata?.owner_id;
       if (ownerId) {
+        // Look up the new subscription for its first renewal date.
+        let currentPeriodEnd: string | null = null;
+        if (stripeSecretKey && session.subscription) {
+          try {
+            const subscriptionResponse = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(session.subscription)}`, {
+              headers: { Authorization: `Bearer ${stripeSecretKey}` },
+            });
+            if (subscriptionResponse.ok) currentPeriodEnd = periodEndIso(await subscriptionResponse.json() as StripeSubscription);
+          } catch {
+            // The renewal date fills in on the next subscription update instead.
+          }
+        }
         await fetch(`${supabaseUrl}/rest/v1/settings?owner_id=eq.${ownerId}`, {
           method: "PATCH", headers: serviceHeaders,
           body: JSON.stringify({
             subscription_status: "active",
             stripe_customer_id: session.customer || null,
             stripe_subscription_id: session.subscription || null,
+            ...(currentPeriodEnd ? { subscription_current_period_end: currentPeriodEnd } : {}),
           }),
         });
       }
@@ -242,7 +266,7 @@ async function handler(request: Request): Promise<Response> {
   // Platform billing subscription lifecycle (renewals, failed-card retries, cancellations). These
   // are keyed by Stripe customer id since a subscription event doesn't carry our owner_id metadata.
   if (event.type === "customer.subscription.updated") {
-    const subscription = event.data.object as { id: string; customer: string; status: string; current_period_end?: number };
+    const subscription = event.data.object as StripeSubscription;
     const mapped = mapSubscriptionStatus(subscription.status);
     if (mapped) {
       const existingResponse = await fetch(
@@ -261,7 +285,7 @@ async function handler(request: Request): Promise<Response> {
       const patch: Record<string, unknown> = {
         subscription_status: mapped,
         stripe_subscription_id: subscription.id,
-        subscription_current_period_end: subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString() : null,
+        subscription_current_period_end: periodEndIso(subscription),
       };
       if (mapped === "past_due") {
         if (enteringPastDue) patch.subscription_past_due_since = new Date().toISOString();
