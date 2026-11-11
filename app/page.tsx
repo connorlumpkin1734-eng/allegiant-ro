@@ -1711,6 +1711,7 @@ function RepairOrderApp({ user }: { user: User }) {
       setView("settings");
       window.history.replaceState({}, "", window.location.pathname);
     } else if (billingReturn === "success" || billingReturn === "canceled") {
+      billingWelcomePending = billingReturn === "success";
       // The subscription webhook usually beats the redirect back here, but re-load once more in
       // case it hasn't — the window-focus refresh below would otherwise be the only backstop.
       setView("settings");
@@ -6869,6 +6870,9 @@ function loadStripeJs() {
   return stripeJsPromise;
 }
 const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
+// Set when the owner lands back from a successful subscription checkout, so Settings opens on
+// Payments & billing with a confirmation instead of the Shop tab.
+let billingWelcomePending = false;
 
 const PLAN_PROMISES: Array<{ title: string; detail: string }> = [
   { title: "No contract", detail: "No setup fees, no annual commitment, nothing to sign." },
@@ -6921,6 +6925,11 @@ function BillingPanel({ settings }: { settings: Settings }) {
   const [busy, setBusy] = useState<"" | "subscribe" | "portal" | "export">("");
   const [message, setMessage] = useToastMessage();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [welcome] = useState(() => {
+    const show = billingWelcomePending;
+    billingWelcomePending = false;
+    return show;
+  });
   const checkoutRef = useRef<HTMLDivElement | null>(null);
   const embeddedRef = useRef<StripeEmbeddedCheckout | null>(null);
 
@@ -7068,6 +7077,19 @@ function BillingPanel({ settings }: { settings: Settings }) {
     <div className="panel settings-panel">
       <h2 style={{ marginTop: 0 }}>Billing</h2>
       {message && <div className="notice" style={{ marginTop: 10 }}>{message}</div>}
+      {welcome && (
+        <div className="billing-welcome">
+          <span className="billing-welcome-icon" aria-hidden="true">✓</span>
+          <div>
+            <strong>You&apos;re subscribed. Welcome to ROrunner!</strong>
+            <span>
+              {status === "active"
+                ? `Your receipt is on its way to ${settings.business_email || "your shop email"}. No contract — cancel anytime right here.`
+                : "Finishing up with Stripe — this updates in a few seconds."}
+            </span>
+          </div>
+        </div>
+      )}
 
       {status === "exempt" ? (
         <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>This shop isn&apos;t billed.</p>
@@ -7705,7 +7727,7 @@ function SettingsPanel({
 
   const logoUrl = logoPublicUrl(form.logo_path);
   const [section, setSection] = useState<SettingsSection>(() => (
-    pendingStripeOAuthCode || stripeReturnPending || (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("square"))
+    pendingStripeOAuthCode || stripeReturnPending || billingWelcomePending || (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("square"))
       ? "payments" : "shop"
   ));
 

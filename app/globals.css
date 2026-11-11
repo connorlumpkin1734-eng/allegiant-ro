@@ -2747,3 +2747,7 @@ select option { background-color: var(--panel); color: var(--ink); }
 }
 .processor-box { margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; padding: 16px; max-width: 620px; background: rgba(255, 255, 255, 0.02); }
 .processor-box > strong { font-size: 15px; }
+.billing-welcome { display: flex; gap: 12px; align-items: flex-start; margin: 4px 0 16px; padding: 14px 16px; border-radius: 14px; background: var(--success-tint); border: 1px solid rgba(52, 211, 153, 0.4); }
+.billing-welcome strong { display: block; font-size: 15px; color: var(--ink); }
+.billing-welcome span { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+.billing-welcome-icon { flex: 0 0 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; background: var(--success-text); color: #06170f !important; font-weight: 900; margin-top: 0 !important; }
