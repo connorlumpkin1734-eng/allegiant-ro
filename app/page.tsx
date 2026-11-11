@@ -435,7 +435,7 @@ function dismissToast(id: number) {
   toastList = toastList.filter((toast) => toast.id !== id);
   emitToasts();
 }
-const ERRORISH = /(could not|couldn't|can't|cannot|error|failed|missing|required|needs? |add the|add at least|before |invalid|expired|too many|not allowed|only the|doesn't look|denied|rejected|isn't|wasn't|should be|\benter (the|at least|a|an)\b|write the|choose |pick a)/i;
+const ERRORISH = /(could not|couldn't|can't|cannot|didn't|did not|nothing changed|refused|error|failed|missing|required|needs? |add the|add at least|before |invalid|expired|too many|not allowed|only the|doesn't look|denied|rejected|isn't|wasn't|should be|\benter (the|at least|a|an)\b|write the|choose |pick a)/i;
 const SUCCESSISH = /\b(emailed|sent|saved|copied|recorded|approved|updated|added|removed|deleted|archived|restored|confirmed|ready|marked|reopened|notified|done|complete|turned)\b/i;
 function guessToastKind(text: string): ToastKind {
   if (ERRORISH.test(text)) return "error";
@@ -6843,9 +6843,82 @@ function SquarePanel({ ownerId, settings, onStatusChanged }: { ownerId: string; 
   );
 }
 
+// Stripe.js has to load from js.stripe.com (Stripe requires it); loaded once, only when needed.
+type StripeEmbeddedCheckout = { mount: (element: HTMLElement) => void; destroy: () => void };
+type StripeJs = { initEmbeddedCheckout: (options: { fetchClientSecret: () => Promise<string> }) => Promise<StripeEmbeddedCheckout> };
+let stripeJsPromise: Promise<((key: string) => StripeJs) | null> | null = null;
+function loadStripeJs() {
+  if (!stripeJsPromise) {
+    stripeJsPromise = new Promise((resolve) => {
+      const existing = (window as unknown as { Stripe?: (key: string) => StripeJs }).Stripe;
+      if (existing) return resolve(existing);
+      const script = document.createElement("script");
+      script.src = "https://js.stripe.com/v3/";
+      script.async = true;
+      script.onload = () => resolve((window as unknown as { Stripe?: (key: string) => StripeJs }).Stripe ?? null);
+      script.onerror = () => { stripeJsPromise = null; resolve(null); };
+      document.head.appendChild(script);
+    });
+  }
+  return stripeJsPromise;
+}
+const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
+
+const PLAN_PROMISES: Array<{ title: string; detail: string }> = [
+  { title: "No contract", detail: "No setup fees, no annual commitment, nothing to sign." },
+  { title: "Month to month", detail: "Billed once a month on the day you subscribe." },
+  { title: "Cancel anytime", detail: "Two clicks in Settings. You keep access through the month you paid for." },
+  { title: "Your data is yours", detail: "Download everything, any time — even after you cancel." },
+];
+const PLAN_INCLUDES = [
+  "Unlimited repair orders, estimates and invoices",
+  "Online estimate approval and invoice payments",
+  "Inspections with photos and video",
+  "Your whole team: advisors, techs and team leads",
+  "Card, bank and Zelle payments straight to your bank",
+  "Reports, alerts and email support",
+];
+
+function PlanCard({ price, children }: { price: string; children?: ReactNode }) {
+  return (
+    <div className="plan-card">
+      <div className="plan-card-head">
+        <div>
+          <div className="plan-card-name">ROrunner</div>
+          <div className="plan-card-tagline">Everything your shop needs, one simple price.</div>
+        </div>
+        <div className="plan-card-price">
+          <span className="plan-card-amount">{price}</span>
+          <span className="plan-card-per">/ month</span>
+        </div>
+      </div>
+      <div className="plan-promises">
+        {PLAN_PROMISES.map((promise) => (
+          <div key={promise.title} className="plan-promise">
+            <span className="plan-promise-check" aria-hidden="true">✓</span>
+            <div>
+              <strong>{promise.title}</strong>
+              <span>{promise.detail}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <ul className="plan-includes">
+        {PLAN_INCLUDES.map((item) => <li key={item}>{item}</li>)}
+      </ul>
+      {children}
+    </div>
+  );
+}
+
 function BillingPanel({ settings }: { settings: Settings }) {
-  const [busy, setBusy] = useState<"" | "subscribe" | "portal">("");
+  const [busy, setBusy] = useState<"" | "subscribe" | "portal" | "export">("");
   const [message, setMessage] = useToastMessage();
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const checkoutRef = useRef<HTMLDivElement | null>(null);
+  const embeddedRef = useRef<StripeEmbeddedCheckout | null>(null);
+
+  useEffect(() => () => { embeddedRef.current?.destroy(); embeddedRef.current = null; }, []);
 
   async function authHeader() {
     const { data } = await supabase.auth.getSession();
@@ -6854,19 +6927,56 @@ function BillingPanel({ settings }: { settings: Settings }) {
     return { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` };
   }
 
+  // Stripe's hosted page: the fallback if the embedded form can't load for any reason.
+  async function hostedCheckout() {
+    const headers = await authHeader();
+    const response = await fetch("/.netlify/functions/create-subscription-checkout", { method: "POST", headers, body: JSON.stringify({}) });
+    const body = await response.json() as { url?: string; error?: string };
+    if (!response.ok || !body.url) throw new Error(body.error || "Could not start checkout.");
+    window.location.href = body.url;
+  }
+
   async function subscribe() {
     setBusy("subscribe");
     setMessage("");
     try {
+      const makeStripe = STRIPE_PUBLISHABLE_KEY ? await loadStripeJs() : null;
+      if (!makeStripe) {
+        await hostedCheckout();
+        return;
+      }
       const headers = await authHeader();
-      const response = await fetch("/.netlify/functions/create-subscription-checkout", { method: "POST", headers });
-      const body = await response.json() as { url?: string; error?: string };
-      if (!response.ok || !body.url) throw new Error(body.error || "Could not start checkout.");
-      window.location.href = body.url;
+      const response = await fetch("/.netlify/functions/create-subscription-checkout", {
+        method: "POST", headers, body: JSON.stringify({ embedded: true }),
+      });
+      const body = await response.json() as { clientSecret?: string; error?: string };
+      if (!response.ok || !body.clientSecret) {
+        await hostedCheckout();
+        return;
+      }
+      embeddedRef.current?.destroy();
+      setCheckoutOpen(true);
+      const checkout = await makeStripe(STRIPE_PUBLISHABLE_KEY).initEmbeddedCheckout({ fetchClientSecret: async () => body.clientSecret as string });
+      embeddedRef.current = checkout;
+      // Wait a frame so the container is on the page.
+      window.requestAnimationFrame(() => {
+        if (checkoutRef.current) {
+          checkout.mount(checkoutRef.current);
+          checkoutRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+      setBusy("");
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Could not start checkout.");
+      setCheckoutOpen(false);
       setBusy("");
     }
+  }
+
+  function closeCheckout() {
+    embeddedRef.current?.destroy();
+    embeddedRef.current = null;
+    setCheckoutOpen(false);
   }
 
   async function manageBilling() {
@@ -6884,9 +6994,59 @@ function BillingPanel({ settings }: { settings: Settings }) {
     }
   }
 
+  async function exportData() {
+    setBusy("export");
+    setMessage("");
+    try {
+      const headers = await authHeader();
+      const response = await fetch("/.netlify/functions/export-shop-data", { method: "POST", headers });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || "The export failed. Please try again.");
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const name = /filename="([^"]+)"/.exec(disposition)?.[1] || "rorunner-export.zip";
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10000);
+      notify("Your data export is downloading.", "success");
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "The export failed. Please try again.");
+    }
+    setBusy("");
+  }
+
   const status = settings.subscription_status;
   const rosLeft = Math.max(0, settings.trial_ro_limit - settings.trial_ro_created_count);
-  const price = settings.plan_price_cents != null ? `$${(settings.plan_price_cents / 100).toFixed(2)}/mo` : "—";
+  const price = settings.plan_price_cents != null ? `$${(settings.plan_price_cents / 100).toFixed(settings.plan_price_cents % 100 === 0 ? 0 : 2)}` : "—";
+  const renews = settings.subscription_current_period_end ? new Date(settings.subscription_current_period_end).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : "";
+
+  const exportBlock = (
+    <div className="billing-export">
+      <div>
+        <strong>Download all your data</strong>
+        <span>Customers, vehicles, repair orders, line items and payments as spreadsheets, plus a complete copy of everything. Works any time, even after you cancel.</span>
+      </div>
+      <button type="button" className="button secondary" disabled={busy !== ""} onClick={() => void exportData()}>
+        {busy === "export" ? "Preparing…" : "Download (.zip)"}
+      </button>
+    </div>
+  );
+
+  const subscribeButton = (label: string) => (
+    <div className="plan-card-actions">
+      <button type="button" className="button primary plan-card-cta" disabled={busy !== "" || checkoutOpen} onClick={() => void subscribe()}>
+        {busy === "subscribe" ? "Loading secure checkout…" : label}
+      </button>
+      <span className="plan-card-fineprint">Secure payment by Stripe. Cancel anytime. No refunds for partial months.</span>
+    </div>
+  );
 
   return (
     <div className="panel settings-panel">
@@ -6895,51 +7055,59 @@ function BillingPanel({ settings }: { settings: Settings }) {
 
       {status === "exempt" ? (
         <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>This shop isn&apos;t billed.</p>
-      ) : status === "trialing" ? (
+      ) : status === "trialing" || status === "canceled" ? (
         <>
           <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
-            Free trial — {rosLeft} of {settings.trial_ro_limit} repair order{settings.trial_ro_limit === 1 ? "" : "s"} left.
-            {rosLeft === 0 ? " Subscribe to keep creating new ones." : ` Subscribing costs ${price} once you're ready.`}
+            {status === "trialing"
+              ? <>Free trial — {rosLeft} of {settings.trial_ro_limit} repair order{settings.trial_ro_limit === 1 ? "" : "s"} left.{rosLeft === 0 ? " Subscribe to keep creating new ones." : ""}</>
+              : "Your subscription is canceled, so the shop is read-only. Subscribe again any time to pick up right where you left off."}
           </p>
-          <button type="button" className="button primary" disabled={busy !== ""} onClick={() => void subscribe()}>
-            {busy === "subscribe" ? "Starting…" : `Subscribe — ${price}`}
-          </button>
+          <PlanCard price={price}>
+            {!checkoutOpen && subscribeButton(status === "canceled" ? `Resubscribe — ${price}/month` : `Subscribe — ${price}/month`)}
+          </PlanCard>
+          {checkoutOpen && (
+            <div className="embedded-checkout">
+              <div className="embedded-checkout-head">
+                <strong>Payment details</strong>
+                <button type="button" className="button ghost small" onClick={closeCheckout}>Cancel</button>
+              </div>
+              <div ref={checkoutRef} />
+            </div>
+          )}
         </>
       ) : status === "active" ? (
-        <div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <span className="button small primary" style={{ pointerEvents: "none" }}>Active</span>
-            <span className="muted" style={{ fontSize: 13 }}>
-              {price}
-              {settings.subscription_current_period_end ? ` · renews ${new Date(settings.subscription_current_period_end).toLocaleDateString()}` : ""}
-            </span>
+        <div className="billing-active">
+          <div className="billing-active-row">
+            <span className="billing-status-pill">Active</span>
+            <span><strong>{price}/month</strong>{renews ? ` · next bill ${renews}` : ""}</span>
           </div>
+          <p className="muted" style={{ fontSize: 13, margin: "8px 0 0" }}>
+            Month to month, no contract. Cancel any time under Manage billing; you keep access until the end of the month you&apos;ve paid for. Receipts are emailed to {settings.business_email || "your shop email"}.
+          </p>
           <button type="button" className="button secondary" style={{ marginTop: 12 }} disabled={busy !== ""} onClick={() => void manageBilling()}>
-            {busy === "portal" ? "Opening…" : "Manage billing"}
+            {busy === "portal" ? "Opening…" : "Manage billing · update card · cancel"}
           </button>
         </div>
       ) : (
         <div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <span className="button small warning" style={{ pointerEvents: "none" }}>
-              {status === "past_due" ? "Payment needs attention" : "Subscription canceled"}
-            </span>
+            <span className="button small warning" style={{ pointerEvents: "none" }}>Payment needs attention</span>
             <span className="muted" style={{ fontSize: 13 }}>
-              {status === "past_due"
-                ? (() => {
-                    const daysLeft = pastDueDaysLeft(settings);
-                    return daysLeft !== null && daysLeft > 0
-                      ? `${daysLeft} day${daysLeft === 1 ? "" : "s"} left to fix this before the account goes read-only.`
-                      : "Access is now read-only until this is resolved.";
-                  })()
-                : "Access is read-only until this is resolved."}
+              {(() => {
+                const daysLeft = pastDueDaysLeft(settings);
+                return daysLeft !== null && daysLeft > 0
+                  ? `${daysLeft} day${daysLeft === 1 ? "" : "s"} left to fix this before the account goes read-only.`
+                  : "Access is now read-only until this is resolved.";
+              })()}
             </span>
           </div>
           <button type="button" className="button primary" style={{ marginTop: 12 }} disabled={busy !== ""} onClick={() => void manageBilling()}>
-            {busy === "portal" ? "Opening…" : "Manage billing"}
+            {busy === "portal" ? "Opening…" : "Update payment method"}
           </button>
         </div>
       )}
+
+      {exportBlock}
     </div>
   );
 }

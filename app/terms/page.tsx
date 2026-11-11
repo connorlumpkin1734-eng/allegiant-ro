@@ -2,7 +2,7 @@
 //
 // Operator is named as "ROrunner" (no company formed yet). When an LLC exists, put its legal name
 // (and state of formation) in OPERATOR and update LAST_UPDATED.
-const LAST_UPDATED = "November 9, 2026";
+const LAST_UPDATED = "November 10, 2026";
 const OPERATOR = "ROrunner";
 const CONTACT_EMAIL = "support@rorunner.com";
 
@@ -46,9 +46,26 @@ export default function TermsPage() {
 
         <h2>4. Subscription, billing, and cancellation</h2>
         <p>
-          Paid plans are billed on a recurring basis at the price shown at checkout. You can cancel
-          your subscription at any time; cancellation takes effect at the end of your current billing
-          period, and you&apos;ll keep access until then.
+          <strong>No contract. Month to month.</strong> ROrunner is billed monthly at the price shown
+          when you subscribe, starting on the day you subscribe. There are no setup fees, no annual
+          commitment, and no cancellation fees.
+        </p>
+        <p>
+          <strong>Cancel anytime.</strong> You can cancel from Settings → Payments &amp; billing at any
+          time. Cancellation takes effect at the end of the month you&apos;ve already paid for, and you
+          keep full access until then. After that your account becomes read-only; you can subscribe
+          again whenever you like and pick up where you left off.
+        </p>
+        <p>
+          <strong>Your data is yours.</strong> You can download all of your shop&apos;s data (customers,
+          vehicles, repair orders, line items and payments) at any time from Settings → Payments &amp;
+          billing, including after you cancel.
+        </p>
+        <p>
+          <strong>Price changes.</strong> If your monthly price changes, we&apos;ll tell you before it
+          takes effect, and the new price starts with your next monthly bill, never partway through a
+          month you&apos;ve already paid for. A receipt is emailed to your shop&apos;s email address
+          after every payment.
         </p>
         <p>
           <strong>No refunds.</strong> Payments already made are non-refundable, including for

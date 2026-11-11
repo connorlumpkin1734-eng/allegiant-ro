@@ -75,6 +75,11 @@ async function handler(request: Request): Promise<Response> {
     });
   }
 
+  // { embedded: true } keeps checkout inside ROrunner's Settings page (Stripe's embedded checkout);
+  // otherwise it's Stripe's hosted page.
+  const requestBody = await request.json().catch(() => ({})) as { embedded?: boolean };
+  const embedded = requestBody.embedded === true;
+
   const returnUrl = new URL("/", siteUrl);
   const sessionParams = new URLSearchParams({
     mode: "subscription",
@@ -84,15 +89,27 @@ async function handler(request: Request): Promise<Response> {
     "line_items[0][price_data][unit_amount]": String(settings.plan_price_cents),
     "line_items[0][price_data][recurring][interval]": "month",
     "line_items[0][price_data][product]": await ensureSubscriptionProduct(stripeSecretKey),
-    success_url: new URL("?billing=success", returnUrl).toString(),
-    cancel_url: new URL("?billing=canceled", returnUrl).toString(),
     "metadata[owner_id]": user.id,
+    "subscription_data[metadata][owner_id]": user.id,
   });
+  if (embedded) {
+    sessionParams.set("ui_mode", "embedded");
+    sessionParams.set("return_url", new URL("?billing=success", returnUrl).toString());
+  } else {
+    sessionParams.set("success_url", new URL("?billing=success", returnUrl).toString());
+    sessionParams.set("cancel_url", new URL("?billing=canceled", returnUrl).toString());
+  }
 
   const sessionResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST", headers: stripeHeaders, body: sessionParams,
   });
-  const session = await sessionResponse.json() as { url?: string; error?: { message?: string } };
+  const session = await sessionResponse.json() as { url?: string; client_secret?: string; error?: { message?: string } };
+  if (embedded) {
+    if (!sessionResponse.ok || !session.client_secret) {
+      return json({ error: session.error?.message || "Could not start checkout." }, 400);
+    }
+    return json({ clientSecret: session.client_secret });
+  }
   if (!sessionResponse.ok || !session.url) {
     return json({ error: session.error?.message || "Could not start checkout." }, 400);
   }

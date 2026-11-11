@@ -335,6 +335,91 @@ async function handler(request: Request): Promise<Response> {
     return json({ received: true });
   }
 
+  // ROrunner subscription receipt: every paid subscription invoice (first month and each renewal)
+  // gets a branded receipt emailed to the shop, with Stripe's invoice/receipt links.
+  if (event.type === "invoice.paid") {
+    const invoice = event.data.object as {
+      id: string; customer?: string; customer_email?: string | null; number?: string | null;
+      amount_paid?: number; currency?: string; created?: number; billing_reason?: string;
+      hosted_invoice_url?: string | null; invoice_pdf?: string | null;
+      subscription?: string | null; parent?: { subscription_details?: { subscription?: string } | null } | null;
+      lines?: { data?: Array<{ period?: { start?: number; end?: number } }> };
+    };
+    const isSubscription = Boolean(invoice.subscription || invoice.parent?.subscription_details?.subscription || invoice.billing_reason?.startsWith("subscription"));
+    if (!isSubscription || !invoice.customer || !invoice.amount_paid || !resendKey) return json({ received: true });
+
+    const shopResponse = await fetch(
+      `${supabaseUrl}/rest/v1/settings?select=business_name,business_email,plan_price_cents&stripe_customer_id=eq.${encodeURIComponent(invoice.customer)}&limit=1`,
+      { headers: serviceHeaders }
+    );
+    const shop = (shopResponse.ok ? await shopResponse.json() as Array<{ business_name: string | null; business_email: string | null }> : [])[0];
+    const to = shop?.business_email || invoice.customer_email;
+    if (!to) return json({ received: true });
+
+    const escapeHtml = (value: unknown) => String(value ?? "")
+      .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+    const money = ((invoice.amount_paid || 0) / 100).toLocaleString("en-US", { style: "currency", currency: (invoice.currency || "usd").toUpperCase() });
+    const day = (seconds?: number) => seconds ? new Date(seconds * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/Chicago" }) : "";
+    const period = invoice.lines?.data?.[0]?.period;
+    const periodText = period?.start && period?.end ? `${day(period.start)} – ${day(period.end)}` : "";
+    const shopName = shop?.business_name || "your shop";
+    const settingsUrl = new URL("/#settings", siteUrl).toString();
+    const row = (label: string, value: string) => value
+      ? `<tr><td style="padding:8px 0;color:#5b6578;font-size:14px">${escapeHtml(label)}</td><td style="padding:8px 0;text-align:right;font-size:14px;color:#102a4c;font-weight:600">${escapeHtml(value)}</td></tr>`
+      : "";
+    const html = `<!doctype html><html><body style="margin:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e8f0">
+<tr><td style="background:#102a4c;padding:22px 26px;color:#ffffff">
+<div style="font-size:13px;letter-spacing:2px;font-weight:700;color:#22d3ee">RORUNNER</div>
+<div style="font-size:22px;font-weight:700;margin-top:6px">Payment received — thank you!</div>
+</td></tr>
+<tr><td style="padding:24px 26px">
+<p style="margin:0 0 16px;font-size:15px;color:#1b2333">Here's your receipt for <strong>${escapeHtml(shopName)}</strong>'s ROrunner subscription.</p>
+<div style="text-align:center;padding:18px;border-radius:12px;background:#f3f8fb;margin-bottom:16px">
+<div style="font-size:13px;color:#5b6578">Amount paid</div>
+<div style="font-size:34px;font-weight:800;color:#102a4c;margin-top:4px">${escapeHtml(money)}</div>
+</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e3e8f0">
+${row("Date", day(invoice.created))}${row("Service period", periodText)}${row("Receipt number", invoice.number || "")}${row("Plan", "ROrunner, month to month")}
+</table>
+${invoice.hosted_invoice_url || invoice.invoice_pdf ? `<p style="margin:18px 0 0;font-size:14px">${invoice.hosted_invoice_url ? `<a href="${escapeHtml(invoice.hosted_invoice_url)}" style="color:#0e7490;font-weight:600">View receipt online</a>` : ""}${invoice.hosted_invoice_url && invoice.invoice_pdf ? " &nbsp;·&nbsp; " : ""}${invoice.invoice_pdf ? `<a href="${escapeHtml(invoice.invoice_pdf)}" style="color:#0e7490;font-weight:600">Download PDF</a>` : ""}</p>` : ""}
+<p style="margin:20px 0 0;padding:14px;border-radius:10px;background:#f7f9fc;font-size:13px;color:#5b6578;line-height:1.5">
+No contract, month to month. Update your card or cancel any time from <a href="${escapeHtml(settingsUrl)}" style="color:#0e7490">Settings → Payments &amp; billing</a> in ROrunner. Your data is always yours to download.
+</p>
+<p style="margin:16px 0 0;font-size:13px;color:#5b6578">Questions? Just reply to this email or write to support@rorunner.com.</p>
+</td></tr></table>
+</td></tr></table></body></html>`;
+    const text = [
+      "ROrunner: payment received, thank you!",
+      "",
+      `Receipt for ${shopName}'s ROrunner subscription.`,
+      `Amount paid: ${money}`,
+      invoice.created ? `Date: ${day(invoice.created)}` : "",
+      periodText ? `Service period: ${periodText}` : "",
+      invoice.number ? `Receipt number: ${invoice.number}` : "",
+      invoice.hosted_invoice_url ? `View receipt: ${invoice.hosted_invoice_url}` : "",
+      "",
+      "No contract, month to month. Update your card or cancel any time in ROrunner under Settings → Payments & billing.",
+      "Questions? Reply to this email or write to support@rorunner.com.",
+    ].filter((line, index, all) => line !== "" || all[index - 1] !== "").join("\n");
+
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json", "Idempotency-Key": `receipt-${invoice.id}` },
+      body: JSON.stringify({
+        from: fromAddress(`${process.env.EMAIL_PRODUCT_NAME || "ROrunner"} Billing`, "billing"),
+        to: [to],
+        reply_to: "support@rorunner.com",
+        subject: `Your ROrunner receipt — ${money}${invoice.number ? ` (#${invoice.number})` : ""}`,
+        html,
+        text,
+      }),
+    });
+    return json({ received: true });
+  }
+
   if (event.type === "customer.subscription.deleted") {
     const subscription = event.data.object as { customer: string };
     await fetch(`${supabaseUrl}/rest/v1/settings?stripe_customer_id=eq.${subscription.customer}&subscription_status=neq.exempt`, {
