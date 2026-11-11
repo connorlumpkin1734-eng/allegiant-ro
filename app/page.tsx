@@ -12,7 +12,7 @@ type DocumentType = "estimate" | "repair_order" | "invoice";
 type ItemType = "labor" | "part" | "fee" | "discount";
 
 type DocumentTemplate = "standard" | "clean" | "bold" | "classic" | "modern" | "elegant";
-type UiTheme = "midnight" | "light" | "graphite" | "ocean" | "forest" | "sand";
+type UiTheme = "light" | "dark" | "system";
 
 // Layout choices for the shop's customer-facing estimates and invoices. Each maps to a tpl-* CSS class
 // (see "Document templates" at the bottom of globals.css); "standard" is the original look, no class rules.
@@ -25,15 +25,24 @@ const DOCUMENT_TEMPLATES: Array<{ id: DocumentTemplate; name: string; blurb: str
   { id: "elegant", name: "Elegant", blurb: "Serif type with a double rule. Quiet and formal." },
 ];
 
-// Color themes for the shop app, chosen per person from the top bar (data-theme on <html>).
+// Light or dark, chosen per person from the account menu ("system" follows the device). The
+// resolved light/dark goes on <html data-theme>; layout.tsx applies it before first paint.
 const UI_THEMES: Array<{ id: UiTheme; name: string }> = [
-  { id: "midnight", name: "Midnight (dark)" },
-  { id: "graphite", name: "Graphite (dark)" },
-  { id: "ocean", name: "Ocean (dark)" },
-  { id: "forest", name: "Forest (dark)" },
   { id: "light", name: "Light" },
-  { id: "sand", name: "Sand (light)" },
+  { id: "dark", name: "Dark" },
+  { id: "system", name: "Match my device" },
 ];
+/** Older saved themes map onto the new pair: the dark ones become Dark, the light ones Light. */
+function normalizeUiTheme(value: unknown): UiTheme | null {
+  if (value === "light" || value === "dark" || value === "system") return value;
+  if (value === "midnight" || value === "graphite" || value === "ocean" || value === "forest") return "dark";
+  if (value === "sand") return "light";
+  return null;
+}
+function resolvedUiTheme(theme: UiTheme): "light" | "dark" {
+  if (theme !== "system") return theme;
+  return typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 type Settings = {
   id?: string;
@@ -1503,10 +1512,10 @@ function RepairOrderApp({ user }: { user: User }) {
   // Color theme: per person. The saved choice is applied before first paint by a script in layout.tsx
   // (from localStorage); here we keep the picker in sync and load the choice saved to their account,
   // so it follows them to other devices.
-  const [uiTheme, setUiTheme] = useState<UiTheme>("midnight");
+  const [uiTheme, setUiTheme] = useState<UiTheme>("light");
   function applyUiTheme(next: UiTheme) {
     setUiTheme(next);
-    document.documentElement.setAttribute("data-theme", next);
+    document.documentElement.setAttribute("data-theme", resolvedUiTheme(next));
     try {
       localStorage.setItem("ui-theme", next);
     } catch {
@@ -1519,17 +1528,25 @@ function RepairOrderApp({ user }: { user: User }) {
   }
   useEffect(() => {
     try {
-      const stored = localStorage.getItem("ui-theme");
-      if (stored && UI_THEMES.some((theme) => theme.id === stored)) setUiTheme(stored as UiTheme);
+      const stored = normalizeUiTheme(localStorage.getItem("ui-theme"));
+      if (stored) applyUiTheme(stored);
     } catch {
       // Ignore — falls back to the default theme.
     }
     void supabase.from("user_preferences").select("ui_theme").maybeSingle().then(({ data }) => {
-      const saved = data?.ui_theme as UiTheme | undefined;
-      if (saved && UI_THEMES.some((theme) => theme.id === saved)) applyUiTheme(saved);
+      const saved = normalizeUiTheme(data?.ui_theme);
+      if (saved) applyUiTheme(saved);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // "Match my device" follows the phone/computer as it switches between light and dark.
+  useEffect(() => {
+    if (uiTheme !== "system" || !window.matchMedia) return;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const follow = () => document.documentElement.setAttribute("data-theme", query.matches ? "dark" : "light");
+    query.addEventListener?.("change", follow);
+    return () => query.removeEventListener?.("change", follow);
+  }, [uiTheme]);
 
   // Tag this browser once we know it belongs to a paying shop, so future landing-page visits from it
   // don't count toward the god-mode traffic counter (that counter is meant to track prospective
@@ -6962,7 +6979,7 @@ function BillingPanel({ settings }: { settings: Settings }) {
       }
       const headers = await authHeader();
       const response = await fetch("/.netlify/functions/create-subscription-checkout", {
-        method: "POST", headers, body: JSON.stringify({ embedded: true }),
+        method: "POST", headers, body: JSON.stringify({ embedded: true, theme: document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light" }),
       });
       const body = await response.json() as { clientSecret?: string; error?: string };
       if (!response.ok || !body.clientSecret) {

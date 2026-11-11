@@ -10,8 +10,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Apply the saved color theme before first paint so there is no flash of the default theme. */}
-        <script dangerouslySetInnerHTML={{ __html: "try{var t=localStorage.getItem('ui-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}" }} />
+        {/* Apply the saved light/dark choice before first paint so there is no flash of the wrong one. */}
+        <script dangerouslySetInnerHTML={{ __html: "try{var t=localStorage.getItem('ui-theme')||'light';var d={midnight:1,graphite:1,ocean:1,forest:1,dark:1};var m=t==='system'?(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):(d[t]?'dark':'light');document.documentElement.setAttribute('data-theme',m)}catch(e){}" }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
