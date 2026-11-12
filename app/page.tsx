@@ -3102,11 +3102,12 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
   async function finish(event: FormEvent) {
     event.preventDefault();
     const rate = Number(laborRate.replace(/[$,\s]/g, ""));
-    const tax = taxRate.trim() ? Number(taxRate.replace(/[%\s]/g, "")) : 0;
+    const tax = Number(taxRate.replace(/[%\s]/g, ""));
     if (!name.trim()) return setProblem("Enter your shop's name.");
     if (!phone.trim()) return setProblem("Enter the shop phone number customers should call.");
     if (!Number.isFinite(rate) || rate <= 0) return setProblem("Enter your labor rate per hour, like 120.");
-    if (!Number.isFinite(tax) || tax < 0 || tax > 20) return setProblem("Sales tax should be a percent, like 8.25 (or leave it blank for none).");
+    if (!taxRate.trim()) return setProblem("Enter your sales tax rate, like 8.25. Type 0 if you don't charge sales tax.");
+    if (!Number.isFinite(tax) || tax < 0 || tax > 20) return setProblem("Sales tax should be a percent, like 8.25 (or 0 for none).");
     const cityLine = [city.trim(), [state.trim(), zip.trim()].filter(Boolean).join(" ")].filter(Boolean).join(", ");
     const changes: Partial<Settings> = {
       business_name: name.trim(),
@@ -3195,8 +3196,9 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
           <label>Labor rate ($ per hour) *
             <input inputMode="decimal" value={laborRate} onChange={(event) => setLaborRate(event.target.value)} />
           </label>
-          <label>Sales tax rate %
-            <input inputMode="decimal" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} placeholder="8.25" />
+          <label>Sales tax rate % *
+            <input inputMode="decimal" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} placeholder="e.g. 8.25" />
+            <small className="muted" style={{ fontWeight: 400 }}>Charged on taxable parts. Type 0 if you don&apos;t charge tax.</small>
           </label>
         </div>
 
@@ -4980,6 +4982,14 @@ function RepairOrderEditor({
         </div>
       )}
 
+      {initialRo && !isTechnician && !paid && Number(taxRate) === 0 && Number(settings.sales_tax_rate) > 0 && (
+        <div className="handoff-banner warn">
+          <strong>This RO has no sales tax.</strong>
+          <span>It was created at 0%; your shop rate is now {Number(settings.sales_tax_rate)}%.{" "}
+            <button type="button" className="button small secondary" onClick={() => setTaxRate(Number(settings.sales_tax_rate))}>Use {Number(settings.sales_tax_rate)}%</button>
+            {" "}then Save Changes.</span>
+        </div>
+      )}
       {!initialRo && (
         <div className="notice workspace-notice">Save this new repair order once before previewing or printing documents.</div>
       )}
