@@ -1,3 +1,4 @@
+import { recordDocumentView } from "../../lib/document-views";
 import { createConnectedCheckout } from "../../lib/stripe-checkout";
 import { notifyError } from "../../lib/platform-alert";
 import { activeCardProcessor, cardMethodsLabel, createSquareCheckout } from "../../lib/square";
@@ -115,6 +116,7 @@ async function handler(request: Request): Promise<Response> {
   const zelleAvailable = !trialBlocked && Boolean(settings.zelle_recipient);
 
   if (request.method === "GET") {
+    await recordDocumentView(request, supabaseUrl, serviceHeaders, ro.id, link.owner_id, "invoice");
     return json({
       businessName: settings.business_name || "the shop",
       roNumber: ro.ro_number,

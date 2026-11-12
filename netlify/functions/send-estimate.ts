@@ -276,5 +276,9 @@ export default async (request: Request) => {
   await fetch(`${supabaseUrl}/rest/v1/repair_orders?id=eq.${ro.id}`, {
     method: "PATCH", headers: serviceHeaders, body: JSON.stringify({ estimate_status: "sent", estimate_sent_at: now, estimate_responded_at: null }),
   });
+  // Start view tracking fresh for this copy (see document_views). Never blocks the send.
+  await fetch(`${supabaseUrl}/rest/v1/rpc/record_document_sent`, {
+    method: "POST", headers: serviceHeaders, body: JSON.stringify({ p_repair_order_id: ro.id, p_owner_id: ownerId, p_kind: "estimate" }),
+  }).catch(() => undefined);
   return json({ message: `Estimate${inspectionShare ? " and inspection" : ""} emailed to ${customerEmail}.` });
 };

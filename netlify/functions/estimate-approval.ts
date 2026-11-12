@@ -1,3 +1,4 @@
+import { recordDocumentView } from "../../lib/document-views";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -64,10 +65,11 @@ export default async (request: Request) => {
   const token = request.method === "GET" ? url.searchParams.get("token") : body.token;
   if (!token || token.length < 32) return json({ error: "This approval link is invalid." }, 400);
   const tokenHash = await hashToken(token);
-  const lookup = await fetch(`${supabaseUrl}/rest/v1/estimate_authorizations?select=id,repair_order_id,status,customer_name,estimate_snapshot,line_decisions,approved_total,responded_at&token_hash=eq.${tokenHash}&limit=1`, { headers: serviceHeaders });
+  const lookup = await fetch(`${supabaseUrl}/rest/v1/estimate_authorizations?select=id,repair_order_id,owner_id,status,customer_name,estimate_snapshot,line_decisions,approved_total,responded_at&token_hash=eq.${tokenHash}&limit=1`, { headers: serviceHeaders });
   const authorization = (await lookup.json() as Array<Record<string, unknown>>)[0];
   if (!authorization) return json({ error: "This approval link is invalid or expired." }, 404);
   if (request.method === "GET") {
+    await recordDocumentView(request, supabaseUrl, serviceHeaders, String(authorization.repair_order_id), String(authorization.owner_id), "estimate");
     const snapshot = authorization.estimate_snapshot as Snapshot;
     if (snapshot?.photos?.length) snapshot.photos = await Promise.all(snapshot.photos.map(async (photo) => {
       const signResponse = await fetch(`${supabaseUrl}/storage/v1/object/sign/estimate-photos/${photo.storage_path}`, { method: "POST", headers: serviceHeaders, body: JSON.stringify({ expiresIn: 3600 }) });
@@ -90,7 +92,8 @@ export default async (request: Request) => {
         return { ...rest, url: signedUrl };
       }));
     }
-    return json({ authorization: { ...authorization, estimate_snapshot: snapshot } });
+    const { owner_id: _ownerId, ...publicAuthorization } = authorization;
+    return json({ authorization: { ...publicAuthorization, estimate_snapshot: snapshot } });
   }
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405);
   if (authorization.status !== "sent") return json({ error: `This estimate was already ${authorization.status}.` }, 409);

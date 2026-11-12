@@ -2168,6 +2168,11 @@ tbody tr:hover { background: var(--panel-header); }
 .ro-action-title { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
 .ro-action-title h1 { margin: 0; font-size: 22px; line-height: 1.2; }
 .ro-action-title .muted { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-views { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; font-size: 12.5px; }
+.doc-view { color: var(--muted); }
+.doc-view strong { color: var(--ink); font-weight: 600; }
+.doc-view.opened::before { content: "●"; color: var(--success-text); margin-right: 5px; font-size: 10px; vertical-align: 1px; }
+.doc-view.unopened::before { content: "○"; color: var(--muted); margin-right: 5px; font-size: 10px; vertical-align: 1px; }
 .ro-action-bar-right { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .segmented.edit-preview button { padding: 7px 14px; font-weight: 800; }
 .segmented.edit-preview button:disabled { opacity: 0.45; cursor: not-allowed; }

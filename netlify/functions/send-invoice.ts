@@ -363,6 +363,12 @@ async function handler(request: Request): Promise<Response> {
     return json({ error: `Resend rejected the email: ${await emailResponse.text()}` }, 502);
   }
 
+  // Only an invoice with a pay link can be tracked: opening that link is the "viewed" signal.
+  if (payLinkUrl) {
+    await fetch(`${supabaseUrl}/rest/v1/rpc/record_document_sent`, {
+      method: "POST", headers: serviceHeaders, body: JSON.stringify({ p_repair_order_id: ro.id, p_owner_id: ownerId, p_kind: "invoice" }),
+    }).catch(() => undefined);
+  }
   return json({ message: `Invoice emailed to ${customerEmail}.`, payLinkIncluded: Boolean(payLinkUrl) });
 }
 

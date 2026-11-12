@@ -697,6 +697,24 @@ type RepairOrder = {
   latest_estimate_authorization?: EstimateAuthorization | null;
 };
 
+type DocumentView = {
+  kind: "estimate" | "invoice";
+  sent_at: string | null;
+  first_viewed_at: string | null;
+  last_viewed_at: string | null;
+  view_count: number;
+};
+
+/** "2:31 PM" today, "Tue 2:31 PM" this week, "Nov 3, 2:31 PM" otherwise. */
+function shortWhen(iso: string) {
+  const date = new Date(iso);
+  const now = new Date();
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (date.toDateString() === now.toDateString()) return `today ${time}`;
+  if (now.getTime() - date.getTime() < 6 * 86400000) return `${date.toLocaleDateString([], { weekday: "short" })} ${time}`;
+  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
+
 type EstimateAuthorization = {
   id: string;
   repair_order_id: string;
@@ -3750,6 +3768,24 @@ function RepairOrderEditor({
   const [estimateJustSent, setEstimateJustSent] = useState(false);
   const authorizationStatus = estimateJustSent ? "sent" : currentAuthorization?.status;
 
+  // Has the customer opened the estimate / invoice link we emailed? (document_views; advisors only)
+  const [docViews, setDocViews] = useState<DocumentView[]>([]);
+  const [docViewsTick, setDocViewsTick] = useState(0);
+  useEffect(() => {
+    if (!initialRo || isTechnician) return;
+    let live = true;
+    const load = () => {
+      void supabase.from("document_views").select("kind, sent_at, first_viewed_at, last_viewed_at, view_count")
+        .eq("repair_order_id", initialRo.id)
+        .then(({ data }) => { if (live && data) setDocViews(data as DocumentView[]); });
+    };
+    load();
+    const onFocus = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => { live = false; document.removeEventListener("visibilitychange", onFocus); window.removeEventListener("focus", onFocus); };
+  }, [initialRo?.id, isTechnician, docViewsTick]);
+
   // ---- Two people on one RO ----
   // The editor remembers the RO's edit_version it loaded. Before saving it checks the database; if
   // someone else (or the customer answering the estimate) changed the RO in the meantime, it stops
@@ -4750,6 +4786,7 @@ function RepairOrderEditor({
           onSent={(sentTo, savedToCustomer) => {
             if (savedToCustomer) setCustomerForm((current) => ({ ...current, email: sentTo }));
             if (sendKind === "estimate") setEstimateJustSent(true);
+            setDocViewsTick((tick) => tick + 1);
             void syncEditVersion();
             onBackgroundRefresh?.();
           }}
@@ -4770,6 +4807,24 @@ function RepairOrderEditor({
           </div>
           {initialRo && (customerForm.name || vehicleForm.make) && (
             <span className="muted">{[customerForm.name, [vehicleForm.year, vehicleForm.make, vehicleForm.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
+          )}
+          {!isTechnician && docViews.some((view) => view.sent_at) && (
+            <div className="doc-views">
+              {(["estimate", "invoice"] as const).map((kind) => {
+                const view = docViews.find((entry) => entry.kind === kind);
+                if (!view?.sent_at) return null;
+                const opened = view.view_count > 0 && view.last_viewed_at;
+                return (
+                  <span key={kind} className={`doc-view ${opened ? "opened" : "unopened"}`} title={opened && view.first_viewed_at ? `First opened ${shortWhen(view.first_viewed_at)}` : undefined}>
+                    <strong>{kind === "estimate" ? "Estimate" : "Invoice"}</strong>
+                    {" sent "}{shortWhen(view.sent_at)}{" · "}
+                    {opened
+                      ? <>opened{view.view_count > 1 ? ` ${view.view_count}×` : ""}, last {shortWhen(view.last_viewed_at!)}</>
+                      : "not opened yet"}
+                  </span>
+                );
+              })}
+            </div>
           )}
         </div>
         {initialRo && (
