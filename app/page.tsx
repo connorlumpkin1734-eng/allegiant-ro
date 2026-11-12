@@ -1513,11 +1513,19 @@ function ChangePasswordModal({
   );
 }
 
-/** Sign out, and if the server can't be reached (offline, blocker, expired session) still clear
- *  this device's session. supabase-js keeps the local session when the global sign-out errors. */
+/** Sign out, and if the server refuses (expired or already-ended session) still clear this
+ *  browser's saved login. supabase-js keeps the local session when the sign-out request errors. */
 async function signOutEverywhere() {
   const { error } = await supabase.auth.signOut();
-  if (error) await supabase.auth.signOut({ scope: "local" });
+  if (!error) return;
+  // The server no longer knows this session (e.g. "session_not_found"), so the normal sign-out
+  // refuses and leaves the saved login behind. Drop it from this browser and start fresh.
+  try {
+    Object.keys(window.localStorage).filter((key) => key.startsWith("sb-") && key.includes("auth-token")).forEach((key) => window.localStorage.removeItem(key));
+  } catch {
+    // Storage blocked; the reload below still lands on the sign-in screen once the token fails.
+  }
+  window.location.reload();
 }
 
 // Mirrors the DB's owner_can_write() RLS check (see migration
