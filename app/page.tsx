@@ -436,8 +436,12 @@ function dismissToast(id: number) {
   emitToasts();
 }
 const ERRORISH = /(could not|couldn't|can't|cannot|didn't|did not|nothing changed|refused|error|failed|missing|required|needs? |add the|add at least|before |invalid|expired|too many|not allowed|only the|doesn't look|denied|rejected|isn't|wasn't|should be|\benter (the|at least|a|an)\b|write the|choose |pick a)/i;
-const SUCCESSISH = /\b(emailed|sent|saved|copied|recorded|approved|updated|added|removed|deleted|archived|restored|confirmed|ready|marked|reopened|notified|done|complete|turned)\b/i;
+const SUCCESSISH = /\b(emailed|sent|saved|copied|recorded|approved|updated|added|removed|deleted|archived|restored|confirmed|ready|marked|reopened|notified|done|complete|turned|decoded|changed|connected)\b/i;
 function guessToastKind(text: string): ToastKind {
+  // Judge by the first sentence: "VIN decoded. Review the fields before saving." is a success with
+  // a tip, not an error, even though the tip contains "before".
+  const first = text.split(/(?<=[.!?])\s/)[0];
+  if (!ERRORISH.test(first) && SUCCESSISH.test(first)) return "success";
   if (ERRORISH.test(text)) return "error";
   return SUCCESSISH.test(text) ? "success" : "info";
 }
