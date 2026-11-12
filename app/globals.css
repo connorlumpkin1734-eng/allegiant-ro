@@ -2756,3 +2756,21 @@ select option { background-color: var(--panel); color: var(--ink); }
 .billing-welcome strong { display: block; font-size: 15px; color: var(--ink); }
 .billing-welcome span { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
 .billing-welcome-icon { flex: 0 0 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; background: var(--success-text); color: #06170f !important; font-weight: 900; margin-top: 0 !important; }
+
+/* Document preview on a phone: four money columns don't fit in ~300px, so the rate column
+   collapses to zero width (kept in the grid so job totals stay aligned; qty × rate is still the amount), indents shrink and amounts never wrap. Printing is unchanged. */
+@media screen and (max-width: 700px) {
+  .document-page .document-charges { table-layout: auto; font-size: 13px; }
+  .document-page .document-charges th:nth-child(3),
+  .document-page .document-charges .document-op-row td:nth-child(3),
+  .document-page .document-charges .document-item-row td:nth-child(3) { width: 0; padding: 0 !important; font-size: 0; line-height: 0; overflow: hidden; border-left: 0; border-right: 0; }
+  .document-page .document-charges th:nth-child(2),
+  .document-page .document-charges td:nth-child(2) { width: 1%; white-space: nowrap; }
+  .document-page .document-charges th:last-child,
+  .document-page .document-charges td:last-child { width: 1%; white-space: nowrap; }
+  .document-page .document-charges th, .document-page .document-charges td { padding-left: 6px; padding-right: 6px; }
+  .document-page .document-op-row td:first-child { padding-left: 14px; }
+  .document-page .document-item-row.is-sub td:first-child { padding-left: 26px; }
+  .document-page .document-line-row td { padding-left: 6px; }
+  .document-page { padding: 16px; }
+}
