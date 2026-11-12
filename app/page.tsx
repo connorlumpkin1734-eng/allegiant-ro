@@ -4794,14 +4794,16 @@ function RepairOrderEditor({
           ))}
         </div>
         <div className="job-add-actions">
-          {/* One "+ Add" per job instead of a row of buttons. */}
+          {/* Parts get their own button (the most common add); everything else lives under "+ Add". */}
+          {canAddPartLine && (
+            <button type="button" className="button secondary small" onClick={() => addItem("part", group.id)}>+ Part</button>
+          )}
           <MoreMenu
             label="+ Add"
             small
             items={[
               // Approved work's labor is what the customer OK'd; a tech adds more as a new recommendation.
               !(isTechnician && !canRestructureRo && jobStatus === "authorized") && { label: "Labor", onClick: () => addItem("labor", group.id) },
-              canAddPartLine && { label: "Part", onClick: () => addItem("part", group.id) },
               initialRo && workspaceTab === "work_order" && {
                 label: "Photo or video",
                 onClick: () => {
