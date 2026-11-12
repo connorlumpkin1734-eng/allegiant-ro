@@ -1146,7 +1146,7 @@ function PlatformAdminOnlyApp() {
         <img className="platform-logo" src="/rorunner-logo-white.png" alt="ROrunner" />
         <span className="topbar-logo-text">Platform Admin</span>
         <nav />
-        <button className="button secondary" onClick={() => supabase.auth.signOut()}>
+        <button className="button secondary" onClick={() => void signOutEverywhere()}>
           Sign out
         </button>
       </header>
@@ -1511,6 +1511,13 @@ function ChangePasswordModal({
       </div>
     </div>
   );
+}
+
+/** Sign out, and if the server can't be reached (offline, blocker, expired session) still clear
+ *  this device's session. supabase-js keeps the local session when the global sign-out errors. */
+async function signOutEverywhere() {
+  const { error } = await supabase.auth.signOut();
+  if (error) await supabase.auth.signOut({ scope: "local" });
 }
 
 // Mirrors the DB's owner_can_write() RLS check (see migration
@@ -2218,7 +2225,7 @@ function RepairOrderApp({ user }: { user: User }) {
           onTheme={changeUiTheme}
           onChangePassword={() => setShowPasswordChange(true)}
           onChangeEmail={isOwner ? () => setShowEmailChange(true) : undefined}
-          onSignOut={() => void supabase.auth.signOut()}
+          onSignOut={() => void signOutEverywhere()}
         />
       </header>
       {showEmailChange && <ChangeEmailModal currentEmail={user.email ?? ""} onClose={() => setShowEmailChange(false)} />}
