@@ -1369,6 +1369,60 @@ function AuthScreen() {
   );
 }
 
+/** Owner changes the email they sign in with. Supabase emails a confirmation link to the new
+ *  address (and, with secure email change on, the old one); nothing changes until it's clicked. */
+function ChangeEmailModal({ currentEmail, onClose }: { currentEmail: string; onClose: () => void }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useToastMessage();
+  const [sentTo, setSentTo] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setMessage("");
+    const next = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next)) { setMessage("Enter a valid email address."); return; }
+    if (next === currentEmail.toLowerCase()) { setMessage("That's already your sign-in email."); return; }
+    setBusy(true);
+    const { error } = await supabase.auth.updateUser({ email: next }, { emailRedirectTo: window.location.origin });
+    setBusy(false);
+    if (error) { setMessage(error.message); return; }
+    setSentTo(next);
+  }
+
+  return (
+    <div className="vin-scanner-backdrop" role="dialog" aria-modal="true" aria-label="Change sign-in email">
+      <div className="vin-scanner-modal" style={{ maxWidth: 440 }}>
+        <h2 style={{ marginTop: 0 }}>Change sign-in email</h2>
+        {sentTo ? (
+          <>
+            <p>We sent a confirmation link to <strong>{sentTo}</strong>. Your sign-in email changes once you click it.</p>
+            <p className="muted">You may also get a link at {currentEmail || "your current email"}. If so, click both.</p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" className="button primary" onClick={onClose}>Done</button>
+            </div>
+          </>
+        ) : (
+          <form onSubmit={submit} className="stack">
+            <p className="muted" style={{ marginTop: -6 }}>
+              Currently <strong>{currentEmail}</strong>. This is only the email you sign in with. Your shop&apos;s business email (on estimates and invoices) is in Settings → Shop.
+            </p>
+            <label>
+              New email
+              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" />
+            </label>
+            {message && <div className="notice">{message}</div>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancel</button>
+              <button type="submit" className="button primary" disabled={busy}>{busy ? "Sending…" : "Send confirmation"}</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ChangePasswordModal({
   onClose,
   forced,
@@ -1582,6 +1636,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useToastMessage("error");
   const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [showEmailChange, setShowEmailChange] = useState(false);
   const [reportsTab, setReportsTab] = useState<"sales" | "team">("sales");
   // "Finish later" on the first-run shop setup; remembered for this browser session only.
   const [setupSkipped, setSetupSkipped] = useState(() => {
@@ -2162,9 +2217,11 @@ function RepairOrderApp({ user }: { user: User }) {
           theme={uiTheme}
           onTheme={changeUiTheme}
           onChangePassword={() => setShowPasswordChange(true)}
+          onChangeEmail={isOwner ? () => setShowEmailChange(true) : undefined}
           onSignOut={() => void supabase.auth.signOut()}
         />
       </header>
+      {showEmailChange && <ChangeEmailModal currentEmail={user.email ?? ""} onClose={() => setShowEmailChange(false)} />}
       {showPasswordChange && (
         <ChangePasswordModal
           forced={Boolean(currentStaff?.must_change_password)}
@@ -3151,13 +3208,14 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
 }
 
 /** Top-bar account button: who's signed in, their theme, password and sign out — one tap instead of five buttons. */
-function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, onSignOut }: {
+function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, onChangeEmail, onSignOut }: {
   name: string;
   detail: string;
   email: string;
   theme: UiTheme;
   onTheme: (theme: UiTheme) => void;
   onChangePassword: () => void;
+  onChangeEmail?: () => void;
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -3210,6 +3268,7 @@ function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, on
             </div>
           </div>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); onChangePassword(); }}>Change password</button>
+          {onChangeEmail && <button type="button" role="menuitem" onClick={() => { setOpen(false); onChangeEmail(); }}>Change sign-in email</button>}
           <button type="button" role="menuitem" className="danger" onClick={() => { setOpen(false); onSignOut(); }}>Sign out</button>
         </div>
       )}
@@ -8188,6 +8247,27 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
     await loadAll();
   }
 
+  async function updateStaffEmail(id: string, email: string, input: HTMLInputElement, previous: string) {
+    setMessage("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/update-staff-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ staffId: id, email }),
+      });
+      const body = await response.json() as { error?: string; message?: string };
+      if (!response.ok) throw new Error(body.error || "Couldn't change that email.");
+      setMessage(body.message || "Email changed.");
+      await loadAll();
+    } catch (error) {
+      input.value = previous;
+      setMessage(error instanceof Error ? error.message : "Couldn't change that email.");
+    }
+  }
+
   async function inviteStaff() {
     const name = inviteForm.name.trim();
     const email = inviteForm.email.trim();
@@ -8359,7 +8439,19 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
                         }}
                       />
                     </td>
-                    <td>{member.email}</td>
+                    <td>
+                      <input
+                        type="email"
+                        defaultValue={member.email || ""}
+                        style={{ width: 190 }}
+                        aria-label={`Email for ${member.name}`}
+                        onBlur={(event) => {
+                          const value = event.target.value.trim();
+                          if (!value || value.toLowerCase() === (member.email || "").toLowerCase()) return;
+                          void updateStaffEmail(member.id, value, event.target, member.email || "");
+                        }}
+                      />
+                    </td>
                     <td>
                       <select
                         value={member.role === "technician" && member.is_team_lead ? "lead" : member.role}
