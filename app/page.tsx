@@ -1141,6 +1141,37 @@ function emptyLine(type: ItemType, settings: Settings, index: number, job: JobFi
   };
 }
 
+/**
+ * A filled-in example RO for a shop's first look around: one request, one concern, one tech
+ * recommendation, priced with the shop's own labor rate and parts pricing. Never saved.
+ */
+function sampleRoDraft(settings: Settings): { customerForm: CustomerForm; vehicleForm: VehicleForm; mileageIn: string; concernLines: ConcernLine[]; items: LineItem[] } {
+  const lines: Array<{ kind: LineKind; priority: LinePriority | null; concern: string; cause: string; job: string; status: JobStatus; hours: number; parts: Array<[string, number, number]> }> = [
+    { kind: "request", priority: null, concern: "Customer requests oil and filter change.", cause: "", job: "Synthetic oil and filter change", status: "authorized", hours: 0.5, parts: [["5W-20 full synthetic oil (qt)", 5, 6], ["Oil filter", 1, 8]] },
+    { kind: "customer", priority: "safety", concern: "Customer states grinding noise from the front when braking.", cause: "Front pads measured 2 mm and both front rotors are scored.", job: "Front brake pads and rotors", status: "needs_approval", hours: 1.8, parts: [["Front brake pad set", 1, 48], ["Front brake rotor", 2, 62]] },
+    { kind: "inspection", priority: "later", concern: "Replace cabin air filter", cause: "Filter is packed with leaves and debris.", job: "Replace cabin air filter", status: "needs_approval", hours: 0.3, parts: [["Cabin air filter", 1, 14]] },
+  ];
+  const concernLines: ConcernLine[] = [];
+  const items: LineItem[] = [];
+  lines.forEach((line, order) => {
+    const lineId = crypto.randomUUID();
+    concernLines.push({ id: lineId, sort_order: order, kind: line.kind, priority: line.priority, concern: line.concern, cause: line.cause, correction: "" });
+    const job: JobFields = { ...NO_JOB, service_group_id: crypto.randomUUID(), service_group_title: line.job, concern_line_id: lineId, job_status: line.status };
+    items.push({ ...emptyLine("labor", settings, items.length, job), description: line.job, quantity: line.hours });
+    line.parts.forEach(([description, quantity, cost]) => {
+      const markup = shopPartMarkup(cost, settings);
+      items.push({ ...emptyLine("part", settings, items.length, job), description, quantity, unit_cost: cost, markup_percent: markup, unit_price: roundCents(cost * (1 + Number(markup || 0) / 100)) });
+    });
+  });
+  return {
+    customerForm: { ...blankCustomer, name: "Sample Customer", phone: "214-555-0100" },
+    vehicleForm: { ...blankVehicle, year: "2015", make: "Toyota", model: "Camry", trim: "LE", engine: "2.5L 4 cyl" },
+    mileageIn: "88450",
+    concernLines,
+    items,
+  };
+}
+
 export default function HomePage() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -1692,6 +1723,8 @@ function RepairOrderApp({ user }: { user: User }) {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [editingRo, setEditingRo] = useState<RepairOrder | null>(null);
   const [editorVersion, setEditorVersion] = useState(0);
+  // "See a sample" on an empty RO list opens the new-RO screen filled in with an example.
+  const [sampleMode, setSampleMode] = useState(false);
   const [newContext, setNewContext] = useState<{ customerId: string; vehicleId: string }>({ customerId: "", vehicleId: "" });
   const [documentMode, setDocumentMode] = useState<DocumentMode>("work_order");
   const [documentReturnView, setDocumentReturnView] = useState<"dashboard" | "customer_profile" | "editor">("dashboard");
@@ -1995,7 +2028,8 @@ function RepairOrderApp({ user }: { user: User }) {
     setView("inspection");
   }
 
-  function startNew(customerId = "", vehicleId = "", returnView: "dashboard" | "customer_profile" = "dashboard") {
+  function startNew(customerId = "", vehicleId = "", returnView: "dashboard" | "customer_profile" = "dashboard", asSample = false) {
+    setSampleMode(asSample);
     setEditingRo(null);
     setEditorVersion((current) => current + 1);
     setNewContext({ customerId, vehicleId });
@@ -2371,6 +2405,7 @@ function RepairOrderApp({ user }: { user: User }) {
           <Dashboard
             repairOrders={repairOrders}
             onNew={() => startNew()}
+            onSample={() => startNew("", "", "dashboard", true)}
             onOpen={(id, mode) => {
               const ro = repairOrders.find((entry) => entry.id === id);
               if (ro?.archived_at) {
@@ -2408,6 +2443,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onDelete={editingRo && !isTechnicianOnly ? () => deleteRo(editingRo) : undefined}
             onBackgroundRefresh={() => void loadData(false)}
             repairOrders={repairOrders}
+            sample={sampleMode && !editingRo}
             onSaved={async (id, tab, previewMode, print, openSend) => {
               setEditorTab(tab);
               setPendingSend(openSend ?? null);
@@ -3366,7 +3402,10 @@ function Dashboard({
   canCreate = true,
   techFilterFor = null,
   isTechnician = false,
+  onSample,
 }: {
+  /** Opens a filled-in example RO (offered while the shop has no repair orders yet). */
+  onSample?: () => void;
   /** Techs see the work, not the money: no estimate or total. */
   isTechnician?: boolean;
   /** Set for technicians: enables the Mine / Team / All filter. */
@@ -3618,6 +3657,16 @@ function Dashboard({
                       ? "Nothing matches that search."
                       : isTechnician
                         ? techScope === "mine" ? "No cars assigned to you right now." : "No open jobs here right now."
+                        : !repairOrders.length && canCreate && onSample ? (
+                          <div className="first-ro">
+                            <strong>No repair orders yet</strong>
+                            <span>Start your first one, or open a filled-in sample to see how an RO is laid out. The sample isn&apos;t saved and doesn&apos;t use a free repair order.</span>
+                            <div className="button-row">
+                              <button type="button" className="button primary" onClick={onNew}>+ New repair order</button>
+                              <button type="button" className="button secondary" onClick={onSample}>See a sample</button>
+                            </div>
+                          </div>
+                        )
                         : filter === "active" ? "No active repair orders. Start one with New repair order." : "Nothing in this stage right now."}
                   </td>
                 </tr>
@@ -3667,7 +3716,10 @@ function RepairOrderEditor({
   onDelete,
   onBackgroundRefresh,
   repairOrders = [],
+  sample = false,
 }: {
+  /** A new RO opened as a filled-in example to look around in. It can't be saved. */
+  sample?: boolean;
   /** Every RO the signed-in user can see: used to show work this vehicle's customer declined before. */
   repairOrders?: RepairOrder[];
   /** Refresh the list behind the editor without reloading the editor (after a send or a hand-off). */
@@ -3698,6 +3750,8 @@ function RepairOrderEditor({
   onDelete?: () => void;
 }) {
   const canWrite = shopCanWrite(settings);
+  const isSample = sample && !initialRo;
+  const [sampleDraft] = useState(() => (isSample ? sampleRoDraft(settings) : null));
   const preselectedVehicle = vehicles.find((vehicle) => vehicle.id === initialVehicleId);
   const preselectedCustomerId = initialRo?.customer_id ?? initialCustomerId ?? preselectedVehicle?.customer_id ?? "";
   const preselectedVehicleId = initialRo?.vehicle_id ?? initialVehicleId ?? "";
@@ -3705,6 +3759,7 @@ function RepairOrderEditor({
   const [selectedVehicleId, setSelectedVehicleId] = useState(preselectedVehicleId);
   const [customerForm, setCustomerForm] = useState<CustomerForm>(() => {
     const customer = initialRo?.customers ?? customers.find((entry) => entry.id === preselectedCustomerId);
+    if (sampleDraft) return sampleDraft.customerForm;
     return customer
       ? {
           name: customer.name ?? "",
@@ -3721,6 +3776,7 @@ function RepairOrderEditor({
   });
   const [vehicleForm, setVehicleForm] = useState<VehicleForm>(() => {
     const vehicle = initialRo?.vehicles ?? vehicles.find((entry) => entry.id === preselectedVehicleId);
+    if (sampleDraft) return sampleDraft.vehicleForm;
     return vehicle
       ? {
           year: vehicle.year?.toString() ?? "",
@@ -3740,7 +3796,7 @@ function RepairOrderEditor({
   const [invoiceOverrides, setInvoiceOverrides] = useState<InvoiceOverrides>(initialRo?.invoice_overrides ?? {});
   const [finalEditConfirmed, setFinalEditConfirmed] = useState(false);
   const [status, setStatus] = useState<"open" | "completed" | "voided">(initialRo?.status ?? "open");
-  const [mileageIn, setMileageIn] = useState(initialRo?.mileage_in?.toString() ?? "");
+  const [mileageIn, setMileageIn] = useState(initialRo?.mileage_in?.toString() ?? sampleDraft?.mileageIn ?? "");
   const [mileageOut, setMileageOut] = useState(initialRo?.mileage_out?.toString() ?? "");
   const [concern, setConcern] = useState(initialRo?.customer_concern ?? "");
   const [notes, setNotes] = useState(initialRo?.notes ?? "");
@@ -3750,13 +3806,13 @@ function RepairOrderEditor({
   const [items, setItems] = useState<LineItem[]>(() =>
     initialRo?.line_items?.length
       ? initialRo.line_items.map((item, index) => ({ ...item, sort_order: index }))
-      : []
+      : sampleDraft?.items ?? []
   );
   // Concern lines (Line A, B, C…). A new RO starts with one empty line for the advisor's write-up.
   const [concernLines, setConcernLines] = useState<ConcernLine[]>(() =>
     initialRo
       ? [...(initialRo.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order)
-      : [{ id: crypto.randomUUID(), sort_order: 0, kind: "customer", concern: "", cause: "", correction: "" }]
+      : sampleDraft?.concernLines ?? [{ id: crypto.randomUUID(), sort_order: 0, kind: "customer", concern: "", cause: "", correction: "" }]
   );
   // A newly added line gets the cursor in its first box.
   const [focusLineId, setFocusLineId] = useState<string | null>(null);
@@ -3814,7 +3870,8 @@ function RepairOrderEditor({
   const dirty = useMemo(() => JSON.stringify(editSnapshot) !== JSON.stringify(savedSnapshot),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectedCustomerId, selectedVehicleId, customerForm, vehicleForm, mileageIn, mileageOut, concern, notes, taxRate, invoiceOverrides, concernLines, items, savedSnapshot]);
-  useUnsavedGuard(dirty, initialRo ? "this repair order" : "this new repair order");
+  // Poking around the sample shouldn't nag about unsaved changes: it can't be saved anyway.
+  useUnsavedGuard(dirty && !isSample, initialRo ? "this repair order" : "this new repair order");
   const [vinBusy, setVinBusy] = useState(false);
   const vinPhotoRef = useRef<HTMLInputElement>(null);
   const vinVideoRef = useRef<HTMLVideoElement>(null);
@@ -4501,6 +4558,7 @@ function RepairOrderEditor({
       }
     }
     setChangedElsewhere(null);
+    if (isSample) { notify("The sample can't be saved. Close it and start your own with + New repair order.", "info"); return; }
     if (!canWrite) {
       setMessage(
         initialRo
@@ -4833,6 +4891,8 @@ function RepairOrderEditor({
   const doneJobCount = workableJobs.filter((group) => group.items.every((item) => item.job_progress === "done")).length;
   const nextStep: { tone: "go" | "wait" | "done"; title: string; text: string } | null = isTechnician
     ? null
+    : isSample
+      ? { tone: "go", title: "This is a sample", text: "Nothing here is saved, so click anything. Each line is one thing the customer wants; the jobs under it hold the labor and parts; the total builds on the right. When you're done, hit Close sample and start your own." }
     : !initialRo
       ? { tone: "go", title: "Start here", text: "Pick the customer and vehicle (or type a new one), write what they want on Line A, then save. You can price it now or come back to it." }
     : stage === "voided"
@@ -5102,7 +5162,7 @@ function RepairOrderEditor({
         <button className="button ghost" onClick={onCancel}>← Back</button>
         <div className="ro-action-title">
           <div className="ro-action-title-row">
-            <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : "New Repair Order"}</h1>
+            <h1>{initialRo ? `RO #${padRo(initialRo.ro_number)}` : isSample ? "Sample repair order" : "New Repair Order"}</h1>
             {initialRo && (
               <span className={`stage-pill stage-${stage}`}>
                 {isTechnician
@@ -5774,9 +5834,18 @@ function RepairOrderEditor({
             <span>Total</span> <strong>{money(displayedTotals.total)}</strong>
           </button>
         )}
-        {dirty && <span className="unsaved-note" role="status">Unsaved changes</span>}
-        <button className="button ghost" onClick={onCancel}>{dirty ? "Discard changes" : "Back"}</button>
-        <button className="button primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : initialRo ? "Save changes" : "Save repair order"}</button>
+        {isSample ? (
+          <>
+            <span className="unsaved-note" role="status">Sample · not saved</span>
+            <button className="button primary" onClick={onCancel}>Close sample</button>
+          </>
+        ) : (
+          <>
+            {dirty && <span className="unsaved-note" role="status">Unsaved changes</span>}
+            <button className="button ghost" onClick={onCancel}>{dirty ? "Discard changes" : "Back"}</button>
+            <button className="button primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : initialRo ? "Save changes" : "Save repair order"}</button>
+          </>
+        )}
       </div>
     </section>
   );
@@ -7221,7 +7290,7 @@ function CustomerProfile({
                     );
                   })}
                   {!history.length && (
-                    <tr className="ro-empty"><td colSpan={5} className="empty-state">No repair orders match this filter.</td></tr>
+                    <tr className="ro-empty"><td colSpan={5} className="empty-state">{allHistory.length ? "No repair orders match this filter." : "No repair orders yet. Start one with + New repair order."}</td></tr>
                   )}
                 </tbody>
               </table>
