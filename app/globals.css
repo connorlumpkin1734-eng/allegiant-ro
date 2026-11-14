@@ -2751,3 +2751,62 @@ select option { background-color: var(--panel); color: var(--ink); }
 .billing-welcome strong { display: block; font-size: 15px; color: var(--ink); }
 .billing-welcome span { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
 .billing-welcome-icon { flex: 0 0 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; background: var(--success-text); color: #06170f !important; font-weight: 700; margin-top: 0 !important; }
+
+/* ==== Redesign: Repair orders list (calm) ==== */
+.ro-list-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.ro-list-bar .ro-list-tools { order: 2; margin: 0; flex: 0 1 360px; }
+.ro-list-bar .ro-list-tools .search-input { min-width: 0; max-width: none; }
+.ro-list-bar .stage-chips { order: 1; margin: 0; gap: 6px; }
+.stage-chip { min-height: 34px; padding: 5px 12px; font-size: 13.5px; font-weight: 600; gap: 7px; border-color: transparent; background: transparent; color: var(--muted); }
+.stage-chip:hover { border-color: transparent; background: var(--panel-header); color: var(--ink); }
+.stage-chip.active { background: var(--panel); border-color: var(--line); color: var(--ink); box-shadow: 0 1px 2px rgba(16, 42, 76, 0.06); }
+.stage-chip-count { background: transparent; color: var(--muted); font-weight: 500; padding: 0; min-width: 0; }
+.stage-chip.active .stage-chip-count { background: transparent; color: var(--muted); }
+.stage-chip.attention:not(.active) { border-color: transparent; color: var(--accent); }
+.stage-chip.attention .stage-chip-count { color: var(--accent); font-weight: 700; }
+
+.ro-list-panel { border-radius: 14px; }
+.ro-list-table th { font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); padding-top: 11px; padding-bottom: 11px; background: transparent; }
+.ro-list-table td { padding-top: 14px; padding-bottom: 14px; }
+.ro-list-table th:first-child, .ro-list-table td:first-child { padding-left: 20px; }
+.ro-list-table th:last-child, .ro-list-table td:last-child { padding-right: 20px; }
+.ro-list-table tbody tr:last-child td { border-bottom: 0; }
+.ro-list-table tr.ro-row { cursor: pointer; }
+.ro-list-table tr.ro-row:hover { background: var(--panel-header); }
+.ro-cell-number { font-family: var(--font-mono); font-size: 13px; font-weight: 500; color: var(--muted); }
+.ro-cell-vehicle strong { font-weight: 600; }
+.ro-cell-concern { margin-top: 2px; }
+.ro-cell-customer .table-link { color: var(--ink); font-weight: 500; }
+.ro-cell-customer .table-link:hover { color: var(--accent); }
+.ro-cell-total { font-weight: 600; font-variant-numeric: tabular-nums; }
+.ro-cell-date { font-size: 13px; }
+.ro-cell-note { font-weight: 500; }
+
+/* Stage: a small colored dot + plain label instead of a filled pill. */
+.ro-list-table .stage-pill { display: inline-flex; align-items: center; gap: 7px; padding: 0; background: transparent !important; box-shadow: none !important; color: var(--ink); font-size: 13.5px; font-weight: 500; }
+.ro-list-table .stage-pill::before { content: ""; flex: 0 0 8px; width: 8px; height: 8px; border-radius: 999px; background: var(--muted); }
+.ro-list-table .stage-pill.stage-write_up::before { background: #9aa3b5; }
+.ro-list-table .stage-pill.stage-waiting::before { background: #6b7a99; }
+.ro-list-table .stage-pill.stage-in_shop::before { background: #e0a030; }
+.ro-list-table .stage-pill.stage-ready::before { background: var(--accent); }
+.ro-list-table .stage-pill.stage-ready { color: var(--accent); font-weight: 600; }
+.ro-list-table .stage-pill.stage-invoiced::before { background: #c2410c; }
+.ro-list-table .stage-pill.stage-paid::before { background: var(--success-text); }
+.ro-list-table .stage-pill.stage-voided::before { background: var(--danger-text); }
+.ro-list-table .stage-pill.stage-zelle::before { background: #0ea5e9; }
+.ro-list-table .stage-pill.stage-zelle { color: #0284c7; font-weight: 600; }
+[data-theme="dark"] .ro-list-table .stage-pill.stage-zelle { color: #38bdf8; }
+.ro-list-table .badge { text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 12px; padding: 2px 8px; }
+
+/* Assigned: just the name, or a quiet "Unassigned". */
+.assign-none { color: var(--muted); font-size: 13px; }
+.ro-cell-assigned strong { margin-top: 0; font-weight: 500; font-size: 13.5px; }
+.ro-cell-assigned small { margin-top: 1px; }
+
+@media (max-width: 760px) {
+  .ro-list-bar { display: block; }
+  .ro-list-bar .ro-list-tools { margin-bottom: 10px; }
+  .ro-list-bar .stage-chips { margin: 0 -14px; }
+  .ro-list-table tr.ro-row { border-radius: 12px; padding: 14px 16px; }
+  .ro-list-table td:first-child, .ro-list-table td:last-child { padding-left: 0; padding-right: 0; }
+}

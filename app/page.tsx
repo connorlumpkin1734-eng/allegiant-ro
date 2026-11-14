@@ -3326,8 +3326,8 @@ function Dashboard({
     return (
       <td className="ro-cell-assigned" data-label="Assigned">
         {techs.length
-          ? <><span className="assign-pill assigned">Assigned</span><strong>{techs.join(", ")}</strong></>
-          : <span className="assign-pill open">Open</span>}
+          ? <strong>{techs.join(", ")}</strong>
+          : <span className="assign-none">Unassigned</span>}
         {team && <small>{team}</small>}
       </td>
     );
@@ -3419,6 +3419,7 @@ function Dashboard({
         {canCreate && <button className="button primary" onClick={onNew}>+ New repair order</button>}
       </div>
 
+      <div className="ro-list-bar">
       <div className="ro-list-tools">
         {techFilterFor && (
           <div className="segmented ro-scope" role="group" aria-label="Which jobs">
@@ -3455,6 +3456,7 @@ function Dashboard({
           })}
         </div>
       )}
+      </div>
 
       {isLead && unassignedTeamRows.length > 0 && !normalized && (
         <>
