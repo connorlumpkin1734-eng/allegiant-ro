@@ -1141,6 +1141,9 @@ function emptyLine(type: ItemType, settings: Settings, index: number, job: JobFi
   };
 }
 
+/** Which lines were folded on the RO last open in the editor, so a save doesn't spring them all back. */
+let lineFoldMemory: { roId: string; collapsed: string[] } | null = null;
+
 /**
  * A filled-in example RO for a shop's first look around: one request, one concern, one tech
  * recommendation, priced with the shop's own labor rate and parts pricing. Never saved.
@@ -4194,8 +4197,21 @@ function RepairOrderEditor({
 
   // ---- Declined work from earlier visits on this vehicle ----
   const [dismissedDeclined, setDismissedDeclined] = useState<string[]>([]);
-  /** Lines folded shut on screen (not saved): every line starts open. */
-  const [collapsedLines, setCollapsedLines] = useState<string[]>([]);
+  /**
+   * Lines folded shut on screen (not saved). On a computer every line starts open. On a phone an
+   * RO with several lines starts folded, so the whole RO fits on a screen or two. Either way the
+   * folds you set are kept while you stay on this RO, including across a save.
+   */
+  const [collapsedLines, setCollapsedLines] = useState<string[]>(() => {
+    if (!initialRo) return [];
+    if (lineFoldMemory?.roId === initialRo.id) return lineFoldMemory.collapsed;
+    const savedLines = initialRo.concern_lines ?? [];
+    const onPhone = typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
+    return onPhone && savedLines.length > 1 ? savedLines.map((line) => line.id) : [];
+  });
+  useEffect(() => {
+    if (initialRo) lineFoldMemory = { roId: initialRo.id, collapsed: collapsedLines };
+  }, [initialRo, collapsedLines]);
   const declinedWork = useMemo(() => (isTechnician ? [] : declinedWorkFor(repairOrders, selectedVehicleId, {
     id: initialRo?.id,
     createdAt: initialRo?.created_at,
