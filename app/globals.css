@@ -2808,7 +2808,8 @@ select option { background-color: var(--panel); color: var(--ink); }
   .ro-list-bar .ro-list-tools { margin-bottom: 10px; }
   .ro-list-bar .stage-chips { margin: 0 -14px; }
   .ro-list-table tr.ro-row { border-radius: 12px; padding: 14px 16px; }
-  .ro-list-table td:first-child, .ro-list-table td:last-child { padding-left: 0; padding-right: 0; }
+  .ro-list-table td, .ro-list-table td:first-child, .ro-list-table td:last-child { padding: 0; }
+  .ro-list-table tr.ro-row { gap: 6px 12px; }
 }
 
 /* ==== Redesign: RO screen (calm) ==== */
