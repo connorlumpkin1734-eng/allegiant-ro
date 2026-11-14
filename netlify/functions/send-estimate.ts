@@ -38,12 +38,11 @@ export default async (request: Request) => {
     ["NEXT_PUBLIC_SUPABASE_URL", supabaseUrl],
     ["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", publicKey],
     ["SUPABASE_SERVICE_ROLE_KEY", serviceKey],
-    ["RESEND_API_KEY", resendKey],
   ].filter(([, value]) => !value).map(([key]) => key);
   if (missing.length) {
     return json({ error: `Estimate email is missing Netlify variable${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}.` }, 500);
   }
-  if (!supabaseUrl || !publicKey || !serviceKey || !resendKey) {
+  if (!supabaseUrl || !publicKey || !serviceKey) {
     return json({ error: "Estimate email configuration could not be loaded." }, 500);
   }
 
@@ -53,8 +52,11 @@ export default async (request: Request) => {
   });
   if (!userResponse.ok) return json({ error: "Sign in again before sending an estimate." }, 401);
   const user = await userResponse.json() as { id: string };
-  const body = await request.json().catch(() => ({})) as { repairOrderId?: string; includeInspection?: boolean; toEmail?: string };
+  const body = await request.json().catch(() => ({})) as { repairOrderId?: string; includeInspection?: boolean; toEmail?: string; byText?: boolean };
   if (!body.repairOrderId) return json({ error: "Missing repair order." }, 400);
+  // "Text it" makes the same approval link but sends no email: the shop texts the link from its own phone.
+  const byText = body.byText === true;
+  if (!byText && !resendKey) return json({ error: "Estimate email is missing Netlify variable: RESEND_API_KEY." }, 500);
 
   const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
   // Owner, service advisor or admin may send; technicians may not.
@@ -69,9 +71,12 @@ export default async (request: Request) => {
   const ro = rows[0];
   if (!ro) return json({ error: "Repair order not found." }, 404);
   // The Send panel can send to a different address than the one on file.
-  const recipient = pickRecipient(body.toEmail, ro.customers?.email);
-  if ("error" in recipient) return json({ error: recipient.error }, 400);
-  const customerEmail = recipient.email;
+  let customerEmail = (ro.customers?.email ?? "").trim();
+  if (!byText) {
+    const recipient = pickRecipient(body.toEmail, ro.customers?.email);
+    if ("error" in recipient) return json({ error: recipient.error }, 400);
+    customerEmail = recipient.email;
+  }
 
   const settingsResponse = await fetch(`${supabaseUrl}/rest/v1/settings?select=*&owner_id=eq.${ownerId}&limit=1`, { headers: serviceHeaders });
   const settings = (await settingsResponse.json() as Array<Record<string, unknown>>)[0] || {};
@@ -161,6 +166,21 @@ export default async (request: Request) => {
     body: JSON.stringify({ owner_id: ownerId, repair_order_id: ro.id, token_hash: tokenHash, customer_email: customerEmail, estimate_snapshot: snapshot }),
   });
   if (!insertResponse.ok) return json({ error: `Could not create approval request: ${await insertResponse.text()}` }, 500);
+
+  if (byText) {
+    await fetch(`${supabaseUrl}/rest/v1/repair_orders?id=eq.${ro.id}`, {
+      method: "PATCH", headers: serviceHeaders,
+      body: JSON.stringify({ estimate_status: "sent", estimate_sent_at: new Date().toISOString(), estimate_responded_at: null }),
+    });
+    return json({
+      message: "Estimate link ready to text.",
+      approvalUrl,
+      total,
+      vehicle: snapshot.vehicle,
+      businessName: String(snapshot.businessName ?? ""),
+      customerFirstName: snapshot.customerName === "Customer" ? "" : snapshot.customerName.split(/\s+/)[0] || "",
+    });
+  }
 
   const brand = brandFromSettings(settings, supabaseUrl);
   const estimateLabel = `Estimate #${String(ro.ro_number).padStart(4, "0")}`;

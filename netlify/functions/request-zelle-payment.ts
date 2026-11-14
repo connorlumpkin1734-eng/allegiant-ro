@@ -1,4 +1,5 @@
 import { notifyError } from "../../lib/platform-alert";
+import { balanceAfterPayments, type PaymentAmountRow } from "../../lib/payments-received";
 // Generates a one-time, unguessable link a shop can send to their customer to pay an invoice via
 // Zelle. Zelle has no business API — there's nothing to "charge" here, just a payments row that
 // records who owes what and a token the public pay-zelle page can look up. Mirrors the
@@ -26,6 +27,7 @@ type RepairOrderRow = {
   tax_rate: number;
   invoice_overrides: InvoiceOverrides | null;
   line_items: LineItem[];
+  payments: PaymentAmountRow[];
 };
 
 function hasAuthorizationResponse(authorization: EstimateAuthorization | null | undefined): authorization is EstimateAuthorization {
@@ -114,7 +116,7 @@ async function handler(request: Request): Promise<Response> {
   if (!settings.zelle_recipient) return json({ error: "Add a Zelle phone number or email in Settings before requesting Zelle payment." }, 400);
 
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,invoice_overrides,line_items(item_type,quantity,unit_price,taxable,service_group_id,job_status)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,invoice_overrides,line_items(item_type,quantity,unit_price,taxable,service_group_id,job_status),payments(amount,status)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
     { headers: serviceHeaders }
   );
   const roRows = roResponse.ok ? await roResponse.json() as RepairOrderRow[] : [];
@@ -132,8 +134,9 @@ async function handler(request: Request): Promise<Response> {
   const subtotal = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0);
   const taxableAmount = items.reduce((sum, item) => sum + (item.taxable ? Number(item.quantity) * Number(item.unit_price) : 0), 0);
   const tax = Math.max(0, taxableAmount) * (Number(ro.tax_rate) / 100);
-  const total = subtotal + tax;
-  if (total <= 0) return json({ error: "This invoice has nothing to charge." }, 400);
+  // Charge only what is still owed: a deposit or part payment already received comes off first.
+  const { balance: total } = balanceAfterPayments(subtotal + tax, ro.payments);
+  if (total <= 0) return json({ error: "This invoice has nothing left to charge." }, 400);
 
   const token = generateToken();
   const tokenHash = await hashToken(token);

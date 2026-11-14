@@ -1,4 +1,5 @@
 import { notifyError } from "../../lib/platform-alert";
+import { balanceAfterPayments, type PaymentAmountRow } from "../../lib/payments-received";
 // Creates a Stripe Checkout Session on the SHOP's own connected account (not the platform's) for
 // a repair order invoice, then records a `payments` row so the webhook can mark it paid.
 //
@@ -30,6 +31,7 @@ type RepairOrderRow = {
   invoice_overrides: InvoiceOverrides | null;
   customers: { name: string | null; email: string | null } | null;
   line_items: LineItem[];
+  payments: PaymentAmountRow[];
 };
 
 // Mirrors hasAuthorizationResponse() in app/page.tsx.
@@ -114,7 +116,7 @@ async function handler(request: Request): Promise<Response> {
   if (!settings.stripe_charges_enabled) return json({ error: "Stripe onboarding isn't finished yet — finish it in Settings before collecting payment." }, 400);
 
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,invoice_overrides,customers(name,email),line_items(item_type,quantity,unit_price,taxable,service_group_id,job_status)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,invoice_overrides,customers(name,email),line_items(item_type,quantity,unit_price,taxable,service_group_id,job_status),payments(amount,status)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
     { headers: serviceHeaders }
   );
   const roRows = roResponse.ok ? await roResponse.json() as RepairOrderRow[] : [];
@@ -132,8 +134,9 @@ async function handler(request: Request): Promise<Response> {
   const subtotal = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0);
   const taxableAmount = items.reduce((sum, item) => sum + (item.taxable ? Number(item.quantity) * Number(item.unit_price) : 0), 0);
   const tax = Math.max(0, taxableAmount) * (Number(ro.tax_rate) / 100);
-  const total = subtotal + tax;
-  if (total <= 0) return json({ error: "This invoice has nothing to charge." }, 400);
+  // Charge only what is still owed: a deposit or part payment already received comes off first.
+  const { balance: total } = balanceAfterPayments(subtotal + tax, ro.payments);
+  if (total <= 0) return json({ error: "This invoice has nothing left to charge." }, 400);
   const amountCents = Math.round(total * 100);
 
   const roNumberDigits = String(ro.ro_number).padStart(4, "0");

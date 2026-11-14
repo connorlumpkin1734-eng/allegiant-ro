@@ -826,7 +826,7 @@ type RepairOrder = {
   repair_order_technicians?: Array<{ staff_id: string; staff?: { name: string } | null }>;
   teams?: { name: string } | null;
   /** Just enough to spot a Zelle payment the shop still has to confirm. Advisors/owners only (RLS). */
-  payments?: Array<{ processor: string; status: string }>;
+  payments?: Array<{ processor: string; status: string; amount?: number | string; payment_method_type?: string | null; created_at?: string }>;
   latest_estimate_authorization?: EstimateAuthorization | null;
 };
 
@@ -980,6 +980,36 @@ const blankVehicle: VehicleForm = {
   notes: "",
   vin_data: null,
 };
+
+/** A payment the shop has actually received (online ones land here on their own; counter ones are recorded by hand). */
+type ReceivedPayment = {
+  id: string; processor: string; payment_method_type: string | null; amount: number | string;
+  status: string; confirmation_note: string | null; created_at: string;
+};
+const COUNTER_METHODS = [
+  { value: "cash", label: "Cash" },
+  { value: "check", label: "Check" },
+  { value: "card", label: "Card" },
+  { value: "other", label: "Other" },
+] as const;
+type CounterMethod = (typeof COUNTER_METHODS)[number]["value"];
+function paymentMethodLabel(payment: { processor: string; payment_method_type?: string | null }): string {
+  if (payment.processor === "manual") {
+    return COUNTER_METHODS.find((method) => method.value === payment.payment_method_type)?.label ?? "Payment";
+  }
+  if (payment.processor === "zelle") return "Zelle";
+  if (payment.payment_method_type === "us_bank_account") return "Bank transfer (online)";
+  return "Card (online)";
+}
+const toCents = (value: number | string | null | undefined) => Math.round(Number(value || 0) * 100);
+/** What has been received on an RO, in dollars. Only payments that went through count. */
+function receivedTotal(payments: Array<{ status: string; amount?: number | string }> | null | undefined): number {
+  return (payments ?? []).reduce((sum, payment) => sum + (payment.status === "succeeded" ? toCents(payment.amount) : 0), 0) / 100;
+}
+/** Invoice total minus what's been received, never below zero. */
+function balanceDue(total: number, received: number): number {
+  return Math.max(0, toCents(total) - toCents(received)) / 100;
+}
 
 function money(value: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -1760,7 +1790,7 @@ function RepairOrderApp({ user }: { user: User }) {
       supabase.from("vehicles").select("*").order("year", { ascending: false }),
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status, amount, payment_method_type, created_at)")
         .order("created_at", { ascending: false }),
       supabase
         .from("estimate_authorizations")
@@ -1940,7 +1970,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status, amount, payment_method_type, created_at)")
         .eq("id", id)
         .single(),
       supabase
@@ -1980,7 +2010,7 @@ function RepairOrderApp({ user }: { user: User }) {
     const [roResult, authorizationResult] = await Promise.all([
       supabase
         .from("repair_orders")
-        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status)")
+        .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status, amount, payment_method_type, created_at)")
         .eq("id", id)
         .single(),
       supabase
@@ -2015,7 +2045,7 @@ function RepairOrderApp({ user }: { user: User }) {
     setError("");
     const { data, error: fetchError } = await supabase
       .from("repair_orders")
-      .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status)")
+      .select("*, customers(*), vehicles(*), line_items(*), concern_lines(*), repair_order_technicians(staff_id, staff(name)), teams(name), payments(processor, status, amount, payment_method_type, created_at)")
       .eq("id", id)
       .single();
 
@@ -2635,7 +2665,7 @@ function buildReport(repairOrders: RepairOrder[], period: ReportPeriod, feeByRo:
 
     // Outstanding: work that's done but not yet paid — shown against the period it was completed.
     if (ro.status === "completed" && !ro.paid) {
-      getRow(ro.completed_at ?? "unknown").outstanding += totals.total;
+      getRow(ro.completed_at ?? "unknown").outstanding += balanceDue(totals.total, receivedTotal(ro.payments));
     }
   }
 
@@ -4885,7 +4915,82 @@ function RepairOrderEditor({
         : `RO #${padRo(initialRo.ro_number)} closed. Send or print the invoice when you're ready.`,
     });
   }
-  /** Sidebar Payment switch. Paid on an open RO closes it too: you can't be paid for an open job. */
+  // ---- Payments received on this RO (sidebar "Payment" box) ----
+  const [payments, setPayments] = useState<ReceivedPayment[]>([]);
+  const [paymentsLoaded, setPaymentsLoaded] = useState(false);
+  const [payForm, setPayForm] = useState<{ method: CounterMethod; amount: number; note: string } | null>(null);
+  const [payBusy, setPayBusy] = useState(false);
+  const roIdForPayments = initialRo?.id;
+  const roPaidFlag = Boolean(initialRo?.paid);
+  useEffect(() => {
+    if (!roIdForPayments || isTechnician) return;
+    let cancelled = false;
+    void supabase
+      .from("payments")
+      .select("id,processor,payment_method_type,amount,status,confirmation_note,created_at")
+      .eq("repair_order_id", roIdForPayments)
+      .eq("status", "succeeded")
+      .order("created_at", { ascending: true })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setPayments((data ?? []) as ReceivedPayment[]);
+        setPaymentsLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, [roIdForPayments, roPaidFlag, isTechnician]);
+  const receivedSoFar = receivedTotal(payments);
+  const invoiceBalance = balanceDue(invoiceTotals.total, receivedSoFar);
+  /** Marked paid before payments were itemised (or by an online payment we can't see): trust the flag. */
+  const paidWithoutRecords = roPaidFlag && receivedSoFar === 0;
+
+  function openPayForm() {
+    setPayForm({ method: "cash", amount: invoiceBalance, note: "" });
+  }
+  async function recordPayment() {
+    if (!initialRo || !payForm || payBusy) return;
+    const cents = toCents(payForm.amount);
+    if (cents <= 0) { notify("Enter the amount the customer paid.", "error"); return; }
+    if (cents > toCents(invoiceBalance)) {
+      notify(`That's more than the ${money(invoiceBalance)} still owed. Enter ${money(invoiceBalance)} or less.`, "error");
+      return;
+    }
+    const paysItOff = cents === toCents(invoiceBalance);
+    // Paying it off closes the RO, so make sure it can close before taking the money down.
+    if (paysItOff && initialRo.status !== "completed" && closingBlocked()) return;
+    setPayBusy(true);
+    const { data: userData } = await supabase.auth.getUser();
+    const { data, error: payError } = await supabase
+      .from("payments")
+      .insert({
+        owner_id: ownerId, repair_order_id: initialRo.id, processor: "manual", payment_method_type: payForm.method,
+        amount: cents / 100, status: "succeeded", confirmation_note: payForm.note.trim() || null,
+        confirmed_by: userData.user?.id ?? null,
+      })
+      .select("id,processor,payment_method_type,amount,status,confirmation_note,created_at")
+      .single();
+    setPayBusy(false);
+    if (payError || !data) { notify(`Couldn't record the payment: ${payError?.message ?? "unknown error"}`, "error"); return; }
+    setPayments((current) => [...current, data as ReceivedPayment]);
+    setPayForm(null);
+    if (paysItOff) {
+      await setPaymentStatus(true);
+    } else {
+      notify(`Recorded ${money(cents / 100)}. ${money((toCents(invoiceBalance) - cents) / 100)} still owed.`, "success");
+    }
+  }
+  async function removePayment(payment: ReceivedPayment) {
+    if (!initialRo || payBusy) return;
+    if (!window.confirm(`Remove this ${money(Number(payment.amount))} ${paymentMethodLabel(payment).toLowerCase()} payment? Use this only if it was entered by mistake.`)) return;
+    setPayBusy(true);
+    const { data, error: removeError } = await supabase.from("payments").delete().eq("id", payment.id).eq("processor", "manual").select("id");
+    setPayBusy(false);
+    if (removeError) { notify(`Couldn't remove the payment: ${removeError.message}`, "error"); return; }
+    if (!data?.length) { notify("Only the owner or an admin can remove a payment.", "error"); return; }
+    setPayments((current) => current.filter((entry) => entry.id !== payment.id));
+    if (initialRo.paid) await setPaymentStatus(false);
+    else notify("Payment removed.", "success");
+  }
+  /** Paid on an open RO closes it too: you can't be paid for an open job. */
   async function setPaymentStatus(next: boolean) {
     if (!initialRo || next === Boolean(initialRo.paid)) return;
     if (next && initialRo.status !== "completed") { await closeRo(true); return; }
@@ -4917,7 +5022,7 @@ function RepairOrderEditor({
     : stage === "paid"
       ? { tone: "done", title: "Paid", text: "Nothing left to do. Print the invoice if the customer wants a copy." }
     : stage === "invoiced"
-      ? { tone: "go", title: "Get paid", text: "Send the invoice so the customer can pay online, or switch Payment to Paid when they pay at the counter." }
+      ? { tone: "go", title: "Get paid", text: "Send the invoice so the customer can pay online, or use Record payment (right side) when they pay at the counter." }
     : pendingRecs > 0
       ? { tone: "go", title: `Price ${pendingRecs === 1 ? "the tech's recommendation" : `${pendingRecs} tech recommendations`}`, text: `${stage === "ready" ? "The approved work is done, and the tech found more. " : ""}Add labor and parts to ${pendingRecs === 1 ? "it" : "each one"} below, set ${pendingRecs === 1 ? "it" : "them"} to Needs customer OK, then send the estimate. Not worth quoting? Delete ${pendingRecs === 1 ? "it" : "them"}.` }
     : serviceGroups.length === 0
@@ -5165,6 +5270,7 @@ function RepairOrderEditor({
           customerId={selectedCustomerId || null}
           customerName={customerForm.name}
           customerEmail={customerForm.email}
+          customerPhone={customerForm.phone}
           hasInspection={hasInspection}
           onClose={() => setSendKind(null)}
           onSent={(sentTo, savedToCustomer) => {
@@ -5405,15 +5511,24 @@ function RepairOrderEditor({
           <section className="panel">
             <div className="section-heading">
               <h2>Vehicle</h2>
-              <select value={selectedVehicleId} onChange={(event) => chooseVehicle(event.target.value)} disabled={!selectedCustomerId}>
-                <option value="">+ New vehicle</option>
-                {customerVehicles.map((vehicle) => (
-                  <option key={vehicle.id} value={vehicle.id}>
-                    {[vehicle.year, vehicle.make, vehicle.model, vehicle.license_plate].filter(Boolean).join(" ")}
-                  </option>
-                ))}
-              </select>
+              {customerVehicles.length > 0 ? (
+                <select aria-label="Which vehicle" value={selectedVehicleId} onChange={(event) => chooseVehicle(event.target.value)}>
+                  {customerVehicles.map((vehicle) => (
+                    <option key={vehicle.id} value={vehicle.id}>
+                      {[vehicle.year, vehicle.make, vehicle.model, vehicle.license_plate].filter(Boolean).join(" ") || "Vehicle on file"}
+                    </option>
+                  ))}
+                  <option value="">+ Add a different vehicle</option>
+                </select>
+              ) : (
+                <span className="section-hint">New vehicle · fill it in below</span>
+              )}
             </div>
+            {customerVehicles.length > 0 && !selectedVehicleId && (
+              <p className="sidebar-help vehicle-pick-help">
+                Adding a new vehicle for {customerForm.name || "this customer"}. Fill it in below, or pick one of their {customerVehicles.length === 1 ? "saved vehicle" : `${customerVehicles.length} saved vehicles`} above.
+              </p>
+            )}
             <div className="vin-row">
               <label>
                 VIN
@@ -5504,7 +5619,7 @@ function RepairOrderEditor({
                     <h2>Invoice for {customerForm.name || "New customer"}</h2>
                     <p className="muted">Changes made to the charges below also change the repair order and estimate.</p>
                   </div>
-                  {initialRo && <span className={`badge ${paid ? "paid" : "unpaid"}`}>{paid ? "Paid" : "Unpaid"}</span>}
+                  {initialRo && <span className={`badge ${paid ? "paid" : "unpaid"}`}>{paid ? "Paid" : receivedSoFar > 0 ? "Partly paid" : "Unpaid"}</span>}
                 </div>
                 <div className="invoice-summary-grid">
                   <div>
@@ -5809,18 +5924,83 @@ function RepairOrderEditor({
               </div>
               <div className="ro-status-row">
                 <span>Payment</span>
-                <div className="segmented payment-toggle" role="group" aria-label="Payment status">
-                  <button type="button" aria-pressed={!initialRo.paid} className={!initialRo.paid ? "active" : ""} onClick={() => void setPaymentStatus(false)}>Unpaid</button>
-                  <button type="button" aria-pressed={Boolean(initialRo.paid)} className={initialRo.paid ? "active is-paid" : ""} onClick={() => void setPaymentStatus(true)}>Paid</button>
-                </div>
+                <strong className={initialRo.paid ? "is-paid" : receivedSoFar > 0 ? "is-partial" : "is-open"}>
+                  {initialRo.paid ? "Paid" : receivedSoFar > 0 ? "Partly paid" : "Unpaid"}
+                </strong>
+                {!payForm && !initialRo.paid && invoiceBalance > 0 && paymentsLoaded && (
+                  <button type="button" className="button small primary" onClick={openPayForm}>Record payment</button>
+                )}
+                {!payForm && paidWithoutRecords && (
+                  <button type="button" className="button small ghost" onClick={() => void setPaymentStatus(false)}>Mark unpaid</button>
+                )}
               </div>
-              <p className="sidebar-help">
-                {initialRo.paid && initialRo.paid_at
-                  ? `Paid ${new Date(initialRo.paid_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.`
-                  : initialRo.status === "completed"
-                    ? "Card, bank and confirmed Zelle payments mark it paid on their own. Use Paid for cash or check."
-                    : "Marking it paid also closes the RO. Either one saves your other changes too."}
-              </p>
+              {payments.length > 0 && (
+                <ul className="payment-list">
+                  {payments.map((payment) => (
+                    <li key={payment.id}>
+                      <span className="payment-what">
+                        <strong>{paymentMethodLabel(payment)}</strong>
+                        <small>
+                          {new Date(payment.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                          {payment.confirmation_note ? ` · ${payment.confirmation_note}` : ""}
+                        </small>
+                      </span>
+                      <span className="payment-amount">{money(Number(payment.amount))}</span>
+                      {payment.processor === "manual" && (
+                        <button type="button" className="payment-remove" disabled={payBusy} aria-label={`Remove ${money(Number(payment.amount))} payment`} title="Remove (entered by mistake)" onClick={() => void removePayment(payment)}>×</button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {(receivedSoFar > 0 || payForm) && (
+                <div className={`payment-balance${invoiceBalance > 0 ? "" : " is-zero"}`}>
+                  <span>{invoiceBalance > 0 ? "Still owed" : "Balance"}</span>
+                  <strong>{money(invoiceBalance)}</strong>
+                </div>
+              )}
+              {payForm && (
+                <div className="payment-form">
+                  <div className="segmented payment-methods" role="group" aria-label="How they paid">
+                    {COUNTER_METHODS.map((method) => (
+                      <button key={method.value} type="button" aria-pressed={payForm.method === method.value} className={payForm.method === method.value ? "active" : ""} onClick={() => setPayForm({ ...payForm, method: method.value })}>
+                        {method.label}
+                      </button>
+                    ))}
+                  </div>
+                  <label>
+                    Amount
+                    <NumberInput value={payForm.amount} format="money" ariaLabel="Amount paid" onChange={(value) => setPayForm({ ...payForm, amount: value })} />
+                  </label>
+                  <label>
+                    {payForm.method === "check" ? "Check number (optional)" : "Note (optional)"}
+                    <input value={payForm.note} maxLength={80} placeholder={payForm.method === "check" ? "Example: 1042" : payForm.method === "card" ? "Example: Visa on the shop terminal" : ""} onChange={(event) => setPayForm({ ...payForm, note: event.target.value })} />
+                  </label>
+                  <p className="sidebar-help">
+                    {toCents(payForm.amount) >= toCents(invoiceBalance)
+                      ? initialRo.status === "completed" ? "This pays it off and marks the RO paid." : "This pays it off, closes the RO and marks it paid."
+                      : "Less than the full amount is fine. It's saved as a deposit and the rest stays owed."}
+                  </p>
+                  <div className="payment-form-actions">
+                    <button type="button" className="button small ghost" disabled={payBusy} onClick={() => setPayForm(null)}>Cancel</button>
+                    <button type="button" className="button small primary" disabled={payBusy} onClick={() => void recordPayment()}>{payBusy ? "Saving…" : "Save payment"}</button>
+                  </div>
+                </div>
+              )}
+              {!payForm && (
+                <p className="sidebar-help">
+                  {initialRo.paid && receivedSoFar > 0 && invoiceBalance > 0
+                    ? "The invoice went up after it was paid. Take × off a payment to reopen it, or add the extra work to a new RO."
+                    : initialRo.paid && initialRo.paid_at
+                      ? `Paid ${new Date(initialRo.paid_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.`
+                      : !initialRo.paid && receivedSoFar > 0 && invoiceBalance === 0
+                        ? "Paid in full. Close the RO to finish it."
+                        : "Cash, check or a card on your own terminal: use Record payment. Online payments show up here on their own."}
+                </p>
+              )}
+              {!payForm && !initialRo.paid && receivedSoFar > 0 && invoiceBalance === 0 && (
+                <button type="button" className="button small primary" onClick={() => void setPaymentStatus(true)}>Close RO &amp; mark paid</button>
+              )}
             </section>
           ) : (
             <p className="sidebar-help">Save this RO to close it or record payment.</p>
@@ -6508,6 +6688,7 @@ function SendPanel({
   customerId,
   customerName,
   customerEmail,
+  customerPhone = "",
   hasInspection = false,
   savedVersionNote = false,
   onClose,
@@ -6518,6 +6699,8 @@ function SendPanel({
   customerId: string | null;
   customerName: string;
   customerEmail: string;
+  /** For "Text it": the number the texting app opens to. */
+  customerPhone?: string;
   hasInspection?: boolean;
   /** Show "sends the last saved version" (when opened from the editor). */
   savedVersionNote?: boolean;
@@ -6532,11 +6715,69 @@ function SendPanel({
   const [error, setError] = useState("");
   const changed = to.trim().toLowerCase() !== customerEmail.trim().toLowerCase();
   const label = kind === "estimate" ? "estimate" : "invoice";
+  // "Text it" (estimates): we make the approval link, the shop texts it from its own phone. No per-text cost.
+  const canText = kind === "estimate";
+  const [way, setWay] = useState<"email" | "text">(canText && !customerEmail.trim() && customerPhone.trim() ? "text" : "email");
+  const [phone, setPhone] = useState(customerPhone);
+  const [textMessage, setTextMessage] = useState("");
+  const [linkMade, setLinkMade] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const closeRef = useRef<() => void>(() => undefined);
+  const smsHref = `sms:${smsNumber(phone)}?&body=${encodeURIComponent(textMessage)}`;
+
+  async function makeTextLink() {
+    setBusy(true);
+    setError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again before sending.");
+      const response = await fetch("/.netlify/functions/send-estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ repairOrderId, byText: true, includeInspection: hasInspection && includeInspection }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string; approvalUrl?: string; total?: number; vehicle?: string; businessName?: string; customerFirstName?: string };
+      if (!response.ok || !body.approvalUrl) throw new Error(body.error || "The estimate link could not be made.");
+      const message = estimateTextMessage({
+        firstName: body.customerFirstName || customerName.trim().split(/\s+/)[0] || "",
+        shop: body.businessName || "",
+        vehicle: body.vehicle || "",
+        total: Number(body.total) || 0,
+        url: body.approvalUrl,
+      });
+      setTextMessage(message);
+      setLinkMade(true);
+      // On a phone, go straight to the texting app. On a computer the buttons below do it.
+      if (smsNumber(phone) && typeof window !== "undefined" && navigator.maxTouchPoints > 0 && window.matchMedia("(max-width: 820px)").matches) {
+        window.location.href = `sms:${smsNumber(phone)}?&body=${encodeURIComponent(message)}`;
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The estimate link could not be made.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  /** Closing after the link was made tells the screen behind to refresh (the estimate now reads "sent"). */
+  function closePanel() {
+    if (linkMade) onSent?.("", false);
+    onClose();
+  }
+  closeRef.current = closePanel;
+  async function copyText() {
+    try {
+      await navigator.clipboard.writeText(textMessage);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Couldn't copy. Select the message and copy it yourself.");
+    }
+  }
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) closeRef.current(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
+  }, [busy]);
 
   async function send() {
     const address = to.trim();
@@ -6578,10 +6819,66 @@ function SendPanel({
   }
 
   return (
-    <div className="send-panel-backdrop no-print" role="presentation" onClick={() => { if (!busy) onClose(); }}>
+    <div className="send-panel-backdrop no-print" role="presentation" onClick={() => { if (!busy) closePanel(); }}>
       <div className="send-panel" role="dialog" aria-modal="true" aria-labelledby="send-panel-title" onClick={(event) => event.stopPropagation()}>
         <h2 id="send-panel-title">Send {label}</h2>
         <p className="muted">To {customerName || "the customer"}</p>
+        {canText && !linkMade && (
+          <div className="segmented send-ways" role="group" aria-label="How to send it">
+            <button type="button" aria-pressed={way === "email"} className={way === "email" ? "active" : ""} disabled={busy} onClick={() => { setWay("email"); setError(""); }}>Email it</button>
+            <button type="button" aria-pressed={way === "text"} className={way === "text" ? "active" : ""} disabled={busy} onClick={() => { setWay("text"); setError(""); }}>Text it</button>
+          </div>
+        )}
+        {way === "text" ? (
+          <div className="text-link-box">
+            {!linkMade ? (
+              <>
+                <label>
+                  Customer&apos;s mobile number
+                  <input type="tel" autoFocus value={phone} placeholder="Example: (214) 555-0142" onChange={(event) => setPhone(event.target.value)} />
+                </label>
+                {hasInspection && (
+                  <label className="checkbox-row compact">
+                    <input type="checkbox" checked={includeInspection} onChange={(event) => setIncludeInspection(event.target.checked)} />
+                    Include the multipoint inspection
+                  </label>
+                )}
+                <p className="muted send-panel-note">
+                  We make the approval link and write the text. It sends from your own phone or computer, so the customer sees your number and it costs nothing extra.
+                  {savedVersionNote ? " Uses the last saved version." : ""}
+                </p>
+              </>
+            ) : (
+              <>
+                <label>
+                  Message
+                  <textarea value={textMessage} onChange={(event) => setTextMessage(event.target.value)} />
+                </label>
+                <div className="text-link-actions">
+                  {smsNumber(phone)
+                    ? <a className="button primary" href={smsHref}>Open in your texting app</a>
+                    : null}
+                  <button type="button" className={`button ${smsNumber(phone) ? "secondary" : "primary"}`} onClick={() => void copyText()}>{copied ? "Copied" : "Copy the message"}</button>
+                </div>
+                <p className="muted send-panel-note">
+                  The estimate is marked sent and you&apos;ll get an alert when they answer. Nothing goes out until you hit send in your texting app. No texting app on this computer? Copy it and paste it wherever you text from.
+                </p>
+              </>
+            )}
+            {error && <div className="send-panel-error" role="alert">{error}</div>}
+            <div className="send-panel-actions">
+              {linkMade
+                ? <button type="button" className="button primary" onClick={closePanel}>Done</button>
+                : (
+                  <>
+                    <button type="button" className="button ghost" onClick={onClose} disabled={busy}>Cancel</button>
+                    <button type="button" className="button primary" onClick={() => void makeTextLink()} disabled={busy}>{busy ? "Making the link…" : "Write the text"}</button>
+                  </>
+                )}
+            </div>
+          </div>
+        ) : (
+        <>
         <label>
           Email
           <input
@@ -6613,9 +6910,24 @@ function SendPanel({
             {busy ? "Sending…" : `Send ${label}`}
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   );
+}
+/** Digits a texting app understands: US numbers get +1, anything else is passed through as typed. */
+function smsNumber(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return digits.length >= 7 ? digits : "";
+}
+function estimateTextMessage({ firstName, shop, vehicle, total, url }: { firstName: string; shop: string; vehicle: string; total: number; url: string }): string {
+  const hello = firstName ? `Hi ${firstName}, ` : "Hi, ";
+  const from = shop ? `this is ${shop}. ` : "";
+  const what = `Your estimate${vehicle ? ` for the ${vehicle}` : ""} is ready${total > 0 ? ` (${money(total)})` : ""}.`;
+  return `${hello}${from}${what} Look it over and approve what you want here: ${url}`;
 }
 
 // ---- ⋯ menu ----------------------------------------------------------------------------------
@@ -9581,6 +9893,13 @@ function DocumentView({
   };
 
   const title = isEstimate ? "Estimate" : isWorkOrder ? "Repair Order" : "Invoice";
+  const receivedPayments = (ro.payments ?? []).filter((payment) => payment.status === "succeeded");
+  const received = receivedTotal(receivedPayments);
+  // Marked paid with nothing itemised (older ROs): the flag is the record, so nothing is owed.
+  const amountDue = ro.paid && received === 0 ? 0 : balanceDue(total, received);
+  const canCollectOnline = isInvoice && !ro.paid && ro.status !== "voided"
+    && Boolean(settings.stripe_charges_enabled || settings.square_location_id || settings.zelle_recipient)
+    && settings.subscription_status !== "trialing";
   const documentSubtitle = isEstimate
     ? "Proposed work and estimated pricing"
     : isWorkOrder
@@ -9608,6 +9927,7 @@ function DocumentView({
           customerId={ro.customer_id || null}
           customerName={ro.customers?.name ?? ""}
           customerEmail={ro.customers?.email ?? ""}
+          customerPhone={ro.customers?.phone ?? ""}
           hasInspection={hasInspection}
           onClose={() => setSendKind(null)}
           onSent={() => onPaid()}
@@ -9636,11 +9956,6 @@ function DocumentView({
           {isEstimate && ro.status !== "voided" && (
             <button className="button primary" onClick={() => setSendKind("estimate")}>Send estimate</button>
           )}
-          {isInvoice && !ro.paid && ro.status !== "voided" && (settings.stripe_charges_enabled || settings.square_location_id || settings.zelle_recipient) && settings.subscription_status !== "trialing" && (
-            <button className="button secondary" disabled={paymentBusy} onClick={() => void collectPayment()}>
-              {paymentBusy ? "Starting…" : "Collect payment"}
-            </button>
-          )}
           {isInvoice && ro.status !== "voided" && (
             <button className="button primary" onClick={() => setSendKind("invoice")}>Send invoice</button>
           )}
@@ -9650,6 +9965,7 @@ function DocumentView({
             </button>
           )}
           <MoreMenu items={[
+            canCollectOnline && { label: paymentBusy ? "Making pay link…" : "Get a pay link", onClick: () => void collectPayment(), disabled: paymentBusy },
             !isWorkOrder && ro.status !== "voided" && { label: photosLoading || printing ? "Print / Save PDF (loading…)" : "Print / Save PDF", onClick: () => void printDocument(), disabled: photosLoading || printing || Boolean(photoError) },
             { label: "Multipoint inspection", onClick: onInspection },
             !isTechnician && { label: ro.archived_at ? "Restore" : "Archive", onClick: onArchive },
@@ -9694,7 +10010,7 @@ function DocumentView({
             <span>{new Date(ro.created_at).toLocaleDateString()}</span>
             <div className="document-status-row">
               {isWorkOrder && <span className={`badge ${ro.status}`}>{currentStatusLabel}</span>}
-              {isInvoice && <span className={`badge ${ro.paid ? "paid" : "unpaid"}`}>{ro.paid ? "Paid" : "Unpaid"}</span>}
+              {isInvoice && <span className={`badge ${ro.paid ? "paid" : "unpaid"}`}>{ro.paid ? "Paid" : received > 0 ? "Partly paid" : "Unpaid"}</span>}
               {ro.status === "voided" && !isWorkOrder && <span className="badge voided">Voided</span>}
               {ro.archived_at && <span className="badge archived">Archived</span>}
             </div>
@@ -9757,7 +10073,7 @@ function DocumentView({
             {isWorkOrder && <span>Status: {currentStatusLabel}</span>}
             {isInvoice && (
               <>
-                <span className={`document-payment ${ro.paid ? "paid" : "unpaid"}`}>{ro.paid ? "PAID" : "UNPAID"}</span>
+                <span className={`document-payment ${ro.paid ? "paid" : "unpaid"}`}>{ro.paid ? "PAID" : received > 0 ? "PARTLY PAID" : "UNPAID"}</span>
                 {ro.paid_at && <span>Paid {new Date(ro.paid_at).toLocaleDateString()}</span>}
               </>
             )}
@@ -9912,10 +10228,18 @@ function DocumentView({
             <div><span>Subtotal</span><strong>{money(subtotal)}</strong></div>
             <div><span>Tax ({Number(ro.tax_rate).toFixed(3)}%)</span><strong>{money(tax)}</strong></div>
             <div className="grand-total"><span>{finalTotalLabel}</span><strong>{money(total)}</strong></div>
+            {isInvoice && receivedPayments.map((payment, index) => (
+              <div className="payment-received-row" key={index}>
+                <span>
+                  Paid{payment.created_at ? ` ${new Date(payment.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""} · {paymentMethodLabel(payment)}
+                </span>
+                <strong>−{money(Number(payment.amount))}</strong>
+              </div>
+            ))}
             {isInvoice && (
-              <div className={`amount-due-row ${ro.paid ? "paid" : "unpaid"}`}>
-                <span>{ro.paid ? "Balance" : "Amount due"}</span>
-                <strong>{money(ro.paid ? 0 : total)}</strong>
+              <div className={`amount-due-row ${amountDue > 0 ? "unpaid" : "paid"}`}>
+                <span>{amountDue > 0 ? (receivedPayments.length ? "Balance due" : "Amount due") : "Balance"}</span>
+                <strong>{money(amountDue)}</strong>
               </div>
             )}
           </div>

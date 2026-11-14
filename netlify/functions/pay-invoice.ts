@@ -1,4 +1,5 @@
 import { notifyError } from "../../lib/platform-alert";
+import { balanceAfterPayments, type PaymentAmountRow } from "../../lib/payments-received";
 import { activeCardProcessor, cardMethodsLabel, createSquareCheckout } from "../../lib/square";
 // Public, token-gated. The customer opens ONE link and chooses how to pay:
 //   GET  ?token=…                      -> invoice summary + which payment methods this shop offers
@@ -18,7 +19,7 @@ type InvoiceOverrides = Record<string, { note: string; recorded_at: string; reco
 type EstimateAuthorization = { status: string; line_decisions: Record<string, "approved" | "declined"> | null };
 type RepairOrderRow = {
   id: string; owner_id: string; ro_number: number; tax_rate: number; paid: boolean; status: string;
-  invoice_overrides: InvoiceOverrides | null; customers: { email: string | null } | null; line_items: LineItem[];
+  invoice_overrides: InvoiceOverrides | null; customers: { email: string | null } | null; line_items: LineItem[]; payments: PaymentAmountRow[];
 };
 
 function hasAuthorizationResponse(a: EstimateAuthorization | null | undefined): a is EstimateAuthorization {
@@ -95,7 +96,7 @@ async function handler(request: Request): Promise<Response> {
 
   const [settingsResponse, roResponse, authorizationResponse] = await Promise.all([
     fetch(`${supabaseUrl}/rest/v1/settings?select=business_name,zelle_recipient,stripe_account_id,stripe_charges_enabled,square_location_id,card_processor,subscription_status&owner_id=eq.${link.owner_id}&limit=1`, { headers: serviceHeaders }),
-    fetch(`${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,paid,status,invoice_overrides,customers(email),line_items(item_type,quantity,unit_price,taxable,service_group_id,job_status)&id=eq.${encodeURIComponent(link.repair_order_id)}&owner_id=eq.${link.owner_id}&limit=1`, { headers: serviceHeaders }),
+    fetch(`${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,paid,status,invoice_overrides,customers(email),line_items(item_type,quantity,unit_price,taxable,service_group_id,job_status),payments(amount,status)&id=eq.${encodeURIComponent(link.repair_order_id)}&owner_id=eq.${link.owner_id}&limit=1`, { headers: serviceHeaders }),
     fetch(`${supabaseUrl}/rest/v1/estimate_authorizations?select=status,line_decisions&repair_order_id=eq.${encodeURIComponent(link.repair_order_id)}&order=sent_at.desc&limit=1`, { headers: serviceHeaders }),
   ]);
   const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<{ business_name: string | null; zelle_recipient: string | null; stripe_account_id: string | null; stripe_charges_enabled: boolean; square_location_id: string | null; card_processor: string | null; subscription_status: string }> : [])[0];
@@ -106,7 +107,9 @@ async function handler(request: Request): Promise<Response> {
   const items = authorizedLineItems(ro.line_items || [], authorization, ro.invoice_overrides ?? {});
   const subtotal = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0);
   const taxable = items.reduce((sum, item) => sum + (item.taxable ? Number(item.quantity) * Number(item.unit_price) : 0), 0);
-  const total = subtotal + Math.max(0, taxable) * (Number(ro.tax_rate) / 100);
+  const invoiceTotal = subtotal + Math.max(0, taxable) * (Number(ro.tax_rate) / 100);
+  // Charge only what is still owed: a deposit or part payment already received comes off first.
+  const { balance: total } = balanceAfterPayments(invoiceTotal, ro.payments);
 
   const trialBlocked = settings.subscription_status === "trialing";
   const cardProcessor = trialBlocked ? null : activeCardProcessor(settings);

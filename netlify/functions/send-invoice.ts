@@ -1,4 +1,5 @@
 import { notifyError } from "../../lib/platform-alert";
+import { balanceAfterPayments, type PaymentAmountRow } from "../../lib/payments-received";
 // Emails a repair order's invoice to the customer — fully self-service when the shop has a
 // payment method connected:
 //  - If the shop has connected Stripe and finished onboarding (stripe_charges_enabled), and the
@@ -72,6 +73,7 @@ type RepairOrderRow = {
   customers: { name: string | null; email: string | null } | null;
   vehicles: { year: number | null; make: string | null; model: string | null; vin: string | null } | null;
   line_items: LineItem[];
+  payments: PaymentAmountRow[];
 };
 
 // Mirrors hasAuthorizationResponse() in app/page.tsx.
@@ -157,7 +159,7 @@ async function handler(request: Request): Promise<Response> {
   const settings = (settingsResponse.ok ? await settingsResponse.json() as Array<Record<string, unknown>> : [])[0] || {};
 
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,created_at,paid,invoice_overrides,customers(name,email),vehicles(year,make,model,vin),line_items(description,quantity,unit_price,taxable,service_group_id,service_group_title,sort_order,job_status)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=id,owner_id,ro_number,tax_rate,created_at,paid,invoice_overrides,customers(name,email),vehicles(year,make,model,vin),line_items(description,quantity,unit_price,taxable,service_group_id,service_group_title,sort_order,job_status),payments(amount,status)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
     { headers: serviceHeaders }
   );
   const roRows = roResponse.ok ? await roResponse.json() as RepairOrderRow[] : [];
@@ -183,7 +185,12 @@ async function handler(request: Request): Promise<Response> {
   const subtotal = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0);
   const taxableAmount = items.reduce((sum, item) => sum + (item.taxable ? Number(item.quantity) * Number(item.unit_price) : 0), 0);
   const tax = Math.max(0, taxableAmount) * (Number(ro.tax_rate) / 100);
-  const total = subtotal + tax;
+  const invoiceTotal = subtotal + tax;
+  // Payments already received (a deposit, a part payment at the counter) come off what we ask for.
+  // A paid invoice shows its full total; an unpaid one shows what is still owed.
+  const { received, balance } = balanceAfterPayments(invoiceTotal, ro.payments);
+  const total = ro.paid ? invoiceTotal : balance;
+  const partPaid = !ro.paid && received > 0;
 
   // Video clips can't play inside an email, so when this invoice has any (for services that are on
   // it), save a frozen snapshot behind a token-gated link and add a "Watch your repair videos"
@@ -306,7 +313,13 @@ async function handler(request: Request): Promise<Response> {
     totalsTable([
       { label: "Subtotal", amount: money(subtotal) },
       ...(tax > 0 ? [{ label: `Tax (${Number(ro.tax_rate)}%)`, amount: money(tax) }] : []),
-      { label: ro.paid ? "Total paid" : "Total due", amount: money(total), strong: true },
+      ...(partPaid
+        ? [
+            { label: "Invoice total", amount: money(invoiceTotal) },
+            { label: "Paid so far", amount: `-${money(received)}` },
+            { label: "Balance due", amount: money(total), strong: true },
+          ]
+        : [{ label: ro.paid ? "Total paid" : "Total due", amount: money(total), strong: true }]),
     ]),
   ].join("");
 
@@ -339,6 +352,7 @@ async function handler(request: Request): Promise<Response> {
     ...[...jobs.values()].map((job) => `- ${job.title}: ${money(job.total)}`),
     ...otherRows.map((row) => `- ${row.label}: ${row.amount}`),
     "",
+    partPaid ? `Invoice total: ${money(invoiceTotal)}\nPaid so far: ${money(received)}` : "",
     `${ro.paid ? "Paid" : "Balance due"}: ${money(total)}`,
     payLinkUrl ? `\nPay now (${payMethodsLabel}): ${payLinkUrl}` : "",
     videosUrl ? `\nWatch your repair videos: ${videosUrl}` : "",

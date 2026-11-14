@@ -3174,3 +3174,37 @@ label { font-weight: 600; }
   .line-items-panel .section-heading .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
   .line-items-panel .section-heading .button-row .button { width: 100%; padding-left: 8px; padding-right: 8px; }
 }
+
+/* ---- Record payment (sidebar) + invoice payment rows ---- */
+.ro-status-row > strong.is-paid { color: var(--success-text); }
+.ro-status-row > strong.is-partial { color: var(--warn-text); }
+.payment-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.payment-list li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+.payment-what { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.payment-what strong { font-size: 13.5px; font-weight: 600; }
+.payment-what small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.payment-amount { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
+.payment-remove { flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.payment-remove:hover { background: var(--panel-header); color: var(--danger-text, #b42318); }
+.payment-balance { display: flex; align-items: baseline; justify-content: space-between; padding: 2px 2px 0; font-size: 14px; }
+.payment-balance span { color: var(--muted); font-size: 13px; }
+.payment-balance strong { font-size: 17px; font-variant-numeric: tabular-nums; color: var(--warn-text); }
+.payment-balance.is-zero strong { color: var(--success-text); }
+.payment-form { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.payment-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.payment-methods { display: flex; }
+.payment-methods button { flex: 1; padding: 7px 6px; }
+.payment-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.payment-received-row span, .payment-received-row strong { font-weight: 500; }
+.section-hint { color: var(--muted); font-size: 13px; padding-top: 4px; white-space: nowrap; }
+.vehicle-pick-help { margin: 0 0 12px; }
+
+/* ---- Text the estimate ---- */
+.send-ways { display: flex; margin-bottom: 14px; }
+.send-ways button { flex: 1; }
+.text-link-box { display: flex; flex-direction: column; gap: 10px; }
+.text-link-box textarea { min-height: 96px; resize: vertical; font: inherit; }
+.text-link-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.text-link-actions .button { flex: 1 1 auto; text-align: center; }
+.send-panel input[type="tel"], .send-panel textarea { width: 100%; margin-top: 6px; font-size: 16px; }
+.text-link-box .send-panel-note { margin: 0; }
