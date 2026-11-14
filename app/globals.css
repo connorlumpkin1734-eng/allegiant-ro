@@ -2896,3 +2896,24 @@ select option { background-color: var(--panel); color: var(--ink); }
   .customer-list-table .customer-cell-phone, .customer-list-table .customer-cell-email, .customer-list-table .customer-cell-vehicles { grid-column: 1 / -1; color: var(--muted); font-size: 13.5px; max-width: none; }
   .customer-list-table .customer-cell-count { display: none; }
 }
+
+/* ==== Redesign: Customer profile ==== */
+.profile-heading h1 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.profile-archived { font-size: 12px; }
+.profile-heading .button-row { align-items: center; }
+.details-list dt, .profile-vehicle-card dt { font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.details-list dd, .profile-vehicle-card dd { font-weight: 500; }
+.details-list > div, .profile-vehicle-card dl > div { grid-template-columns: 110px minmax(0, 1fr); }
+.customer-summary-panel h2 { font-size: 16px; }
+.profile-vehicle-card { background: var(--panel); border-radius: 12px; }
+.profile-vehicle-card h3 { font-weight: 600; }
+.profile-vehicle-card dl { gap: 8px; }
+.profile-history-wrap { margin: 0 -22px -22px; border-top: 1px solid var(--line); }
+.profile-history-table th:first-child, .profile-history-table td:first-child { padding-left: 22px; }
+.profile-history-table th:last-child, .profile-history-table td:last-child { padding-right: 22px; }
+.history-filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.history-filters select { width: auto; min-width: 200px; }
+@media (max-width: 760px) {
+  .profile-history-wrap { margin: 0; border-top: 0; }
+  .profile-vehicle-grid { grid-template-columns: 1fr; }
+}

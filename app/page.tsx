@@ -6459,24 +6459,23 @@ function CustomerProfile({
 
   return (
     <section>
-      <div className="page-heading">
+      <div className="page-heading profile-heading">
         <div>
-          <button className="back-link" onClick={onBack}>← All customers</button>
-          <h1>{customer.name}</h1>
-          <p>Customer profile, vehicles, and full repair-order history.</p>
+          <button className="back-link" onClick={onBack}>← Customers</button>
+          <h1>{customer.name}{customer.archived_at && <span className="badge archived profile-archived">Archived</span>}</h1>
+          <p>{[customer.phone, customer.email].filter(Boolean).join(" · ") || "No phone or email on file"}</p>
         </div>
         <div className="button-row">
           <button className="button primary" onClick={() => onNew(customer.id, "")} disabled={Boolean(customer.archived_at)}>
-            + New Repair Order
+            + New repair order
           </button>
-          <button className="button ghost" onClick={() => onArchive(customer)}>
-            {customer.archived_at ? "Restore customer" : "Archive customer"}
-          </button>
-          {allHistory.length === 0 && (
-            <button className="button danger" onClick={() => onDelete(customer)}>
-              Delete customer
-            </button>
-          )}
+          <MoreMenu
+            ariaLabel={`More actions for ${customer.name}`}
+            items={[
+              { label: customer.archived_at ? "Restore customer" : "Archive customer", onClick: () => onArchive(customer) },
+              allHistory.length === 0 && { label: "Delete customer", danger: true, onClick: () => onDelete(customer) },
+            ]}
+          />
         </div>
       </div>
 
@@ -6497,7 +6496,6 @@ function CustomerProfile({
             <div className="section-heading">
               <div>
                 <h2>Vehicles</h2>
-                <p className="muted">Start a new repair order directly on the correct vehicle.</p>
               </div>
             </div>
             <div className="profile-vehicle-grid">
@@ -6520,7 +6518,7 @@ function CustomerProfile({
                       <div><dt>History</dt><dd>{vehicleHistory.length} repair order{vehicleHistory.length === 1 ? "" : "s"}</dd></div>
                     </dl>
                     <button className="button small secondary" onClick={() => onNew(customer.id, vehicle.id)} disabled={Boolean(customer.archived_at)}>
-                      + New Repair Order for This Vehicle
+                      + New repair order on this vehicle
                     </button>
                   </article>
                 );
@@ -6533,7 +6531,6 @@ function CustomerProfile({
             <div className="section-heading wrap">
               <div>
                 <h2>Service history</h2>
-                <p className="muted">Every past repair order for this customer, newest first.</p>
               </div>
               <div className="history-filters">
                 <select value={vehicleFilter} onChange={(event) => setVehicleFilter(event.target.value)}>
@@ -6550,36 +6547,49 @@ function CustomerProfile({
                 </label>
               </div>
             </div>
-            <div className="table-wrap">
-              <table>
+            <div className="table-wrap profile-history-wrap">
+              <table className="ro-list-table profile-history-table">
                 <thead>
                   <tr>
                     <th>RO</th>
-                    <th>Date</th>
                     <th>Vehicle</th>
-                    <th>Requested work</th>
                     <th>Stage</th>
-                    <th>Total</th>
-                    <th></th>
+                    <th className="ro-cell-total">Total</th>
+                    <th>Opened</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {history.map((ro) => (
-                    <tr key={ro.id} className={ro.archived_at ? "archived-row" : ""}>
-                      <td className="ro-number">#{padRo(ro.ro_number)}</td>
-                      <td>{new Date(ro.created_at).toLocaleDateString()}</td>
-                      <td>{[ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "—"}</td>
-                      <td className="history-description">{[...(ro.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order).map((line) => line.concern).filter(Boolean).join(" · ") || ro.customer_concern || "—"}</td>
-                      {/* Same stage names as the repair order list. */}
-                      <td><span className={`stage-pill stage-${stageOfRo(ro)}`}>{RO_STAGE_LABEL[stageOfRo(ro)]}</span></td>
-                      <td>{money(repairOrderTotal(ro))}</td>
-                      <td className="actions-cell profile-actions-cell">
-                        <button className="button small secondary" onClick={() => onOpenRo(ro.id, stageOfRo(ro) === "invoiced" || stageOfRo(ro) === "paid" ? "invoice" : "work_order")}>Open</button>
-                      </td>
-                    </tr>
-                  ))}
+                  {history.map((ro) => {
+                    const stage = stageOfRo(ro);
+                    const open = () => onOpenRo(ro.id, stage === "invoiced" || stage === "paid" ? "invoice" : "work_order");
+                    const work = [...(ro.concern_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order).map((line) => line.concern).filter(Boolean).join(" · ") || ro.customer_concern || "";
+                    return (
+                      <tr
+                        key={ro.id}
+                        className={`ro-row${ro.archived_at ? " archived-row" : ""}`}
+                        tabIndex={0}
+                        onClick={open}
+                        onKeyDown={(event) => { if (event.key === "Enter") open(); }}
+                        aria-label={`Open RO ${padRo(ro.ro_number)}`}
+                      >
+                        <td className="ro-cell-number" data-label="RO">#{padRo(ro.ro_number)}</td>
+                        <td className="ro-cell-vehicle" data-label="Vehicle">
+                          <strong>{[ro.vehicles?.year, ro.vehicles?.make, ro.vehicles?.model].filter(Boolean).join(" ") || "No vehicle"}</strong>
+                          {work && <span className="ro-cell-concern">{work}</span>}
+                        </td>
+                        <td className="ro-cell-stage" data-label="Stage">
+                          <div className="badge-row">
+                            <span className={`stage-pill stage-${stage}`}>{RO_STAGE_LABEL[stage]}</span>
+                            {ro.archived_at && <span className="badge archived">Archived</span>}
+                          </div>
+                        </td>
+                        <td className="ro-cell-total" data-label="Total">{money(repairOrderTotal(ro))}</td>
+                        <td className="ro-cell-date" data-label="Opened">{new Date(ro.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</td>
+                      </tr>
+                    );
+                  })}
                   {!history.length && (
-                    <tr><td colSpan={7} className="empty-state">No repair orders match this filter.</td></tr>
+                    <tr className="ro-empty"><td colSpan={5} className="empty-state">No repair orders match this filter.</td></tr>
                   )}
                 </tbody>
               </table>
