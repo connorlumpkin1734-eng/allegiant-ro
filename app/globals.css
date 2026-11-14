@@ -3052,3 +3052,6 @@ label { font-weight: 600; }
 .payment-toggle button { flex: 1; }
 .payment-toggle button.active.is-paid { background: var(--success); color: var(--success-on); }
 .ro-status-box .sidebar-help { margin: 0; font-size: 12.5px; }
+.ro-status-row > span { flex: 0 0 74px; }
+.ro-status-row .button { white-space: nowrap; flex: 0 0 auto; }
+.payment-toggle button { padding: 6px 10px; }
