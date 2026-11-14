@@ -3040,3 +3040,15 @@ label { font-weight: 600; }
   .line-move-buttons { order: 4; }
   .concern-line-header > .more-menu { order: 5; }
 }
+
+/* ==== Sidebar: RO open/closed + payment ==== */
+.ro-status-box { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-header); }
+.ro-status-row { display: flex; align-items: center; gap: 10px; }
+.ro-status-row > span { flex: 0 0 96px; color: var(--muted); font-size: 13px; }
+.ro-status-row > strong { flex: 1 1 auto; font-size: 14px; font-weight: 600; }
+.ro-status-row > strong.is-open { color: var(--warn-text); }
+.ro-status-row > strong.is-closed { color: var(--ink); }
+.payment-toggle { flex: 1 1 auto; }
+.payment-toggle button { flex: 1; }
+.payment-toggle button.active.is-paid { background: var(--success); color: var(--success-on); }
+.ro-status-box .sidebar-help { margin: 0; font-size: 12.5px; }

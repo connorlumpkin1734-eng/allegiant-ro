@@ -3722,7 +3722,7 @@ function RepairOrderEditor({
   const [mileageOut, setMileageOut] = useState(initialRo?.mileage_out?.toString() ?? "");
   const [concern, setConcern] = useState(initialRo?.customer_concern ?? "");
   const [notes, setNotes] = useState(initialRo?.notes ?? "");
-  const [paid, setPaid] = useState(initialRo?.paid ?? false);
+  const [paid] = useState(initialRo?.paid ?? false);
   const [taxRate, setTaxRate] = useState(Number(initialRo?.tax_rate ?? settings.sales_tax_rate));
   const [showTaxRate, setShowTaxRate] = useState(false);
   const [items, setItems] = useState<LineItem[]>(() =>
@@ -4447,6 +4447,8 @@ function RepairOrderEditor({
       afterWrite?: () => Promise<boolean>;
       /** Save even though someone else changed the RO since it was opened. */
       overrideConflict?: boolean;
+      /** Mark paid / unpaid in the same save (the sidebar's Payment switch). */
+      paid?: boolean;
     } = {}
   ) {
     if (initialRo && canWrite && !options.overrideConflict) {
@@ -4603,8 +4605,8 @@ function RepairOrderEditor({
         mileage_out: parseMiles(mileageOut),
         customer_concern: valueOrNull(concern),
         notes: valueOrNull(notes),
-        paid,
-        paid_at: paid ? initialRo?.paid_at || new Date().toISOString() : null,
+        paid: options.paid ?? paid,
+        paid_at: (options.paid ?? paid) ? initialRo?.paid_at || new Date().toISOString() : null,
         tax_rate: taxRate,
       };
 
@@ -4740,17 +4742,41 @@ function RepairOrderEditor({
   // One-person shop (team features off): no tech hand-off and no per-job Done to tick off.
   const soloShop = !settings.team_features_enabled;
   const allApprovedWorkDone = workableJobs.length > 0 && (soloShop || workableJobs.every((group) => group.items.every((item) => item.job_progress === "done")));
-  async function closeAndInvoice() {
-    if (!initialRo) return;
+  /** Anything that has to be settled before an RO can close; says what and returns true if so. */
+  function closingBlocked(): boolean {
     if (pendingRecs > 0) {
       notify(`Price or delete the tech's recommendation${pendingRecs === 1 ? "" : "s"} before closing.`, "error");
-      return;
+      return true;
     }
     if (awaitingOk.length) {
       notify(`${awaitingOk.map(jobTitle).join(", ")} still ${awaitingOk.length === 1 ? "needs" : "need"} the customer's OK. Send the estimate, set it to Approved if they said yes, or delete it.`, "error");
-      return;
+      return true;
     }
+    return false;
+  }
+  async function closeAndInvoice() {
+    if (!initialRo || closingBlocked()) return;
     await save(undefined, false, { status: "completed", openSend: "invoice", doneMessage: `RO #${padRo(initialRo.ro_number)} closed. Send the invoice when you're ready.` });
+  }
+  /** Sidebar "Close RO": close it without opening the send panel (optionally marking it paid too). */
+  async function closeRo(markPaid = false) {
+    if (!initialRo || closingBlocked()) return;
+    await save(undefined, false, {
+      status: "completed",
+      ...(markPaid ? { paid: true } : {}),
+      doneMessage: markPaid
+        ? `RO #${padRo(initialRo.ro_number)} closed and marked paid.`
+        : `RO #${padRo(initialRo.ro_number)} closed. Send or print the invoice when you're ready.`,
+    });
+  }
+  /** Sidebar Payment switch. Paid on an open RO closes it too: you can't be paid for an open job. */
+  async function setPaymentStatus(next: boolean) {
+    if (!initialRo || next === Boolean(initialRo.paid)) return;
+    if (next && initialRo.status !== "completed") { await closeRo(true); return; }
+    await save(undefined, false, {
+      paid: next,
+      doneMessage: next ? `RO #${padRo(initialRo.ro_number)} marked paid.` : `RO #${padRo(initialRo.ro_number)} marked unpaid.`,
+    });
   }
   async function reopenRo() {
     if (!initialRo) return;
@@ -5602,16 +5628,32 @@ function RepairOrderEditor({
               <NumberInput value={taxRate} maxDecimals={3} onChange={setTaxRate} />
             </label>
           )}
-          {workspaceTab === "invoice" ? (
-            <>
-              <label className="checkbox-row invoice-paid-toggle">
-                <input type="checkbox" checked={paid} onChange={(event) => setPaid(event.target.checked)} />
-                Mark invoice paid
-              </label>
-              <p className="sidebar-help">The paid date is recorded automatically when this is saved.</p>
-            </>
+          {initialRo && initialRo.status !== "voided" ? (
+            <section className="ro-status-box" aria-label="Repair order status and payment">
+              <div className="ro-status-row">
+                <span>Repair order</span>
+                <strong className={initialRo.status === "completed" ? "is-closed" : "is-open"}>{initialRo.status === "completed" ? "Closed" : "Open"}</strong>
+                {initialRo.status === "completed"
+                  ? <button type="button" className="button small ghost" onClick={() => void reopenRo()}>Reopen</button>
+                  : <button type="button" className="button small secondary" onClick={() => void closeRo()}>Close RO</button>}
+              </div>
+              <div className="ro-status-row">
+                <span>Payment</span>
+                <div className="segmented payment-toggle" role="group" aria-label="Payment status">
+                  <button type="button" aria-pressed={!initialRo.paid} className={!initialRo.paid ? "active" : ""} onClick={() => void setPaymentStatus(false)}>Unpaid</button>
+                  <button type="button" aria-pressed={Boolean(initialRo.paid)} className={initialRo.paid ? "active is-paid" : ""} onClick={() => void setPaymentStatus(true)}>Paid</button>
+                </div>
+              </div>
+              <p className="sidebar-help">
+                {initialRo.paid && initialRo.paid_at
+                  ? `Paid ${new Date(initialRo.paid_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.`
+                  : initialRo.status === "completed"
+                    ? "Card, bank and confirmed Zelle payments mark it paid on their own. Use Paid for cash or check."
+                    : "Marking it paid also closes the RO. Either one saves your other changes too."}
+              </p>
+            </section>
           ) : (
-            <p className="sidebar-help">Use Send estimate at the top to email pricing to the customer. Payment status lives under Invoice.</p>
+            <p className="sidebar-help">Save this RO to close it or record payment.</p>
           )}
           <div className="totals-box">
             <div><span>Subtotal</span><strong>{money(displayedTotals.subtotal)}</strong></div>
