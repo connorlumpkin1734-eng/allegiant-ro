@@ -524,6 +524,27 @@ function roundCents(value: number): number {
 // own, red errors stay until closed.
 type ToastKind = "success" | "error" | "info";
 type Toast = { id: number; text: string; kind: ToastKind };
+/**
+ * Set by a screen that's holding edits nobody has saved. Anything a person clicks to leave that
+ * screen (top bar, Back, an alert) asks it first; it returns false to stay put.
+ */
+let unsavedGuard: (() => boolean) | null = null;
+function okToLeave(): boolean { return unsavedGuard ? unsavedGuard() : true; }
+/** While `dirty`, warn before leaving the screen or closing the tab. */
+function useUnsavedGuard(dirty: boolean, what: string) {
+  useEffect(() => {
+    if (!dirty) return;
+    const guard = () => window.confirm(`You have changes to ${what} that aren't saved yet.\n\nOK: leave and lose them.\nCancel: stay here so you can save.`);
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    unsavedGuard = guard;
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => {
+      if (unsavedGuard === guard) unsavedGuard = null;
+      window.removeEventListener("beforeunload", beforeUnload);
+    };
+  }, [dirty, what]);
+}
+
 let toastList: Toast[] = [];
 let toastSeq = 0;
 const toastListeners = new Set<(toasts: Toast[]) => void>();
@@ -1680,7 +1701,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const [editorDocMode, setEditorDocMode] = useState<DocumentMode>("estimate");
   const [autoPrint, setAutoPrint] = useState(false);
   // After Close & invoice the editor reopens with the Send invoice panel up.
-  const [pendingSend, setPendingSend] = useState<"invoice" | null>(null);
+  const [pendingSend, setPendingSend] = useState<"estimate" | "invoice" | null>(null);
   const [editorReturnView, setEditorReturnView] = useState<"dashboard" | "customer_profile">("dashboard");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useToastMessage("error");
@@ -2174,6 +2195,7 @@ function RepairOrderApp({ user }: { user: User }) {
   };
 
   const returnFromEditor = () => {
+    if (!okToLeave()) return;
     // Some edits save the moment they're tapped (assigning a tech, marking a job done), so the list
     // behind the editor can be stale even when nothing was "saved".
     void loadData(false);
@@ -2203,7 +2225,7 @@ function RepairOrderApp({ user }: { user: User }) {
   return (
     <div className="app-shell">
       <header className="topbar no-print">
-        <button className="brand-button" type="button" onClick={() => setView("dashboard")}>
+        <button className="brand-button" type="button" onClick={() => { if (okToLeave()) setView("dashboard"); }}>
           {logoPublicUrl(settings.logo_path) ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -2220,26 +2242,26 @@ function RepairOrderApp({ user }: { user: User }) {
           )}
         </button>
         <nav>
-          <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
+          <button className={view === "dashboard" ? "active" : ""} onClick={() => { if (okToLeave()) setView("dashboard"); }}>
             {isTechnicianOnly ? (leadTeamId ? "Team jobs" : "My jobs") : "Repair orders"}
           </button>
           {currentStaff && (
-            <button className={view === "my_stats" ? "active" : ""} onClick={() => setView("my_stats")}>
+            <button className={view === "my_stats" ? "active" : ""} onClick={() => { if (okToLeave()) setView("my_stats"); }}>
               My stats
             </button>
           )}
           {!isTechnicianOnly && (
-            <button className={view === "customers" || view === "customer_profile" ? "active" : ""} onClick={() => setView("customers")}>
+            <button className={view === "customers" || view === "customer_profile" ? "active" : ""} onClick={() => { if (okToLeave()) setView("customers"); }}>
               Customers
             </button>
           )}
           {isAdminAccess && (
-            <button className={view === "reports" ? "active" : ""} onClick={() => { setReportsTab("sales"); setView("reports"); }}>
+            <button className={view === "reports" ? "active" : ""} onClick={() => { if (!okToLeave()) return; setReportsTab("sales"); setView("reports"); }}>
               Reports
             </button>
           )}
           {isAdminAccess && (
-            <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
+            <button className={view === "settings" ? "active" : ""} onClick={() => { if (okToLeave()) setView("settings"); }}>
               Settings
             </button>
           )}
@@ -2248,6 +2270,7 @@ function RepairOrderApp({ user }: { user: User }) {
           <AlertBell
             userId={user.id}
             onOpenRo={(id) => {
+              if (!okToLeave()) return;
               const ro = repairOrders.find((entry) => entry.id === id);
               if (ro?.archived_at) void openDocument(id, "work_order", "dashboard");
               else void editDocument(id, "dashboard", "work_order", isTechnicianOnly ? "work_order" : "estimate");
@@ -2265,7 +2288,7 @@ function RepairOrderApp({ user }: { user: User }) {
           theme={uiTheme}
           onTheme={changeUiTheme}
           onChangePassword={() => setShowPasswordChange(true)}
-          onSignOut={() => void supabase.auth.signOut()}
+          onSignOut={() => { if (okToLeave()) void supabase.auth.signOut(); }}
         />
       </header>
       {showPasswordChange && (
@@ -2380,7 +2403,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onDocModeChange={setEditorDocMode}
             initialSend={pendingSend}
             onInitialSendShown={() => setPendingSend(null)}
-            onInspection={editingRo ? () => openInspection(editingRo.id, "editor") : undefined}
+            onInspection={editingRo ? () => { if (okToLeave()) void openInspection(editingRo.id, "editor"); } : undefined}
             onCancel={returnFromEditor}
             onDelete={editingRo && !isTechnicianOnly ? () => deleteRo(editingRo) : undefined}
             onBackgroundRefresh={() => void loadData(false)}
@@ -2405,6 +2428,8 @@ function RepairOrderApp({ user }: { user: User }) {
             onOpenCustomer={openCustomer}
             onArchive={toggleArchiveCustomer}
             onDelete={deleteCustomer}
+            ownerId={ownerId}
+            onCreated={canWrite ? async (customer) => { await loadData(false); openCustomer(customer); } : undefined}
           />
         ) : view === "customer_profile" && selectedCustomer ? (
           <CustomerProfile
@@ -2443,10 +2468,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onStripeOAuthCodeHandled={() => setStripeOAuthCode(null)}
             stripeReturnPending={stripeReturnPending}
             onStripeReturnHandled={() => setStripeReturnPending(false)}
-            onSaved={async () => {
-              await loadData();
-              setView("dashboard");
-            }}
+            onSaved={() => void loadData(false)}
             onStripeStatusChanged={() => void loadData(false)}
           />
         ) : view === "inspection" && selectedRo ? (
@@ -3168,7 +3190,7 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
 
         <div className="form-grid two">
           <label className="span-two">Shop name *
-            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Smith's Auto Repair" />
+            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Smith's Auto Repair" />
           </label>
           <div className="span-two shop-setup-logo">
             <span className="shop-setup-logo-label">Logo <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></span>
@@ -3202,13 +3224,13 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
             <small className="muted">Goes on your estimates, invoices and customer emails. No logo? Your shop name prints instead.</small>
           </div>
           <label>Phone *
-            <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="214-555-0100" />
+            <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="e.g. 214-555-0100" />
           </label>
           <label>Email customers can reply to
             <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
           </label>
           <label className="span-two">Street address
-            <input value={street} onChange={(event) => setStreet(event.target.value)} placeholder="123 Main St" />
+            <input value={street} onChange={(event) => setStreet(event.target.value)} placeholder="e.g. 123 Main St" />
           </label>
           <label>City
             <input value={city} onChange={(event) => setCity(event.target.value)} />
@@ -3222,7 +3244,7 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
             </label>
           </div>
           <label className="span-two">Hours <span className="muted" style={{ fontWeight: 400 }}>(optional)</span>
-            <input value={hours} onChange={(event) => setHours(event.target.value)} placeholder="Mon–Fri 8–5" />
+            <input value={hours} onChange={(event) => setHours(event.target.value)} placeholder="e.g. Mon–Fri 8–5" />
           </label>
           <label>Labor rate ($ per hour) *
             <input inputMode="decimal" value={laborRate} onChange={(event) => setLaborRate(event.target.value)} />
@@ -3672,7 +3694,7 @@ function RepairOrderEditor({
   onDocModeChange?: (mode: DocumentMode) => void;
   onInspection?: () => void;
   onCancel: () => void;
-  onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode, print?: boolean, openSend?: "invoice") => void;
+  onSaved: (id: string, tab: WorkspaceTab, previewMode?: DocumentMode, print?: boolean, openSend?: "estimate" | "invoice") => void;
   onDelete?: () => void;
 }) {
   const canWrite = shopCanWrite(settings);
@@ -3780,6 +3802,19 @@ function RepairOrderEditor({
   // Dispatch picks on a brand-new RO, saved with it (an existing RO saves dispatch as you click).
   const [dispatchDraft, setDispatchDraft] = useState<DispatchDraft>({ teamId: null, techIds: [] });
   const [busy, setBusy] = useState(false);
+  // ---- Unsaved changes ----
+  // Everything Save writes, minus what saves the moment it's tapped (a job's shop-floor progress).
+  const editSnapshot = {
+    customer: selectedCustomerId, vehicle: selectedVehicleId, customerForm, vehicleForm,
+    mileageIn, mileageOut, concern, notes, taxRate: Number(taxRate), invoiceOverrides,
+    lines: concernLines.map((line) => ({ id: line.id, kind: line.kind, priority: line.priority ?? null, concern: line.concern ?? "", cause: line.cause ?? "", correction: line.correction ?? "" })),
+    items: items.map((item) => ({ ...item, job_progress: undefined, sort_order: undefined })),
+  };
+  const [savedSnapshot, setSavedSnapshot] = useState(editSnapshot);
+  const dirty = useMemo(() => JSON.stringify(editSnapshot) !== JSON.stringify(savedSnapshot),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedCustomerId, selectedVehicleId, customerForm, vehicleForm, mileageIn, mileageOut, concern, notes, taxRate, invoiceOverrides, concernLines, items, savedSnapshot]);
+  useUnsavedGuard(dirty, initialRo ? "this repair order" : "this new repair order");
   const [vinBusy, setVinBusy] = useState(false);
   const vinPhotoRef = useRef<HTMLInputElement>(null);
   const vinVideoRef = useRef<HTMLVideoElement>(null);
@@ -4238,6 +4273,10 @@ function RepairOrderEditor({
     ]);
     const failed = jobResult.error || lineResult.error;
     if (failed) { setMessage(`Couldn't save the job status: ${failed.message}`); return; }
+    if (progress === "done" && savedLine) {
+      const savedCorrection = savedLine.correction ?? "";
+      setSavedSnapshot((current) => ({ ...current, lines: current.lines.map((entry) => (entry.id === savedLine.id ? { ...entry, correction: savedCorrection } : entry)) }));
+    }
     toastList = toastList.filter((toast) => toast.kind !== "error"); emitToasts();
     // Marking the last approved job Done moves the RO to "Ready for advisor" on its own (a database
     // rule does it, and alerts the advisor). Pick that up here so the screen matches.
@@ -4444,7 +4483,7 @@ function RepairOrderEditor({
     previewMode?: DocumentMode,
     print = false,
     options: {
-      status?: "open" | "completed"; openSend?: "invoice"; doneMessage?: string;
+      status?: "open" | "completed"; openSend?: "estimate" | "invoice"; doneMessage?: string;
       /** Runs after everything is written, before the editor reloads (e.g. the hand-off to the advisor). */
       afterWrite?: () => Promise<boolean>;
       /** Save even though someone else changed the RO since it was opened. */
@@ -4785,25 +4824,63 @@ function RepairOrderEditor({
     if (!window.confirm("Reopen this RO? It goes back to the shop and comes off Invoiced until you close it again.")) return;
     await save(undefined, false, { status: "open", doneMessage: `RO #${padRo(initialRo.ro_number)} reopened.` });
   }
+  // ---- "Next step": one plain sentence saying what this RO is waiting on ----
+  const listTitles = (groups: Array<{ items: LineItem[] }>) => {
+    const names = groups.map(jobTitle);
+    return names.length <= 2 ? names.join(" and ") : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
+  };
+  const waitingOnParts = workableJobs.filter((group) => group.items.some((item) => item.job_progress === "waiting_parts"));
+  const doneJobCount = workableJobs.filter((group) => group.items.every((item) => item.job_progress === "done")).length;
+  const nextStep: { tone: "go" | "wait" | "done"; title: string; text: string } | null = isTechnician
+    ? null
+    : !initialRo
+      ? { tone: "go", title: "Start here", text: "Pick the customer and vehicle (or type a new one), write what they want on Line A, then save. You can price it now or come back to it." }
+    : stage === "voided"
+      ? null
+    : stage === "paid"
+      ? { tone: "done", title: "Paid", text: "Nothing left to do. Print the invoice if the customer wants a copy." }
+    : stage === "invoiced"
+      ? { tone: "go", title: "Get paid", text: "Send the invoice so the customer can pay online, or switch Payment to Paid when they pay at the counter." }
+    : pendingRecs > 0
+      ? { tone: "go", title: `Price ${pendingRecs === 1 ? "the tech's recommendation" : `${pendingRecs} tech recommendations`}`, text: `${stage === "ready" ? "The approved work is done, and the tech found more. " : ""}Add labor and parts to ${pendingRecs === 1 ? "it" : "each one"} below, set ${pendingRecs === 1 ? "it" : "them"} to Needs customer OK, then send the estimate. Not worth quoting? Delete ${pendingRecs === 1 ? "it" : "them"}.` }
+    : serviceGroups.length === 0
+      ? { tone: "go", title: "Add the work", text: "Write what the customer wants on a line below, then use + Add job (or + Canned job) under it for the labor and parts." }
+    : awaitingOk.length > 0 && authorizationStatus !== "sent"
+      ? { tone: "go", title: "Send the estimate", text: `${listTitles(awaitingOk)} ${awaitingOk.length === 1 ? "needs" : "need"} the customer's OK. Send the estimate so they can approve online. Already said yes? Set the job to Approved.` }
+    : awaitingOk.length > 0
+      ? { tone: "wait", title: "Waiting on the customer", text: `The estimate is out for ${listTitles(awaitingOk)}. You'll get an alert when they answer. Said yes by phone? Set the job to Approved.` }
+    : workableJobs.length === 0
+      ? { tone: "go", title: "Nothing approved", text: "Every job on this RO was declined. Add other work, or use Close RO on the right to finish it out." }
+    : allApprovedWorkDone
+      ? { tone: "go", title: "Close & invoice", text: soloShop ? "When the work is finished, close the RO to make the invoice." : "All approved work is done. Look over what was done on each line, then close the RO to make the invoice." }
+    : waitingOnParts.length > 0
+      ? { tone: "wait", title: "Waiting on parts", text: `${listTitles(waitingOnParts)} ${waitingOnParts.length === 1 ? "is" : "are"} waiting on parts. ${doneJobCount} of ${workableJobs.length} approved job${workableJobs.length === 1 ? "" : "s"} done.` }
+      : { tone: "wait", title: "In the shop", text: `${doneJobCount} of ${workableJobs.length} approved job${workableJobs.length === 1 ? "" : "s"} done. This moves to you on its own when the last one is marked Done.` };
+
+  /** Send always goes out with what's on screen: unsaved edits are saved first. */
+  function openSend(kind: "estimate" | "invoice") {
+    if (dirty) void save(undefined, false, { openSend: kind, doneMessage: "Saved your changes first, so the customer gets the latest version." });
+    else setSendKind(kind);
+  }
   const mainAction: { label: string; onClick: () => void } | null = !initialRo || stage === "voided"
     ? null
     : isTechnician
       ? null
       : stage === "ready" && (pendingRecs > 0 || (awaitingOk.length > 0 && authorizationStatus !== "sent"))
-        ? { label: "Send estimate", onClick: () => setSendKind("estimate") }
+        ? { label: "Send estimate", onClick: () => openSend("estimate") }
       : stage === "ready"
         ? { label: "Close & invoice", onClick: () => void closeAndInvoice() }
         : stage === "invoiced"
-          ? { label: "Send invoice", onClick: () => setSendKind("invoice") }
+          ? { label: "Send invoice", onClick: () => openSend("invoice") }
           : stage === "paid"
             ? { label: "Print invoice", onClick: () => void save("invoice", true) }
             : stage === "in_shop" && (pendingRecs > 0 || (awaitingOk.length > 0 && authorizationStatus !== "sent"))
-              ? { label: "Send estimate", onClick: () => setSendKind("estimate") }
+              ? { label: "Send estimate", onClick: () => openSend("estimate") }
               : stage === "in_shop" && allApprovedWorkDone && awaitingOk.length === 0
                 ? { label: "Close & invoice", onClick: () => void closeAndInvoice() }
                 : stage === "in_shop"
               ? { label: "Print repair order", onClick: () => void save("work_order", true) }
-              : { label: "Send estimate", onClick: () => setSendKind("estimate") };
+              : { label: "Send estimate", onClick: () => openSend("estimate") };
 
   const soloShopForJobs = !settings.team_features_enabled;
   const renderJob = (group: { id: string; items: LineItem[] }, label: string) => {
@@ -5012,7 +5089,6 @@ function RepairOrderEditor({
           customerName={customerForm.name}
           customerEmail={customerForm.email}
           hasInspection={hasInspection}
-          savedVersionNote
           onClose={() => setSendKind(null)}
           onSent={(sentTo, savedToCustomer) => {
             if (savedToCustomer) setCustomerForm((current) => ({ ...current, email: sentTo }));
@@ -5052,7 +5128,7 @@ function RepairOrderEditor({
             )}
             {!isTechnician && (
               <MoreMenu items={[
-                mainAction?.label !== "Send estimate" && stage !== "voided" && { label: "Send estimate", onClick: () => setSendKind("estimate") },
+                mainAction?.label !== "Send estimate" && stage !== "voided" && { label: "Send estimate", onClick: () => openSend("estimate") },
                 { label: "Print estimate", onClick: () => void save("estimate", true) },
                 mainAction?.label !== "Print repair order" && { label: "Print repair order", onClick: () => void save("work_order", true) },
                 (stage === "invoiced" || stage === "paid") && mainAction?.label !== "Print invoice" && { label: "Print invoice", onClick: () => void save("invoice", true) },
@@ -5093,31 +5169,12 @@ function RepairOrderEditor({
       {initialRo && !isTechnician && !initialRo.paid && (
         <ZelleConfirmBanner roId={initialRo.id} onPaid={() => { reloadFromServer(); onBackgroundRefresh?.(); }} />
       )}
-      {initialRo && !isTechnician && stage === "ready" && (
-        <div className="handoff-banner">
-          <strong>The tech sent this to you.</strong>
-          <span>{pendingRecs > 0
-            ? `The approved work is done, and they found ${pendingRecs === 1 ? "one more thing" : `${pendingRecs} more things`}. Price ${pendingRecs === 1 ? "it" : "them"} below and send the estimate, or delete ${pendingRecs === 1 ? "it" : "them"} — then Close & invoice.`
-            : "All approved jobs are done. Look over the corrections, then Close & invoice."}</span>
+      {nextStep && (
+        <div className={`next-step tone-${nextStep.tone}`} role="status">
+          <span className="next-step-label">{nextStep.tone === "done" ? "Done" : nextStep.tone === "wait" ? "Status" : "Next step"}</span>
+          <strong>{nextStep.title}</strong>
+          <span className="next-step-text">{nextStep.text}</span>
         </div>
-      )}
-      {initialRo && !isTechnician && pendingRecs > 0 && (
-        <div className="handoff-banner warn">
-          <strong>{pendingRecs} tech recommendation{pendingRecs === 1 ? "" : "s"} to price.</strong>
-          <span>Set each to Needs customer OK or Approved, then send the estimate.</span>
-        </div>
-      )}
-      {initialRo && !isTechnician && pendingRecs === 0 && awaitingOk.length > 0 && (stage === "in_shop" || stage === "ready") && (
-        <div className="handoff-banner warn">
-          <strong>{awaitingOk.map(jobTitle).join(", ")} {awaitingOk.length === 1 ? "needs" : "need"} the customer&apos;s OK.</strong>
-          <span>{authorizationStatus === "sent"
-            ? "The estimate is out. You can close once they answer, or set the job to Approved if they told you yes."
-            : "Send the estimate, set the job to Approved if they already said yes, or delete it. You can close once it’s settled."}</span>
-        </div>
-      )}
-
-      {!initialRo && (
-        <div className="notice workspace-notice">Save this new repair order once before previewing or printing documents.</div>
       )}
       {/* Techs see "Approved · go ahead" on each job instead of this money panel. */}
       {!isTechnician && hasCustomerAuthorizationResponse && currentAuthorization && (
@@ -5159,7 +5216,7 @@ function RepairOrderEditor({
               <div className="ro-summary-head"><span>Customer</span>{!isTechnician && <button type="button" className="link-button" onClick={() => setDetailsOpen(true)}>Edit</button>}</div>
               <strong>{customerForm.name || "—"}</strong>
               {customerForm.phone && <a href={`tel:${customerForm.phone.replace(/[^\d+]/g, "")}`}>{customerForm.phone}</a>}
-              {!isTechnician && customerForm.email && <span className="muted">{customerForm.email}</span>}
+              {!isTechnician && customerForm.email && <a className="ro-summary-email" href={`mailto:${customerForm.email}`}>{customerForm.email}</a>}
             </div>
             <div className="ro-summary-card">
               <div className="ro-summary-head"><span>Vehicle</span>{!isTechnician && <button type="button" className="link-button" onClick={() => setDetailsOpen(true)}>Edit</button>}</div>
@@ -5205,15 +5262,14 @@ function RepairOrderEditor({
           <section className="panel">
             <div className="section-heading">
               <h2>Customer</h2>
-              <select value={selectedCustomerId} onChange={(event) => chooseCustomer(event.target.value)}>
-                <option value="">+ New customer</option>
-                {selectableCustomers.map((customer) => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.name}{customer.phone ? ` — ${customer.phone}` : ""}
-                  </option>
-                ))}
-              </select>
             </div>
+            <CustomerFinder
+              customers={selectableCustomers}
+              vehicles={vehicles}
+              selected={selectableCustomers.find((customer) => customer.id === selectedCustomerId) ?? null}
+              onPick={(customerId, vehicleId) => { chooseCustomer(customerId); if (vehicleId) chooseVehicle(vehicleId); }}
+              onClear={() => chooseCustomer("")}
+            />
             <div className="form-grid two">
               <label className="span-two">
                 Name
@@ -5464,14 +5520,14 @@ function RepairOrderEditor({
             const lineTotal = lineJobs.reduce((sum, group) => sum + group.items.reduce((jobSum, item) => jobSum + item.quantity * item.unit_price, 0), 0);
             const textLabel = line.kind === "request" ? "What the customer wants" : line.kind === "customer" ? "The customer's concern, in their words" : isTechnician ? "Your recommendation" : "Tech recommendation";
             const textPlaceholder = line.kind === "request"
-              ? "Customer requests oil and filter change."
+              ? "Example: Customer requests oil and filter change."
               : line.kind === "customer"
-                ? "Customer states dragging noise from under vehicle at low speeds."
-                : "Replace front brake pads and rotors";
+                ? "Example: Customer states dragging noise from under vehicle at low speeds."
+                : "Example: Replace front brake pads and rotors";
             const causeLabel = isInspection ? "Why — what you found" : "Cause — what the tech found";
             const causePlaceholder = isInspection
-              ? "Front pads measured 2mm, rotors scored below spec."
-              : "Road tested and verified noise. RF wheel bearing has excessive play.";
+              ? "Example: Front pads measured 2mm, rotors scored below spec."
+              : "Example: Road tested and verified noise. RF wheel bearing has excessive play.";
             const fieldCount = 2 + (lineHasCause(line.kind) ? 1 : 0);
             return (
               <article className={`concern-line-card ${line.kind}${collapsed ? " collapsed" : ""}`} key={line.id}>
@@ -5568,7 +5624,7 @@ function RepairOrderEditor({
                     <textarea
                       rows={2}
                       data-line-correction={line.id}
-                      placeholder={line.kind === "request" ? "Performed oil and filter change, reset maintenance reminder." : "Fill in after the work. Example: Replaced RF hub bearing, road tested, noise gone."}
+                      placeholder={line.kind === "request" ? "Fill in after the work. Example: Performed oil and filter change, reset maintenance reminder." : "Fill in after the work. Example: Replaced RF hub bearing, road tested, noise gone."}
                       value={line.correction ?? ""}
                       onChange={(event) => updateConcernLine(line.id, "correction", event.target.value)}
                     />
@@ -5707,9 +5763,20 @@ function RepairOrderEditor({
         )}
       </div>
 
-      <div className="bottom-actions workspace-bottom-actions">
-        <button className="button ghost" onClick={onCancel}>Cancel</button>
-        <button className="button primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
+      <div className="bottom-actions workspace-bottom-actions" data-dirty={dirty ? "yes" : "no"}>
+        {!isTechnician && initialRo && (
+          <button
+            type="button"
+            className="totals-jump"
+            onClick={() => document.querySelector(".totals-sidebar")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            aria-label={`Total ${money(displayedTotals.total)}. Jump to totals, payment and Close RO`}
+          >
+            <span>Total</span> <strong>{money(displayedTotals.total)}</strong>
+          </button>
+        )}
+        {dirty && <span className="unsaved-note" role="status">Unsaved changes</span>}
+        <button className="button ghost" onClick={onCancel}>{dirty ? "Discard changes" : "Back"}</button>
+        <button className="button primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : initialRo ? "Save changes" : "Save repair order"}</button>
       </div>
     </section>
   );
@@ -5836,6 +5903,8 @@ function TechnicianAssignment({
   // Team mode: that team's techs first.
   const sortedTechs = [...technicians].sort((a, b) =>
     Number(b.team_id === teamId && Boolean(teamId)) - Number(a.team_id === teamId && Boolean(teamId)) || a.name.localeCompare(b.name));
+  // A shop with no techs or teams set up has nobody to dispatch to: no empty box in the way.
+  if (!loading && !leadTeamId && technicians.length === 0 && teams.length === 0) return null;
   return (
     <section className="panel dispatch-panel">
       <div className="dispatch-heading">
@@ -5861,7 +5930,7 @@ function TechnicianAssignment({
           <div className="dispatch-techs">
             <span className="dispatch-label">Technicians</span>
             {!technicians.length ? (
-              <span className="muted">{leadTeamId ? "No other techs on your team yet. The owner adds them in Settings → Staff." : "No active technicians yet. Add them in Settings → Staff & Teams."}</span>
+              <span className="muted">{leadTeamId ? "No other techs on your team yet. The owner adds them in Settings → Staff." : "No active technicians yet. Add them in Settings → Staff."}</span>
             ) : (
               <>
               <div className="dispatch-tech-buttons">
@@ -6451,6 +6520,120 @@ function SendPanel({
 }
 
 // ---- ⋯ menu ----------------------------------------------------------------------------------
+/** Find an existing customer by name, phone, plate or VIN; or leave it and type a new one below. */
+function CustomerFinder({ customers, vehicles, selected, onPick, onClear }: {
+  customers: Customer[];
+  vehicles: Vehicle[];
+  selected: Customer | null;
+  onPick: (customerId: string, vehicleId?: string) => void;
+  onClear: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent | TouchEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("touchstart", close, { passive: true });
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("touchstart", close); };
+  }, [open]);
+  const normalized = query.trim().toLowerCase();
+  const digits = normalized.replace(/\D/g, "");
+  const matches = useMemo(() => {
+    if (!normalized) return [] as Array<{ customer: Customer; vehicle?: Vehicle; cars: Vehicle[] }>;
+    const found: Array<{ customer: Customer; vehicle?: Vehicle; cars: Vehicle[] }> = [];
+    for (const customer of customers) {
+      const cars = vehicles.filter((vehicle) => vehicle.customer_id === customer.id);
+      const byPerson = (customer.name ?? "").toLowerCase().includes(normalized)
+        || (customer.email ?? "").toLowerCase().includes(normalized)
+        || (digits.length >= 3 && (customer.phone ?? "").replace(/\D/g, "").includes(digits));
+      const car = cars.find((vehicle) => [vehicle.license_plate, vehicle.vin, [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ")]
+        .some((text) => (text ?? "").toString().toLowerCase().includes(normalized)));
+      if (byPerson || car) found.push({ customer, vehicle: byPerson ? undefined : car, cars });
+      if (found.length >= 8) break;
+    }
+    return found;
+  }, [customers, vehicles, normalized, digits]);
+  const carName = (vehicle: Vehicle) => [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") || "Vehicle";
+
+  if (selected) {
+    return (
+      <div className="customer-finder picked">
+        <span><strong>{selected.name}</strong> is already in your customers. Changes you make below update their record.</span>
+        <button type="button" className="button small ghost" onClick={() => { setQuery(""); onClear(); }}>Not them — new customer</button>
+      </div>
+    );
+  }
+  if (!customers.length) return null;
+  return (
+    <div className="customer-finder" ref={ref}>
+      <input
+        type="search"
+        className="search-input"
+        placeholder="Been here before? Search name, phone, plate or VIN"
+        aria-label="Search existing customers"
+        value={query}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+          if (event.key === "Enter" && matches.length === 1) { event.preventDefault(); setOpen(false); setQuery(""); onPick(matches[0].customer.id, matches[0].vehicle?.id); }
+        }}
+      />
+      {open && normalized && (
+        <div className="customer-finder-list" role="listbox" aria-label="Matching customers">
+          {matches.map(({ customer, vehicle, cars }) => (
+            <button key={customer.id} type="button" role="option" aria-selected="false" onClick={() => { setOpen(false); setQuery(""); onPick(customer.id, vehicle?.id ?? (cars.length === 1 ? cars[0].id : undefined)); }}>
+              <strong>{customer.name}</strong>
+              <span>{[customer.phone, vehicle ? `${carName(vehicle)}${vehicle.license_plate ? ` · ${vehicle.license_plate}` : ""}` : cars.slice(0, 2).map(carName).join(", ") + (cars.length > 2 ? ` +${cars.length - 2}` : "")].filter(Boolean).join(" · ") || "No phone or vehicle on file"}</span>
+            </button>
+          ))}
+          {!matches.length && <p className="canned-picker-empty">No match. Just fill in the boxes below to add them as a new customer.</p>}
+        </div>
+      )}
+      <p className="muted customer-finder-hint">New customer? Skip the search and fill in the boxes below.</p>
+    </div>
+  );
+}
+
+/** Customers → + New customer: just enough to get someone on file before their first RO. */
+function NewCustomerPanel({ ownerId, onClose, onCreated }: { ownerId: string; onClose: () => void; onCreated: (customer: Customer) => void }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) { setError("Enter the customer's name."); return; }
+    setBusy(true); setError("");
+    const { data, error: insertError } = await supabase.from("customers")
+      .insert({ owner_id: ownerId, name: name.trim(), phone: phone.trim() || null, email: email.trim() || null, state: "TX" })
+      .select("*").single();
+    setBusy(false);
+    if (insertError || !data) { setError(insertError?.message ?? "Couldn't add the customer."); return; }
+    notify(`${name.trim()} added.`, "success");
+    onCreated(data as Customer);
+  }
+  return (
+    <div className="send-panel-backdrop no-print" role="presentation" onClick={() => { if (!busy) onClose(); }}>
+      <form className="send-panel" role="dialog" aria-modal="true" aria-labelledby="new-customer-title" onClick={(event) => event.stopPropagation()} onSubmit={(event) => void create(event)}>
+        <h2 id="new-customer-title">New customer</h2>
+        <p className="muted">Add the vehicle when you start their first repair order.</p>
+        <label>Name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
+        <label>Phone <span className="muted" style={{ fontWeight: 400 }}>(optional)</span><input type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
+        <label>Email <span className="muted" style={{ fontWeight: 400 }}>(optional — estimates and invoices go here)</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+        {error && <div className="send-panel-error" role="alert">{error}</div>}
+        <div className="send-panel-actions">
+          <button type="button" className="button ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" className="button primary" disabled={busy}>{busy ? "Adding…" : "Add customer"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 /** "+ Canned job": search the shop's saved jobs and drop one onto this line. */
 function CannedJobPicker({ jobs, onPick }: { jobs: CannedJob[]; onPick: (job: CannedJob) => void }) {
   const [open, setOpen] = useState(false);
@@ -6723,6 +6906,8 @@ function CustomerDirectory({
   onOpenCustomer,
   onArchive,
   onDelete,
+  ownerId,
+  onCreated,
 }: {
   customers: Customer[];
   vehicles: Vehicle[];
@@ -6730,7 +6915,11 @@ function CustomerDirectory({
   onOpenCustomer: (customer: Customer) => void;
   onArchive: (customer: Customer) => void;
   onDelete: (customer: Customer) => void;
+  ownerId: string;
+  /** Set when the signed-in person may add customers (the shop isn't read-only). */
+  onCreated?: (customer: Customer) => void;
 }) {
+  const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const query = search.toLowerCase().trim();
@@ -6755,7 +6944,11 @@ function CustomerDirectory({
     <section className="customer-list-page">
       <div className="page-heading ro-list-heading">
         <h1>Customers</h1>
+        {onCreated && <button className="button primary" onClick={() => setAdding(true)}>+ New customer</button>}
       </div>
+      {adding && onCreated && (
+        <NewCustomerPanel ownerId={ownerId} onClose={() => setAdding(false)} onCreated={(customer) => { setAdding(false); onCreated(customer); }} />
+      )}
       <div className="ro-list-bar">
         <div className="ro-list-tools">
           <input
@@ -8103,6 +8296,10 @@ function SettingsPanel({
   const [form, setForm] = useState<Settings>(initialSettings);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useToastMessage();
+  // What was last saved, to know when there's something to save (and to warn before leaving).
+  const [savedForm, setSavedForm] = useState(() => JSON.stringify(initialSettings));
+  const dirty = JSON.stringify(form) !== savedForm;
+  useUnsavedGuard(dirty, "your settings");
   const savedUsername = (initialSettings.owner_username ?? "").toLowerCase();
   const typedUsername = (form.owner_username ?? "").trim().toLowerCase();
   const [usernameState, setUsernameState] = useState<"idle" | "checking" | "available" | "taken" | "invalid">("idle");
@@ -8174,6 +8371,9 @@ function SettingsPanel({
       setBusy(false);
       return;
     }
+    setSavedForm(JSON.stringify(form));
+    setBusy(false);
+    notify("Settings saved.", "success");
     onSaved();
   }
 
@@ -8215,9 +8415,16 @@ function SettingsPanel({
           <h1>Settings</h1>
           <p>Business information, branding, and default pricing.</p>
         </div>
-        <button className="button primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</button>
+        <button className="button primary" onClick={save} disabled={busy || !dirty}>{busy ? "Saving…" : dirty ? "Save settings" : "All changes saved"}</button>
       </div>
       {message && <div className="notice">{message}</div>}
+      {dirty && (
+        <div className="settings-unsaved-bar" role="status">
+          <span>You have unsaved changes.</span>
+          <button type="button" className="button small ghost" onClick={() => setForm(JSON.parse(savedForm) as Settings)} disabled={busy}>Discard</button>
+          <button type="button" className="button small primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</button>
+        </div>
+      )}
       {/* One section at a time instead of a 12-section scroll. Save covers every section. */}
       <div className="segmented settings-sections" role="tablist" aria-label="Settings section">
         {SETTINGS_SECTIONS.map((entry) => (
