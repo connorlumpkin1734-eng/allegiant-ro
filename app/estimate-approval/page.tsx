@@ -42,6 +42,8 @@ export default function EstimateApprovalPage() {
   const [token, setToken] = useState(""); const [authorization, setAuthorization] = useState<Authorization | null>(null);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({}); const [signerName, setSignerName] = useState("");
   const [consent, setConsent] = useState(false); const [message, setMessage] = useState("Loading estimate…"); const [busy, setBusy] = useState(false);
+  // Mirrors signed.current so the bottom bar can change its label once the box is signed.
+  const [hasSigned, setHasSigned] = useState(false);
   useEffect(() => {
     const linkToken = new URLSearchParams(window.location.search).get("token") || ""; setToken(linkToken);
     if (!linkToken) { setMessage("This approval link is invalid."); return; }
@@ -85,9 +87,16 @@ export default function EstimateApprovalPage() {
   const approvedTaxable = (snapshot?.items ?? []).filter((item) => (item.service_group_id ? decisions[item.service_group_id] === "approved" : approvedGroups.length > 0) && item.taxable).reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
   const approvedTotal = approvedSubtotal + Math.max(0, approvedTaxable) * (Number(snapshot?.taxRate || 0) / 100);
   function point(event: PointerEvent<HTMLCanvasElement>) { const canvas = canvasRef.current!; const rect = canvas.getBoundingClientRect(); return { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height }; }
-  function startDrawing(event: PointerEvent<HTMLCanvasElement>) { const canvas = canvasRef.current!; canvas.setPointerCapture(event.pointerId); const context = canvas.getContext("2d")!; const current = point(event); context.beginPath(); context.moveTo(current.x, current.y); drawing.current = true; signed.current = true; }
+  function startDrawing(event: PointerEvent<HTMLCanvasElement>) { const canvas = canvasRef.current!; canvas.setPointerCapture(event.pointerId); const context = canvas.getContext("2d")!; const current = point(event); context.beginPath(); context.moveTo(current.x, current.y); drawing.current = true; signed.current = true; setHasSigned(true); }
   function draw(event: PointerEvent<HTMLCanvasElement>) { if (!drawing.current) return; const context = canvasRef.current!.getContext("2d")!; const current = point(event); context.lineWidth = 3; context.lineCap = "round"; context.strokeStyle = "#102a4c"; context.lineTo(current.x, current.y); context.stroke(); }
-  function clearSignature() { canvasRef.current?.getContext("2d")?.clearRect(0, 0, 900, 220); signed.current = false; }
+  function clearSignature() { canvasRef.current?.getContext("2d")?.clearRect(0, 0, 900, 220); signed.current = false; setHasSigned(false); }
+  // A "you still need to…" note goes away as soon as they work on the signature box again.
+  const loaded = Boolean(authorization);
+  useEffect(() => { if (loaded) setMessage(""); }, [loaded, signerName, hasSigned, consent]);
+  const readyToSign = Boolean(signerName.trim()) && consent && hasSigned;
+  const missingToSign = !signerName.trim() ? "Type your full name to finish."
+    : !hasSigned ? "Sign in the box with your finger to finish."
+    : "Check the authorization box to finish.";
   async function respond() {
     if (groups.some((group) => !decisions[group.id])) { setMessage("Choose approve or decline for every service."); return; }
     if (approvedGroups.length > 0 && (!signerName.trim() || !consent || !signed.current)) { setMessage("Enter your name, sign the box, and check the authorization statement."); return; }
@@ -130,18 +139,32 @@ export default function EstimateApprovalPage() {
             ? `You declined the proposed services. ${snapshot.businessName || "The shop"} has your answer.`
             : `You approved ${money(authorization.approved_total || 0)} of work. ${snapshot.businessName || "The shop"} has been notified and will get started.`}</span>
         </div>}
-      {message && authorization.status === "sent" && <div className="notice">{message}</div>}
+      {message && authorization.status === "sent" && <div className="notice approval-message">{message}</div>}
     </>}
   </article>
     {snapshot && authorization && authorization.status === "sent" && groups.length > 0 && <div className="approval-sticky" role="status">
-        <div><span>{Object.keys(decisions).length} of {groups.length} chosen</span><strong>{money(approvedTotal)}</strong></div>
-        <button type="button" className="button primary" onClick={() => {
-          // Still deciding: jump to the next service without an answer. All answered: jump to sign.
-          const next = groups.find((group) => !decisions[group.id]);
-          (next ? document.getElementById(`job-${next.id}`) : document.querySelector(".document-terms"))?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }}>
-          {groups.some((group) => !decisions[group.id]) ? "Next service" : approvedGroups.length ? "Sign & approve" : "Submit"}
-        </button>
+        {message && <p className="approval-sticky-message">{message}</p>}
+        <div className="approval-sticky-row">
+          <div><span>{Object.keys(decisions).length} of {groups.length} chosen</span><strong>{money(approvedTotal)}</strong></div>
+          <button type="button" className="button primary" disabled={busy} onClick={() => {
+            // On a phone this bar is the only submit button, so it walks the customer through in order:
+            // next service without an answer, then the signature box, then it submits.
+            const next = groups.find((group) => !decisions[group.id]);
+            if (next) { document.getElementById(`job-${next.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+            if (approvedGroups.length > 0 && !readyToSign) {
+              document.querySelector(".document-terms")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              // Only nag once they've started on the box; the first tap just takes them there.
+              if (signerName.trim() || hasSigned || consent) setMessage(missingToSign);
+              return;
+            }
+            void respond();
+          }}>
+            {busy ? "Submitting…"
+              : groups.some((group) => !decisions[group.id]) ? "Next service"
+              : approvedGroups.length === 0 ? "Submit"
+              : readyToSign ? `Approve ${money(approvedTotal)}` : "Sign & approve"}
+          </button>
+        </div>
       </div>}
   </main>;
 }

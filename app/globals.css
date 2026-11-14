@@ -2524,7 +2524,7 @@ select option { background-color: var(--panel); color: var(--ink); }
 .approval-sticky { display: none; }
 @media (max-width: 700px) {
   .approval-shell { padding: 0; }
-  .approval-card { padding: 16px 14px 96px; border: 0; border-radius: 0; box-shadow: none; }
+  .approval-card { padding: 16px 14px 150px; border: 0; border-radius: 0; box-shadow: none; }
   .approval-service { margin: 12px 0 20px; }
   .approval-service-heading { padding: 14px; }
   .approval-service-heading h3 { font-size: 17px; }
@@ -2536,8 +2536,13 @@ select option { background-color: var(--panel); color: var(--ink); }
   .approval-card .document-charges th:nth-child(2), .approval-card .document-charges th:nth-child(3) { display: none; }
   .approval-card .document-charges .item-amount, .approval-card .document-charges th:last-child { text-align: right; white-space: nowrap; vertical-align: top; }
   .approval-card .item-meta { display: block; margin-top: 2px; color: #5b6578; font-size: 13px; }
-  .approval-sticky { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: #ffffff; border-top: 1px solid #d9dfe8; box-shadow: 0 -6px 20px rgba(15, 39, 71, 0.12); }
-  .approval-sticky > div { display: flex; flex-direction: column; line-height: 1.2; }
+  .approval-sticky { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: #ffffff; border-top: 1px solid #d9dfe8; box-shadow: 0 -6px 20px rgba(15, 39, 71, 0.12); }
+  .approval-sticky-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .approval-sticky-row > div { display: flex; flex-direction: column; line-height: 1.2; }
+  .approval-sticky-message { margin: 0; padding: 8px 10px; border-radius: 8px; background: #fff4e5; color: #7a4a00; font-size: 14px; font-weight: 700; }
+  /* The bar is the submit button on a phone; a second one hidden under it only confused people. */
+  .approval-card .approval-submit { display: none; }
+  .approval-card > .approval-message { display: none; }
   .approval-sticky span { color: #5b6578; font-size: 13px; font-weight: 700; }
   .approval-sticky strong { font-size: 20px; color: #1b2333; }
   .approval-sticky .button { min-height: 48px; padding: 0 20px; font-size: 16px; }
