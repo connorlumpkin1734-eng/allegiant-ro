@@ -6331,41 +6331,42 @@ function CustomerDirectory({
   });
 
   return (
-    <section>
-      <div className="page-heading">
-        <div>
-          <h1>Customers & Vehicles</h1>
-          <p>Click a customer to see every saved vehicle and their complete service history.</p>
+    <section className="customer-list-page">
+      <div className="page-heading ro-list-heading">
+        <h1>Customers</h1>
+      </div>
+      <div className="ro-list-bar">
+        <div className="ro-list-tools">
+          <input
+            className="search-input"
+            type="search"
+            placeholder="Search name, phone, VIN, plate, vehicle…"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </div>
+        <div className="stage-chips" role="group" aria-label="Which customers">
+          <button type="button" className={`stage-chip${!showArchived ? " active" : ""}`} aria-pressed={!showArchived} onClick={() => setShowArchived(false)}>
+            Active <span className="stage-chip-count">{customers.length - archivedCount}</span>
+          </button>
+          {(archivedCount > 0 || showArchived) && (
+            <button type="button" className={`stage-chip${showArchived ? " active" : ""}`} aria-pressed={showArchived} onClick={() => setShowArchived(true)}>
+              Include archived <span className="stage-chip-count">{archivedCount}</span>
+            </button>
+          )}
         </div>
       </div>
-      <div className="panel toolbar toolbar-between">
-        <input
-          className="search-input"
-          placeholder="Search name, phone, VIN, plate, vehicle…"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        <label className="checkbox-row archive-toggle">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(event) => setShowArchived(event.target.checked)}
-          />
-          Show archived ({archivedCount})
-        </label>
-      </div>
-      <div className="panel">
+      <div className="panel ro-list-panel">
         <div className="table-wrap">
-          <table>
+          <table className="ro-list-table customer-list-table">
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Contact</th>
-                <th>Address</th>
+                <th>Phone</th>
+                <th>Email</th>
                 <th>Vehicles</th>
-                <th>ROs</th>
-                <th></th>
-                <th></th>
+                <th className="ro-cell-total">ROs</th>
+                <th aria-label="Actions"></th>
               </tr>
             </thead>
             <tbody>
@@ -6376,40 +6377,47 @@ function CustomerDirectory({
                   .slice(0, 2)
                   .map((vehicle) => [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") || "Vehicle")
                   .join(", ");
+                const address = addressText(customer);
                 return (
-                  <tr key={customer.id} className={customer.archived_at ? "archived-row" : ""}>
-                    <td>
-                      <button className="table-link" onClick={() => onOpenCustomer(customer)}>{customer.name}</button>
-                      {customer.archived_at && <span className="badge archived" style={{ marginLeft: 8 }}>Archived</span>}
+                  <tr
+                    key={customer.id}
+                    className={`ro-row${customer.archived_at ? " archived-row" : ""}`}
+                    tabIndex={0}
+                    onClick={() => onOpenCustomer(customer)}
+                    onKeyDown={(event) => { if (event.key === "Enter") onOpenCustomer(customer); }}
+                    aria-label={`Open ${customer.name}`}
+                  >
+                    <td className="ro-cell-vehicle" data-label="Name">
+                      <strong>{customer.name}</strong>
+                      {address && <span className="ro-cell-concern">{address}</span>}
+                      {customer.archived_at && <span className="badge archived">Archived</span>}
                     </td>
-                    <td>{[customer.phone, customer.email].filter(Boolean).join(" · ") || "—"}</td>
-                    <td>{addressText(customer) || "—"}</td>
-                    <td>
+                    <td className="customer-cell-phone" data-label="Phone">{customer.phone || <span className="muted">—</span>}</td>
+                    <td className="customer-cell-email" data-label="Email">{customer.email || <span className="muted">—</span>}</td>
+                    <td className="customer-cell-vehicles" data-label="Vehicles">
                       {ownedVehicles.length
                         ? `${vehicleSummary}${ownedVehicles.length > 2 ? ` +${ownedVehicles.length - 2} more` : ""}`
-                        : "No vehicles"}
+                        : <span className="muted">No vehicles</span>}
                     </td>
-                    <td>{roCount}</td>
-                    <td className="actions-cell">
-                      <button className="button small secondary" onClick={() => onOpenCustomer(customer)}>History</button>
-                      <button className="button small ghost" onClick={() => onArchive(customer)}>
-                        {customer.archived_at ? "Restore" : "Archive"}
-                      </button>
-                    </td>
-                    <td className="actions-cell">
-                      {roCount === 0 ? (
-                        <button className="button small danger" onClick={() => onDelete(customer)}>Delete</button>
-                      ) : (
-                        <span className="history-lock">Has history</span>
-                      )}
+                    <td className="ro-cell-total customer-cell-count" data-label="ROs">{roCount}</td>
+                    <td className="customer-cell-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                      <MoreMenu
+                        small
+                        ariaLabel={`Actions for ${customer.name}`}
+                        items={[
+                          { label: "Open customer", onClick: () => onOpenCustomer(customer) },
+                          { label: customer.archived_at ? "Restore customer" : "Archive customer", onClick: () => onArchive(customer) },
+                          roCount === 0 && { label: "Delete customer", danger: true, onClick: () => onDelete(customer) },
+                        ]}
+                      />
                     </td>
                   </tr>
                 );
               })}
               {!filtered.length && (
-                <tr>
-                  <td colSpan={7} className="empty-state">
-                    {showArchived ? "No matching customers." : "No matching active customers."}
+                <tr className="ro-empty">
+                  <td colSpan={6} className="empty-state">
+                    {query ? "Nothing matches that search." : showArchived ? "No customers yet." : "No active customers yet."}
                   </td>
                 </tr>
               )}

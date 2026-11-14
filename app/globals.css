@@ -2881,3 +2881,18 @@ select option { background-color: var(--panel); color: var(--ink); }
 .ro-profit-summary small, .job-profit-panel small { font-size: 11px; }
 .grand-total { border-top: 1px solid var(--line); font-weight: 600; }
 .dispatch-heading h3 { font-size: 13px; letter-spacing: 0; text-transform: none; }
+
+/* ==== Redesign: Customers list ==== */
+.customer-list-table td { color: var(--ink); font-size: 14px; }
+.customer-list-table .ro-cell-concern { max-width: 280px; }
+.customer-list-table .badge.archived { margin-top: 4px; }
+.customer-cell-email { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.customer-cell-actions { width: 48px; text-align: right; }
+.customer-cell-count { font-weight: 500; }
+@media (max-width: 760px) {
+  .customer-list-table tr.ro-row { grid-template-columns: 1fr auto; }
+  .customer-list-table .ro-cell-vehicle { grid-column: 1; grid-row: 1; }
+  .customer-list-table .customer-cell-actions { grid-column: 2; grid-row: 1; width: auto; }
+  .customer-list-table .customer-cell-phone, .customer-list-table .customer-cell-email, .customer-list-table .customer-cell-vehicles { grid-column: 1 / -1; color: var(--muted); font-size: 13.5px; max-width: none; }
+  .customer-list-table .customer-cell-count { display: none; }
+}
