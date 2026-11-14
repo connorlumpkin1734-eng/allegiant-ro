@@ -4113,11 +4113,11 @@ function RepairOrderEditor({
     const isBlank = (line: ConcernLine) => !line.concern?.trim() && !line.cause?.trim() && !line.correction?.trim() && !line.priority
       && !items.some((item) => item.concern_line_id === line.id)
       && !(initialRo?.concern_lines ?? []).some((saved) => saved.id === line.id);
-    setConcernLines((current) => [
+    setConcernLines((current) => {
+      const added: ConcernLine = { id: lineId, sort_order: current.length, kind: "inspection", priority: job.priority, concern: job.title, cause: "", correction: "" };
       // The empty "Line A" a new RO starts with shouldn't stay behind as a blank line.
-      ...current.filter((line) => !isBlank(line)),
-      { id: lineId, sort_order: current.length, kind: "inspection", priority: job.priority, concern: job.title, cause: "", correction: "" },
-    ].map((line, order) => ({ ...line, sort_order: order })));
+      return [...current.filter((line) => !isBlank(line)), added].map((line, order) => ({ ...line, sort_order: order }));
+    });
     addCannedJob(lineId, { name: job.title, items: cannedItemsFrom(job.items) }, "inspection", true);
     setDismissedDeclined((current) => [...current, job.key]);
     notify(`Added "${job.title}" from RO #${padRo(job.roNumber)}. It's marked Needs customer OK.`, "success");
