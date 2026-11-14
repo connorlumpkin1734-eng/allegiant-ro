@@ -29,6 +29,7 @@ const TABLES: Record<string, string[]> = {
   teams: [],
   staff: ["auth_user_id"],
   repair_order_technicians: [],
+  canned_jobs: [],
 };
 
 async function fetchAll(supabaseUrl: string, headers: Record<string, string>, table: string, ownerId: string): Promise<Row[]> {

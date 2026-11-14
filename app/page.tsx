@@ -201,9 +201,102 @@ type JobStatus = "authorized" | "needs_approval" | "pending_review" | "declined"
 const JOB_PROGRESS = [
   { value: "not_started", label: "Not started" },
   { value: "in_progress", label: "In progress" },
+  { value: "waiting_parts", label: "Waiting on parts" },
   { value: "done", label: "Done" },
 ] as const;
 type JobProgress = (typeof JOB_PROGRESS)[number]["value"];
+
+/** A saved job ("Front brakes — pads & rotors") a shop drops onto an RO in one click. */
+type CannedItem = { item_type: ItemType; description: string; quantity: number; unit_cost: number | null; unit_price: number; price_manual?: boolean; taxable: boolean };
+type CannedJob = { id: string; owner_id: string; name: string; items: CannedItem[]; updated_at?: string };
+
+function cannedItemsFrom(items: LineItem[]): CannedItem[] {
+  return items.map((item) => ({
+    item_type: item.item_type,
+    description: item.description,
+    quantity: Number(item.quantity) || 0,
+    unit_cost: item.item_type === "part" ? Number(item.unit_cost ?? 0) : null,
+    unit_price: Number(item.unit_price) || 0,
+    price_manual: item.item_type === "part" ? Boolean(item.price_manual) : undefined,
+    taxable: Boolean(item.taxable),
+  }));
+}
+
+/** Short "2.5 hr labor · 3 parts" summary of a canned job. */
+function cannedSummary(items: CannedItem[]): string {
+  const hours = items.filter((item) => item.item_type === "labor").reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const parts = items.filter((item) => item.item_type === "part").length;
+  const other = items.length - parts - items.filter((item) => item.item_type === "labor").length;
+  return [
+    hours ? `${Math.round(hours * 10) / 10} hr labor` : "",
+    parts ? `${parts} part${parts === 1 ? "" : "s"}` : "",
+    other ? `${other} other` : "",
+  ].filter(Boolean).join(" · ") || "Empty";
+}
+
+/** A job the customer turned down on an earlier visit, still not done since. */
+type DeclinedJob = {
+  key: string;
+  roId: string;
+  roNumber: number | string | null;
+  date: string;
+  title: string;
+  priority: LinePriority | null;
+  total: number;
+  items: LineItem[];
+};
+
+const normalizeJobTitle = (value: string | null | undefined) => (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * Declined work on this vehicle from earlier ROs, newest first. A job drops off once the same job
+ * (by name) shows up again on a later RO, or on the RO you're looking at, and wasn't declined there.
+ */
+function declinedWorkFor(repairOrders: RepairOrder[], vehicleId: string, current?: { id?: string | null; createdAt?: string | null; titles?: string[] }): DeclinedJob[] {
+  if (!vehicleId) return [];
+  const cutoff = current?.createdAt ? new Date(current.createdAt).getTime() : Number.POSITIVE_INFINITY;
+  const history = repairOrders
+    .filter((ro) => ro.vehicle_id === vehicleId && ro.id !== current?.id && ro.status !== "voided")
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const declined: DeclinedJob[] = [];
+  const doneLater = new Set((current?.titles ?? []).map(normalizeJobTitle).filter(Boolean));
+  for (const ro of history) {
+    const created = new Date(ro.created_at).getTime();
+    const decisions = ro.latest_estimate_authorization?.line_decisions ?? {};
+    const groups = new Map<string, LineItem[]>();
+    for (const item of ro.line_items ?? []) {
+      if (!item.service_group_id) continue;
+      groups.set(item.service_group_id, [...(groups.get(item.service_group_id) ?? []), item]);
+    }
+    const wasDeclined = (groupId: string, first: LineItem) =>
+      first.job_status === "declined"
+      || (decisions[groupId] === "declined" && first.job_status !== "authorized" && !ro.invoice_overrides?.[groupId]);
+    if (created < cutoff) {
+      groups.forEach((rows, groupId) => {
+        const first = rows[0];
+        const title = first.service_group_title?.trim() || "Recommended service";
+        const key = normalizeJobTitle(title);
+        if (!wasDeclined(groupId, first) || doneLater.has(key) || declined.some((job) => normalizeJobTitle(job.title) === key)) return;
+        const line = (ro.concern_lines ?? []).find((entry) => entry.id === first.concern_line_id);
+        declined.push({
+          key: `${ro.id}:${groupId}`,
+          roId: ro.id,
+          roNumber: ro.ro_number,
+          date: ro.created_at,
+          title,
+          priority: normalizePriority(line?.priority),
+          total: rows.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0),
+          items: [...rows].sort((a, b) => a.sort_order - b.sort_order),
+        });
+      });
+    }
+    // Anything this RO went ahead with no longer counts as declined on older visits.
+    groups.forEach((rows, groupId) => {
+      if (!wasDeclined(groupId, rows[0])) doneLater.add(normalizeJobTitle(rows[0].service_group_title));
+    });
+  }
+  return declined;
+}
 
 // ---- RO stages ---------------------------------------------------------------------------------
 // Where an RO stands, worked out from what's already recorded, so nobody picks a status from a
@@ -2291,6 +2384,7 @@ function RepairOrderApp({ user }: { user: User }) {
             onCancel={returnFromEditor}
             onDelete={editingRo && !isTechnicianOnly ? () => deleteRo(editingRo) : undefined}
             onBackgroundRefresh={() => void loadData(false)}
+            repairOrders={repairOrders}
             onSaved={async (id, tab, previewMode, print, openSend) => {
               setEditorTab(tab);
               setPendingSend(openSend ?? null);
@@ -3288,6 +3382,7 @@ function Dashboard({
       vehicle?.year, vehicle?.make, vehicle?.model, vehicle?.vin, vehicle?.license_plate,
       ro.customer_concern, ...(ro.concern_lines ?? []).map((line) => line.concern),
       RO_STAGE_LABEL[stageOfRo(ro)],
+      (ro.line_items ?? []).some((item) => item.job_progress === "waiting_parts") ? "waiting on parts" : "",
     ].filter(Boolean).join(" ").toLowerCase().includes(normalized);
   };
 
@@ -3386,6 +3481,9 @@ function Dashboard({
             )}
             {pending > 0 && !ro.archived_at && (
               <span className="badge recommendation">{isTechnician ? `${pending} sent for pricing` : `${pending} to price`}</span>
+            )}
+            {!ro.archived_at && (stage === "in_shop" || stage === "waiting") && (ro.line_items ?? []).some((item) => item.service_group_id && item.job_progress === "waiting_parts") && (
+              <span className="badge waiting-parts">Waiting on parts</span>
             )}
           </div>
           {isTechnician && stage === "in_shop" && progress.total > 0 && (
@@ -3545,7 +3643,10 @@ function RepairOrderEditor({
   onSaved,
   onDelete,
   onBackgroundRefresh,
+  repairOrders = [],
 }: {
+  /** Every RO the signed-in user can see: used to show work this vehicle's customer declined before. */
+  repairOrders?: RepairOrder[];
   /** Refresh the list behind the editor without reloading the editor (after a send or a hand-off). */
   onBackgroundRefresh?: () => void;
   /** Open the Send panel as soon as the editor shows (after Close & invoice). */
@@ -3948,6 +4049,91 @@ function RepairOrderEditor({
         job_status: defaultJobStatus(kind),
       }),
     ]);
+  }
+
+  // ---- Canned jobs ----
+  const [cannedJobs, setCannedJobs] = useState<CannedJob[]>([]);
+  useEffect(() => {
+    if (isTechnician) return; // techs never see part costs, so canned jobs are an advisor tool
+    let cancelled = false;
+    void supabase.from("canned_jobs").select("id, owner_id, name, items, updated_at").eq("owner_id", ownerId).order("name")
+      .then(({ data }) => { if (!cancelled) setCannedJobs((data ?? []) as CannedJob[]); });
+    return () => { cancelled = true; };
+  }, [ownerId, isTechnician]);
+
+  /** Drop a canned job onto a line: today's labor rate and parts pricing, the saved hours and costs. */
+  function addCannedJob(concernLineId: string | null, canned: Pick<CannedJob, "name" | "items">, kindOverride?: LineKind, quiet = false) {
+    const kind = kindOverride ?? concernLines.find((line) => line.id === concernLineId)?.kind;
+    const groupId = crypto.randomUUID();
+    const job: JobFields = {
+      ...NO_JOB,
+      service_group_id: groupId,
+      service_group_title: canned.name,
+      concern_line_id: concernLineId,
+      job_status: defaultJobStatus(kind),
+    };
+    setItems((current) => {
+      const added = (canned.items.length ? canned.items : [{ item_type: "labor", description: "", quantity: 1, unit_cost: null, unit_price: 0, taxable: false } as CannedItem])
+        .map((saved, index) => {
+          const line = emptyLine(saved.item_type, settings, current.length + index, job);
+          const next: LineItem = { ...line, description: saved.description ?? "", quantity: Number(saved.quantity) || 1, taxable: Boolean(saved.taxable) };
+          if (saved.item_type === "part") {
+            const cost = Number(saved.unit_cost ?? 0);
+            next.unit_cost = cost;
+            if (saved.price_manual) {
+              next.price_manual = true;
+              next.unit_price = Number(saved.unit_price) || 0;
+              next.markup_percent = cost > 0 ? roundCents(((next.unit_price / cost) - 1) * 100) : null;
+            } else {
+              next.markup_percent = shopPartMarkup(cost, settings);
+              next.unit_price = roundCents(cost * (1 + Number(next.markup_percent || 0) / 100));
+            }
+          } else if (saved.item_type === "fee" || saved.item_type === "discount") {
+            next.unit_price = Number(saved.unit_price) || 0;
+          }
+          return next;
+        });
+      return [...current, ...added];
+    });
+    if (!quiet) setMessage(`Added "${canned.name}". Check the hours and parts before you send it.`);
+  }
+
+  // ---- Declined work from earlier visits on this vehicle ----
+  const [dismissedDeclined, setDismissedDeclined] = useState<string[]>([]);
+  const declinedWork = useMemo(() => (isTechnician ? [] : declinedWorkFor(repairOrders, selectedVehicleId, {
+    id: initialRo?.id,
+    createdAt: initialRo?.created_at,
+    titles: items.filter((item) => item.service_group_id).map((item) => item.service_group_title ?? ""),
+  })).filter((job) => !dismissedDeclined.includes(job.key)), [isTechnician, repairOrders, selectedVehicleId, initialRo?.id, initialRo?.created_at, items, dismissedDeclined]);
+
+  /** Bring a declined job back as its own recommendation line, same priority, today's pricing. */
+  function addDeclinedJob(job: DeclinedJob) {
+    const lineId = crypto.randomUUID();
+    setConcernLines((current) => [
+      ...current,
+      { id: lineId, sort_order: current.length, kind: "inspection", priority: job.priority, concern: job.title, cause: "", correction: "" },
+    ]);
+    addCannedJob(lineId, { name: job.title, items: cannedItemsFrom(job.items) }, "inspection", true);
+    setDismissedDeclined((current) => [...current, job.key]);
+    notify(`Added "${job.title}" from RO #${padRo(job.roNumber)}. It's marked Needs customer OK.`, "success");
+  }
+
+  async function saveAsCannedJob(groupId: string) {
+    const groupItems = items.filter((item) => item.service_group_id === groupId);
+    if (!groupItems.length) return;
+    const suggested = groupItems[0].service_group_title?.trim() || "";
+    const name = window.prompt("Name this canned job (you'll pick it by this name on any RO):", suggested)?.trim();
+    if (!name) return;
+    const existing = cannedJobs.find((job) => job.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing && !window.confirm(`You already have a canned job called "${existing.name}". Replace it with this one?`)) return;
+    const payload = { owner_id: ownerId, name, items: cannedItemsFrom(groupItems), updated_at: new Date().toISOString() };
+    const { data, error: cannedError } = existing
+      ? await supabase.from("canned_jobs").update(payload).eq("id", existing.id).select("id, owner_id, name, items, updated_at").single()
+      : await supabase.from("canned_jobs").insert(payload).select("id, owner_id, name, items, updated_at").single();
+    if (cannedError || !data) { setMessage(`Couldn't save the canned job: ${cannedError?.message ?? "unknown error"}`); return; }
+    const saved = data as CannedJob;
+    setCannedJobs((current) => [...current.filter((job) => job.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
+    notify(`Saved "${saved.name}" as a canned job.`, "success");
   }
 
   function addConcernLine(kind: "request" | "customer") {
@@ -4626,6 +4812,7 @@ function RepairOrderEditor({
                           item.service_group_id === group.id ? { ...item, concern_line_id: line.id } : item)),
                       }))
                   : []),
+                canRestructureRo && { label: "Save as canned job", onClick: () => void saveAsCannedJob(group.id) },
                 canDeleteJob && { label: "Delete job", onClick: () => void deleteServiceJob(group.id), danger: true },
               ]}
             />
@@ -5175,6 +5362,31 @@ function RepairOrderEditor({
         />
       )}
 
+      {canRestructureRo && workspaceTab !== "invoice" && declinedWork.length > 0 && (
+        <section className="panel declined-work-panel">
+          <div className="declined-work-head">
+            <h3>Declined last time</h3>
+            <span className="muted">This vehicle&apos;s customer said no to {declinedWork.length === 1 ? "this" : "these"} on an earlier visit. Add one back to quote it again.</span>
+          </div>
+          <ul className="declined-work-list">
+            {declinedWork.map((job) => (
+              <li key={job.key}>
+                <div className="declined-work-main">
+                  <strong>{job.title}</strong>
+                  <span className="muted">RO #{padRo(job.roNumber)} · {new Date(job.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span>
+                </div>
+                {job.priority && <span className={`line-priority-tag priority-${job.priority}`}>{PRIORITY_LABEL[job.priority]}</span>}
+                <span className="declined-work-total">{money(job.total)}</span>
+                <button type="button" className="button small secondary" onClick={() => addDeclinedJob(job)}>+ Add to this RO</button>
+                <button type="button" className="line-move-button" aria-label={`Hide ${job.title} for now`} title="Hide for now" onClick={() => setDismissedDeclined((current) => [...current, job.key])}>
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="panel line-items-panel">
         <div className="section-heading wrap">
           <div>
@@ -5324,6 +5536,9 @@ function RepairOrderEditor({
                   <button className="button small secondary" onClick={() => addServiceJob(line.id)}>
                     {isTechnician ? "+ Request job" : "+ Add job"}
                   </button>
+                  {!isTechnician && (
+                    <CannedJobPicker jobs={cannedJobs} onPick={(job) => addCannedJob(line.id, job)} />
+                  )}
                 </div>
               </article>
             );
@@ -6165,6 +6380,84 @@ function SendPanel({
 }
 
 // ---- ⋯ menu ----------------------------------------------------------------------------------
+/** "+ Canned job": search the shop's saved jobs and drop one onto this line. */
+function CannedJobPicker({ jobs, onPick }: { jobs: CannedJob[]; onPick: (job: CannedJob) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [position, setPosition] = useState<CSSProperties>({});
+  const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  function toggle() {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const width = Math.min(340, window.innerWidth - 16);
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+      const roomBelow = window.innerHeight - rect.bottom;
+      setPosition(roomBelow < 340 && rect.top > roomBelow
+        ? { position: "fixed", left, width, bottom: window.innerHeight - rect.top + 6, top: "auto" }
+        : { position: "fixed", left, width, top: rect.bottom + 6 });
+      setQuery("");
+    }
+    setOpen((value) => !value);
+  }
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent | TouchEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    const onScroll = (event: Event) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("touchstart", close, { passive: true });
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+    window.addEventListener("resize", () => setOpen(false), { once: true });
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("touchstart", close);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, { capture: true });
+    };
+  }, [open]);
+  const normalized = query.trim().toLowerCase();
+  const shown = jobs.filter((job) => !normalized || job.name.toLowerCase().includes(normalized));
+  return (
+    <div className="more-menu canned-picker" ref={ref}>
+      <button type="button" className="button small secondary" aria-haspopup="dialog" aria-expanded={open} ref={buttonRef} onClick={toggle}>
+        + Canned job
+      </button>
+      {open && (
+        <div className="canned-picker-panel" role="dialog" aria-label="Pick a canned job" style={position}>
+          {jobs.length ? (
+            <>
+              <input
+                type="search"
+                autoFocus
+                className="canned-picker-search"
+                placeholder="Search canned jobs…"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter" && shown.length === 1) { setOpen(false); onPick(shown[0]); } }}
+              />
+              <div className="canned-picker-list">
+                {shown.map((job) => (
+                  <button key={job.id} type="button" onClick={() => { setOpen(false); onPick(job); }}>
+                    <strong>{job.name}</strong>
+                    <span>{cannedSummary(job.items)}</span>
+                  </button>
+                ))}
+                {!shown.length && <p className="canned-picker-empty">No canned job matches that.</p>}
+              </div>
+            </>
+          ) : (
+            <p className="canned-picker-empty">
+              No canned jobs yet. Build a job once, then use its <strong>⋯</strong> menu → <strong>Save as canned job</strong>.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type MoreMenuItem = { label: string; onClick: () => void; danger?: boolean; disabled?: boolean };
 /** × that needs a second tap ("Remove?") within a few seconds, so a thumb brushing it while scrolling doesn't delete anything. */
 function ConfirmRemoveButton({ title, onConfirm }: { title: string; onConfirm: () => void }) {
@@ -6572,6 +6865,24 @@ function CustomerProfile({
                       <div><dt>Latest mileage</dt><dd>{latestMileage ? latestMileage.toLocaleString() : "—"}</dd></div>
                       <div><dt>History</dt><dd>{vehicleHistory.length} repair order{vehicleHistory.length === 1 ? "" : "s"}</dd></div>
                     </dl>
+                    {(() => {
+                      const declined = declinedWorkFor(repairOrders, vehicle.id);
+                      if (!declined.length) return null;
+                      return (
+                        <div className="profile-declined">
+                          <span className="profile-declined-title">Declined, not done yet</span>
+                          <ul>
+                            {declined.map((job) => (
+                              <li key={job.key}>
+                                <span>{job.title}</span>
+                                {job.priority && <span className={`line-priority-tag priority-${job.priority}`}>{PRIORITY_LABEL[job.priority]}</span>}
+                                <span className="muted">{money(job.total)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
                     <button className="button small secondary" onClick={() => onNew(customer.id, vehicle.id)} disabled={Boolean(customer.archived_at)}>
                       + New repair order on this vehicle
                     </button>
@@ -7929,6 +8240,7 @@ function SettingsPanel({
       </div>}
 
       {section === "pricing" && <PartsPricingPanel form={form} setForm={setForm} />}
+      {section === "jobs" && <CannedJobsManager ownerId={ownerId} />}
 
       {section === "branding" && <div className="panel settings-panel">
         <h2 style={{ marginTop: 0 }}>Branding</h2>
@@ -8130,14 +8442,80 @@ function SettingsPanel({
   );
 }
 
-type SettingsSection = "shop" | "pricing" | "branding" | "payments" | "staff";
+type SettingsSection = "shop" | "pricing" | "jobs" | "branding" | "payments" | "staff";
 const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: "shop", label: "Shop" },
   { id: "pricing", label: "Parts pricing" },
+  { id: "jobs", label: "Canned jobs" },
   { id: "branding", label: "Branding" },
   { id: "payments", label: "Payments & billing" },
   { id: "staff", label: "Staff" },
 ];
+
+/** Settings → Canned jobs: rename or delete the shop's saved jobs. New ones are saved from an RO. */
+function CannedJobsManager({ ownerId }: { ownerId: string }) {
+  const [jobs, setJobs] = useState<CannedJob[] | null>(null);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [message, setMessage] = useToastMessage();
+  useEffect(() => {
+    let cancelled = false;
+    void supabase.from("canned_jobs").select("id, owner_id, name, items, updated_at").eq("owner_id", ownerId).order("name")
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) { setMessage(`Couldn't load canned jobs: ${error.message}`); setJobs([]); return; }
+        setJobs((data ?? []) as CannedJob[]);
+      });
+    return () => { cancelled = true; };
+  }, [ownerId, setMessage]);
+  async function rename(job: CannedJob) {
+    const name = (names[job.id] ?? job.name).trim();
+    if (!name || name === job.name) { setNames((current) => { const next = { ...current }; delete next[job.id]; return next; }); return; }
+    const { error } = await supabase.from("canned_jobs").update({ name, updated_at: new Date().toISOString() }).eq("id", job.id);
+    if (error) { setMessage(`Couldn't rename it: ${error.message}`); return; }
+    setJobs((current) => (current ?? []).map((entry) => (entry.id === job.id ? { ...entry, name } : entry)).sort((a, b) => a.name.localeCompare(b.name)));
+    notify(`Renamed to "${name}".`, "success");
+  }
+  async function remove(job: CannedJob) {
+    if (!window.confirm(`Delete the canned job "${job.name}"? ROs that already used it keep their jobs.`)) return;
+    const { error } = await supabase.from("canned_jobs").delete().eq("id", job.id);
+    if (error) { setMessage(`Couldn't delete it: ${error.message}`); return; }
+    setJobs((current) => (current ?? []).filter((entry) => entry.id !== job.id));
+  }
+  return (
+    <div className="panel settings-panel">
+      <h2 style={{ marginTop: 0 }}>Canned jobs</h2>
+      <p className="muted">
+        Jobs you do all the time, saved with their labor and parts. On an RO, use <strong>+ Canned job</strong> under any line to add one.
+        To make a new one, build the job on an RO, then pick <strong>Save as canned job</strong> from its <strong>⋯</strong> menu.
+        Labor uses your shop rate and parts use your pricing at the time you add the job.
+      </p>
+      {message && <div className="notice">{message}</div>}
+      {jobs === null ? (
+        <p className="muted">Loading…</p>
+      ) : jobs.length ? (
+        <div className="canned-jobs-list">
+          {jobs.map((job) => (
+            <div className="canned-jobs-row" key={job.id}>
+              <label>
+                <span className="sr-only">Name</span>
+                <input
+                  value={names[job.id] ?? job.name}
+                  onChange={(event) => setNames((current) => ({ ...current, [job.id]: event.target.value }))}
+                  onBlur={() => void rename(job)}
+                  onKeyDown={(event) => { if (event.key === "Enter") (event.target as HTMLInputElement).blur(); }}
+                />
+              </label>
+              <span className="muted">{cannedSummary(job.items)}</span>
+              <button type="button" className="button small ghost danger-text" onClick={() => void remove(job)}>Delete</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="empty-state">No canned jobs yet.</p>
+      )}
+    </div>
+  );
+}
 
 function StaffTeamsManager({ ownerId }: { ownerId: string }) {
   const [teams, setTeams] = useState<Team[]>([]);

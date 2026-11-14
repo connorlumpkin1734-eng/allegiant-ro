@@ -34,7 +34,7 @@ const TABLES = [
   "settings", "customers", "vehicles", "repair_orders", "concern_lines", "line_items",
   "multipoint_inspections", "estimate_photos", "estimate_videos", "estimate_authorizations",
   "teams", "staff", "repair_order_technicians", "payments", "payment_links", "video_share_links",
-  "platform_config", "platform_admins", "site_visits", "user_preferences", "notifications",
+  "platform_config", "platform_admins", "site_visits", "user_preferences", "notifications", "canned_jobs",
 ] as const;
 
 // Paging needs a stable sort; most tables have an id, these don't.
