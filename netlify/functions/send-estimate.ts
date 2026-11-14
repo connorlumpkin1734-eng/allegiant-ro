@@ -8,7 +8,7 @@ type RepairOrderRow = {
   customers: { name: string; email: string | null } | null;
   vehicles: { year: number | null; make: string | null; model: string | null; vin: string | null } | null;
   line_items: Array<{ item_type: string; description: string; quantity: number; unit_price: number; taxable: boolean; sort_order: number; service_group_id: string | null; service_group_title: string | null; technician_story: string | null; service_concern: string | null; concern_line_id: string | null; job_status: string | null; job_note: string | null }>;
-  concern_lines: Array<{ id: string; sort_order: number; kind: string; concern: string | null; cause: string | null }> | null;
+  concern_lines: Array<{ id: string; sort_order: number; kind: string; priority?: string | null; concern: string | null; cause: string | null }> | null;
 };
 
 import { pickRecipient, resolveCustomerSender } from "../../lib/shop-caller";
@@ -62,7 +62,7 @@ export default async (request: Request) => {
   if ("error" in sender) return json({ error: sender.error }, sender.status);
   const ownerId = sender.ownerId;
   const roResponse = await fetch(
-    `${supabaseUrl}/rest/v1/repair_orders?select=*,customers(name,email),vehicles(year,make,model,vin),line_items(item_type,description,quantity,unit_price,taxable,sort_order,service_group_id,service_group_title,technician_story,service_concern,concern_line_id,job_status,job_note),concern_lines(id,sort_order,kind,concern,cause)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
+    `${supabaseUrl}/rest/v1/repair_orders?select=*,customers(name,email),vehicles(year,make,model,vin),line_items(item_type,description,quantity,unit_price,taxable,sort_order,service_group_id,service_group_title,technician_story,service_concern,concern_line_id,job_status,job_note),concern_lines(id,sort_order,kind,priority,concern,cause)&id=eq.${encodeURIComponent(body.repairOrderId)}&owner_id=eq.${ownerId}`,
     { headers: serviceHeaders }
   );
   const rows = await roResponse.json() as RepairOrderRow[];
@@ -91,7 +91,7 @@ export default async (request: Request) => {
   // Concern lines (Line A, B, C…) frozen with the estimate, for the customer's approval page.
   const concernLines = [...(ro.concern_lines || [])]
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map((line, index) => ({ id: line.id, letter: String.fromCharCode(65 + (index % 26)), kind: line.kind, concern: line.concern, cause: line.cause }));
+    .map((line, index) => ({ id: line.id, letter: String.fromCharCode(65 + (index % 26)), kind: line.kind, priority: line.priority === "safety" || line.priority === "soon" || line.priority === "later" ? line.priority : null, concern: line.concern, cause: line.cause }));
   const subtotal = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0);
   const taxable = items.reduce((sum, item) => sum + (item.taxable ? Number(item.quantity) * Number(item.unit_price) : 0), 0);
   const tax = Math.max(0, taxable) * (Number(ro.tax_rate) / 100);
@@ -187,6 +187,7 @@ export default async (request: Request) => {
     jobs.set(item.service_group_id, job);
   }
   const kindHeading: Record<string, string> = { request: "You asked for", customer: "Your concern", inspection: "We recommend" };
+  const priorityText: Record<string, string> = { safety: "Safety — fix now", soon: "Needs attention soon", later: "Can wait" };
   const jobRow = (job: { title: string; total: number; authorized: boolean }): LineRow => ({
     label: job.title,
     amount: money(job.total),
@@ -197,7 +198,7 @@ export default async (request: Request) => {
     const lineJobs = [...jobs.values()].filter((job) => job.lineId === line.id);
     if (!lineJobs.length) continue;
     groups.push({
-      heading: `${kindHeading[line.kind] ?? "Service"}`,
+      heading: `${kindHeading[line.kind] ?? "Service"}${line.priority && priorityText[line.priority] ? ` · ${priorityText[line.priority]}` : ""}`,
       subheading: line.concern?.trim() && line.kind !== "inspection" ? line.concern.trim() : undefined,
       rows: lineJobs.map(jobRow),
     });

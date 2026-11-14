@@ -599,10 +599,20 @@ function lineHasCause(kind: LineKind): boolean {
   return kind !== "request";
 }
 
+type LinePriority = "safety" | "soon" | "later";
+/** Shop-side names; the customer sees CUSTOMER_PRIORITY_LABEL. */
+const PRIORITY_LABEL: Record<LinePriority, string> = { safety: "Safety", soon: "Soon", later: "Can wait" };
+const CUSTOMER_PRIORITY_LABEL: Record<LinePriority, string> = { safety: "Safety — fix now", soon: "Needs attention soon", later: "Can wait" };
+function normalizePriority(value: unknown): LinePriority | null {
+  return value === "safety" || value === "soon" || value === "later" ? value : null;
+}
+
 type ConcernLine = {
   id: string;
   sort_order: number;
   kind: LineKind;
+  /** How urgent the repair is; null = not set. Shown to the customer on the estimate. */
+  priority?: LinePriority | null;
   concern: string | null;
   cause: string | null;
   correction: string | null;
@@ -3961,6 +3971,22 @@ function RepairOrderEditor({
     setFocusLineId(id);
   }
 
+  function setLinePriority(id: string, priority: LinePriority | null) {
+    setConcernLines((current) => current.map((line) => (line.id === id ? { ...line, priority } : line)));
+  }
+
+  /** Move a line up (-1) or down (+1); letters (A, B, C…) follow the new order. */
+  function moveConcernLine(id: string, delta: -1 | 1) {
+    setConcernLines((current) => {
+      const index = current.findIndex((line) => line.id === id);
+      const target = index + delta;
+      if (index === -1 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next.map((line, order) => ({ ...line, sort_order: order }));
+    });
+  }
+
   function setLineKind(id: string, kind: LineKind) {
     setConcernLines((current) => current.map((line) => (line.id === id ? { ...line, kind } : line)));
   }
@@ -4434,6 +4460,7 @@ function RepairOrderEditor({
             repair_order_id: roId,
             sort_order: index,
             kind: line.kind,
+            priority: normalizePriority(line.priority),
             concern: valueOrNull(line.concern ?? ""),
             cause: valueOrNull(line.cause ?? ""),
             correction: valueOrNull(line.correction ?? ""),
@@ -5178,6 +5205,8 @@ function RepairOrderEditor({
             const textLocked = isTechnician && !isInspection;
             const lineIsUnsaved = !(initialRo?.concern_lines ?? []).some((saved) => saved.id === line.id);
             const canDeleteLine = canRestructureRo || (isTechnician && isInspection && lineIsUnsaved);
+            // Advisors set priority on any line; a tech can on their own recommendations.
+            const canSetPriority = canRestructureRo || (isTechnician && isInspection);
             const pendingCount = lineJobs.filter((group) => group.items[0].job_status === "pending_review").length;
             const lineTotal = lineJobs.reduce((sum, group) => sum + group.items.reduce((jobSum, item) => jobSum + item.quantity * item.unit_price, 0), 0);
             const textLabel = line.kind === "request" ? "What the customer wants" : line.kind === "customer" ? "The customer's concern, in their words" : isTechnician ? "Your recommendation" : "Tech recommendation";
@@ -5203,6 +5232,32 @@ function RepairOrderEditor({
                     {pendingCount > 0 && <span className="job-status-badge pending_review">{isTechnician ? "Sent to advisor" : "Needs your pricing"}</span>}
                     {lineJobs.length > 0 && <span className="muted">{lineJobs.length} job{lineJobs.length === 1 ? "" : "s"}{hideCostAndMargin ? "" : ` · ${money(lineTotal)}`}</span>}
                   </div>
+                  {canSetPriority ? (
+                    <label className={`line-priority-select priority-${line.priority ?? "none"}`}>
+                      <span className="sr-only">Priority for Line {letter}</span>
+                      <select
+                        value={line.priority ?? ""}
+                        onChange={(event) => setLinePriority(line.id, normalizePriority(event.target.value))}
+                      >
+                        <option value="">Priority…</option>
+                        <option value="safety">Safety</option>
+                        <option value="soon">Soon</option>
+                        <option value="later">Can wait</option>
+                      </select>
+                    </label>
+                  ) : line.priority ? (
+                    <span className={`line-priority-tag priority-${line.priority}`}>{PRIORITY_LABEL[line.priority]}</span>
+                  ) : null}
+                  {canRestructureRo && concernLines.length > 1 && (
+                    <div className="line-move-buttons" role="group" aria-label={`Move Line ${letter}`}>
+                      <button type="button" className="line-move-button" aria-label={`Move Line ${letter} up`} title="Move up" disabled={lineIndex === 0} onClick={() => moveConcernLine(line.id, -1)}>
+                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.5V3.5M4 7.5l4-4 4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      </button>
+                      <button type="button" className="line-move-button" aria-label={`Move Line ${letter} down`} title="Move down" disabled={lineIndex === concernLines.length - 1} onClick={() => moveConcernLine(line.id, 1)}>
+                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M4 8.5l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      </button>
+                    </div>
+                  )}
                   {(canDeleteLine || (canRestructureRo && !isInspection)) && (
                     <MoreMenu
                       ariaLabel={`Actions for Line ${letter}`}
@@ -9008,6 +9063,11 @@ function DocumentView({
                         <span className="document-line-letter">{line ? section.letter : "+"}</span>
                         <strong>{line ? lineHeading(line, section.groups) : "Additional work"}</strong>
                         {line && lineOwnText(line, section.groups) && <em>{LINE_KIND_LABEL[line.kind]}</em>}
+                        {line && !isInvoice && normalizePriority(line.priority) && (
+                          <span className={`document-priority priority-${line.priority}`}>
+                            {isEstimate ? CUSTOMER_PRIORITY_LABEL[line.priority as LinePriority] : PRIORITY_LABEL[line.priority as LinePriority]}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td>{section.groups.length ? money(total) : ""}</td>
