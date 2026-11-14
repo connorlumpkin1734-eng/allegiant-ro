@@ -2944,3 +2944,14 @@ label { font-weight: 600; }
 /* ==== Redesign: technician list bits ==== */
 .needs-tech-panel { border-left: 1px solid var(--line); box-shadow: inset 3px 0 0 var(--warn-text); }
 .ro-progress small { font-weight: 500; }
+
+/* ==== Redesign: tech list toolbar + mileage row ==== */
+.ro-list-bar .ro-list-tools:has(.ro-scope) { flex: 1 1 100%; flex-wrap: nowrap; gap: 12px; }
+.ro-list-bar .ro-list-tools:has(.ro-scope) .search-input { flex: 0 1 360px; margin-left: auto; }
+.ro-summary-miles { flex-wrap: wrap; gap: 6px 12px; }
+.ro-summary-miles label { flex-direction: row; font-weight: 500; }
+.ro-summary-miles-in { color: var(--ink); font-weight: 600; }
+@media (max-width: 760px) {
+  .ro-list-bar .ro-list-tools:has(.ro-scope) { flex-wrap: wrap; }
+  .ro-list-bar .ro-list-tools:has(.ro-scope) .search-input { flex: 1 1 100%; margin-left: 0; }
+}

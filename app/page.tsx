@@ -4919,9 +4919,9 @@ function RepairOrderEditor({
               <strong>{[vehicleForm.year, vehicleForm.make, vehicleForm.model, vehicleForm.trim].filter(Boolean).join(" ") || "—"}</strong>
               <span className="muted">{[vehicleForm.vin ? `VIN ${vehicleForm.vin}` : "", vehicleForm.license_plate ? `Plate ${vehicleForm.license_plate}` : ""].filter(Boolean).join(" · ") || "No VIN or plate yet"}</span>
               <div className="ro-summary-miles">
-                <span className="muted">Miles in {mileageIn || "—"}</span>
+                <span className="muted">Miles in <strong className="ro-summary-miles-in">{mileageIn || "—"}</strong></span>
                 <label>
-                  <span className="muted">out</span>
+                  <span className="muted">Out</span>
                   <input inputMode="numeric" data-field="mileage-out" aria-label="Mileage out" placeholder={settings.require_mileage ? "Required" : "—"} value={mileageOut} onChange={(event) => setMileageOut(event.target.value)} />
                 </label>
               </div>
