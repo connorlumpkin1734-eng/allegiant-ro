@@ -4982,7 +4982,13 @@ function RepairOrderEditor({
     if (!initialRo || payBusy) return;
     if (!window.confirm(`Remove this ${money(Number(payment.amount))} ${paymentMethodLabel(payment).toLowerCase()} payment? Use this only if it was entered by mistake.`)) return;
     setPayBusy(true);
-    const { data, error: removeError } = await supabase.from("payments").delete().eq("id", payment.id).eq("processor", "manual").select("id");
+    // Payment rows are never deleted (they're the shop's money trail); a mistake is cancelled instead,
+    // which takes it off the balance and off the invoice.
+    const { data, error: removeError } = await supabase
+      .from("payments")
+      .update({ status: "canceled", updated_at: new Date().toISOString() })
+      .eq("id", payment.id).eq("processor", "manual").eq("status", "succeeded")
+      .select("id");
     setPayBusy(false);
     if (removeError) { notify(`Couldn't remove the payment: ${removeError.message}`, "error"); return; }
     if (!data?.length) { notify("Only the owner or an admin can remove a payment.", "error"); return; }
@@ -5526,7 +5532,7 @@ function RepairOrderEditor({
             </div>
             {customerVehicles.length > 0 && !selectedVehicleId && (
               <p className="sidebar-help vehicle-pick-help">
-                Adding a new vehicle for {customerForm.name || "this customer"}. Fill it in below, or pick one of their {customerVehicles.length === 1 ? "saved vehicle" : `${customerVehicles.length} saved vehicles`} above.
+                Adding a new vehicle for {customerForm.name || "this customer"}. Fill it in below, or pick {customerVehicles.length === 1 ? "their saved vehicle" : `one of their ${customerVehicles.length} saved vehicles`} above.
               </p>
             )}
             <div className="vin-row">

@@ -3208,3 +3208,5 @@ label { font-weight: 600; }
 .text-link-actions .button { flex: 1 1 auto; text-align: center; }
 .send-panel input[type="tel"], .send-panel textarea { width: 100%; margin-top: 6px; font-size: 16px; }
 .text-link-box .send-panel-note { margin: 0; }
+/* Same-width main button on Estimate / Repair Order / Invoice previews, so the tabs don't shift when you switch. */
+.document-actions .ro-action-bar-right > .button.primary { min-width: 150px; text-align: center; justify-content: center; }
