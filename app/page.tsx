@@ -5486,9 +5486,11 @@ function RepairOrderEditor({
                     <svg className="concern-line-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     <span className="concern-line-letter">{letter}</span>
                     <span className="concern-line-title">
-                      <span>Line {letter}</span>
-                      <strong>{LINE_KIND_LABEL[line.kind]}</strong>
-                      {collapsed && line.concern?.trim() && <em className="concern-line-preview">{line.concern.trim()}</em>}
+                      <span>Line {letter} · {LINE_KIND_LABEL[line.kind]}</span>
+                      {/* The customer's words / the recommendation lead; the line type is the small label above. */}
+                      <strong className={line.concern?.trim() ? "" : "is-empty"}>
+                        {line.concern?.trim() || (isInspection ? "New recommendation — describe it below" : "New line — write what the customer wants below")}
+                      </strong>
                     </span>
                   </button>
                   <div className="concern-line-meta">

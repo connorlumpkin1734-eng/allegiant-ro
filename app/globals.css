@@ -3097,3 +3097,11 @@ label { font-weight: 600; }
 @media (max-width: 640px) {
   .concern-line-toggle { flex: 1 1 100%; }
 }
+
+/* Line header: the line's own words are the headline, the type is the small label. */
+.concern-line-toggle .concern-line-title span { font-size: 12px; font-weight: 600; color: color-mix(in srgb, var(--line-accent) 70%, var(--muted)); }
+.concern-line-toggle .concern-line-title strong {
+  font-size: 16.5px; font-weight: 600; line-height: 1.3; white-space: normal;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.concern-line-toggle .concern-line-title strong.is-empty { color: var(--muted); font-weight: 500; font-style: italic; }
