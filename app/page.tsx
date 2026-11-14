@@ -3854,7 +3854,8 @@ function RepairOrderEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Customer, vehicle and visit details show as summary cards on a saved RO; Edit opens the forms.
-  const [detailsOpen, setDetailsOpen] = useState(!initialRo);
+  // The sample starts with them tucked away too, so the lines and jobs are what you see first.
+  const [detailsOpen, setDetailsOpen] = useState(!initialRo && !isSample);
   // Dispatch picks on a brand-new RO, saved with it (an existing RO saves dispatch as you click).
   const [dispatchDraft, setDispatchDraft] = useState<DispatchDraft>({ teamId: null, techIds: [] });
   const [busy, setBusy] = useState(false);
@@ -5270,7 +5271,20 @@ function RepairOrderEditor({
         <div className="stack">
           {workspaceTab === "work_order" ? (
           <>
-          {initialRo && (!detailsOpen || isTechnician) ? (
+          {isSample && !detailsOpen ? (
+          <section className="ro-summary-grid sample-summary" aria-label="Sample customer and vehicle">
+            <div className="ro-summary-card">
+              <div className="ro-summary-head"><span>Customer</span><button type="button" className="link-button" onClick={() => setDetailsOpen(true)}>Show the form</button></div>
+              <strong>{customerForm.name}</strong>
+              <span className="muted">{customerForm.phone}</span>
+            </div>
+            <div className="ro-summary-card">
+              <div className="ro-summary-head"><span>Vehicle</span></div>
+              <strong>{[vehicleForm.year, vehicleForm.make, vehicleForm.model, vehicleForm.trim].filter(Boolean).join(" ")}</strong>
+              <span className="muted">{vehicleForm.engine} · {Number(mileageIn).toLocaleString()} miles in</span>
+            </div>
+          </section>
+          ) : initialRo && (!detailsOpen || isTechnician) ? (
           <section className="ro-summary-grid" aria-label="Customer, vehicle and inspection">
             <div className="ro-summary-card">
               <div className="ro-summary-head"><span>Customer</span>{!isTechnician && <button type="button" className="link-button" onClick={() => setDetailsOpen(true)}>Edit</button>}</div>
