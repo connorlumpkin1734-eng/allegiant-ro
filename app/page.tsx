@@ -4101,6 +4101,8 @@ function RepairOrderEditor({
 
   // ---- Declined work from earlier visits on this vehicle ----
   const [dismissedDeclined, setDismissedDeclined] = useState<string[]>([]);
+  /** Lines folded shut on screen (not saved): every line starts open. */
+  const [collapsedLines, setCollapsedLines] = useState<string[]>([]);
   const declinedWork = useMemo(() => (isTechnician ? [] : declinedWorkFor(repairOrders, selectedVehicleId, {
     id: initialRo?.id,
     createdAt: initialRo?.created_at,
@@ -5439,6 +5441,13 @@ function RepairOrderEditor({
           </div>
         </div>
 
+        {concernLines.length > 1 && (
+          <div className="concern-lines-toolbar">
+            <button type="button" className="link-button" onClick={() => setCollapsedLines(collapsedLines.length ? [] : concernLines.map((line) => line.id))}>
+              {collapsedLines.length ? "Expand all lines" : "Collapse all lines"}
+            </button>
+          </div>
+        )}
         <div className="concern-lines">
           {concernLines.map((line, lineIndex) => {
             const letter = lineLetter(lineIndex);
@@ -5448,6 +5457,7 @@ function RepairOrderEditor({
             const textLocked = isTechnician && !isInspection;
             const lineIsUnsaved = !(initialRo?.concern_lines ?? []).some((saved) => saved.id === line.id);
             const canDeleteLine = canRestructureRo || (isTechnician && isInspection && lineIsUnsaved);
+            const collapsed = collapsedLines.includes(line.id);
             // Advisors set priority on any line; a tech can on their own recommendations.
             const canSetPriority = canRestructureRo || (isTechnician && isInspection);
             const pendingCount = lineJobs.filter((group) => group.items[0].job_status === "pending_review").length;
@@ -5464,13 +5474,23 @@ function RepairOrderEditor({
               : "Road tested and verified noise. RF wheel bearing has excessive play.";
             const fieldCount = 2 + (lineHasCause(line.kind) ? 1 : 0);
             return (
-              <article className={`concern-line-card ${line.kind}`} key={line.id}>
+              <article className={`concern-line-card ${line.kind}${collapsed ? " collapsed" : ""}`} key={line.id}>
                 <header className="concern-line-header">
-                  <div className="concern-line-letter">{letter}</div>
-                  <div className="concern-line-title">
-                    <span>Line {letter}</span>
-                    <strong>{LINE_KIND_LABEL[line.kind]}</strong>
-                  </div>
+                  <button
+                    type="button"
+                    className="concern-line-toggle"
+                    aria-expanded={!collapsed}
+                    aria-label={`${collapsed ? "Show" : "Hide"} Line ${letter}`}
+                    onClick={() => setCollapsedLines((current) => (collapsed ? current.filter((id) => id !== line.id) : [...current, line.id]))}
+                  >
+                    <svg className="concern-line-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    <span className="concern-line-letter">{letter}</span>
+                    <span className="concern-line-title">
+                      <span>Line {letter}</span>
+                      <strong>{LINE_KIND_LABEL[line.kind]}</strong>
+                      {collapsed && line.concern?.trim() && <em className="concern-line-preview">{line.concern.trim()}</em>}
+                    </span>
+                  </button>
                   <div className="concern-line-meta">
                     {pendingCount > 0 && <span className="job-status-badge pending_review">{isTechnician ? "Sent to advisor" : "Needs your pricing"}</span>}
                     {lineJobs.length > 0 && <span className="muted">{lineJobs.length} job{lineJobs.length === 1 ? "" : "s"}{hideCostAndMargin ? "" : ` · ${money(lineTotal)}`}</span>}
@@ -5512,6 +5532,7 @@ function RepairOrderEditor({
                     />
                   )}
                 </header>
+                {!collapsed && (<>
                 <div className={`concern-line-3c cols-${fieldCount}`}>
                   <label className="line-concern">
                     <span className="field-title">{textLabel}</span>
@@ -5571,6 +5592,7 @@ function RepairOrderEditor({
                     <CannedJobPicker jobs={cannedJobs} onPick={(job) => addCannedJob(line.id, job)} />
                   )}
                 </div>
+                </>)}
               </article>
             );
           })}

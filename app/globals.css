@@ -3055,3 +3055,45 @@ label { font-weight: 600; }
 .ro-status-row > span { flex: 0 0 74px; }
 .ro-status-row .button { white-space: nowrap; flex: 0 0 auto; }
 .payment-toggle button { padding: 6px 10px; }
+
+/* ==== Lines: clearer outlines + collapse ==== */
+.concern-line-card { --line-accent: var(--accent); }
+.concern-line-card.request { --line-accent: var(--success-text); }
+.concern-line-card.inspection { --line-accent: var(--warn-text); }
+.concern-line-card.unassigned { --line-accent: var(--muted); }
+.concern-lines { gap: 22px; }
+.concern-line-card,
+.concern-line-card.inspection, .concern-line-card.request, .concern-line-card.unassigned {
+  border: 2px solid color-mix(in srgb, var(--line-accent) 55%, var(--line));
+  border-radius: 14px;
+  box-shadow: 0 2px 6px rgba(16, 42, 76, 0.06);
+  overflow: hidden;
+}
+.concern-line-header {
+  margin-bottom: 14px;
+  padding: 10px 14px 10px 10px;
+  background: color-mix(in srgb, var(--line-accent) 9%, var(--panel));
+  border-bottom: 1px solid color-mix(in srgb, var(--line-accent) 30%, var(--line));
+}
+.concern-line-card.collapsed .concern-line-header { margin-bottom: 0; border-bottom: 0; }
+/* Jobs inside a line pick up a hint of the line's color so they read as "belonging" to it. */
+.concern-line-card .service-job-card { border-color: color-mix(in srgb, var(--line-accent) 28%, var(--line)); }
+
+.concern-line-toggle {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px;
+  padding: 4px 6px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); text-align: left; cursor: pointer;
+}
+.concern-line-toggle:hover { background: color-mix(in srgb, var(--line-accent) 10%, transparent); }
+.concern-line-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.concern-line-chevron { flex: 0 0 18px; width: 18px; height: 18px; color: var(--muted); transition: transform 0.15s ease; }
+.concern-line-card.collapsed .concern-line-chevron { transform: rotate(-90deg); }
+.concern-line-toggle .concern-line-letter { display: grid; place-items: center; flex: 0 0 32px; }
+.concern-line-toggle .concern-line-title { display: block; flex: 1 1 auto; min-width: 0; }
+.concern-line-preview { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 13px; font-style: normal; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.concern-lines-toolbar { display: flex; justify-content: flex-end; margin: -4px 0 10px; }
+.concern-lines-toolbar .link-button { padding: 4px 2px; border: 0; background: none; color: var(--accent); font-size: 13px; font-weight: 600; cursor: pointer; }
+.concern-lines-toolbar .link-button:hover { text-decoration: underline; }
+@media (prefers-reduced-motion: reduce) { .concern-line-chevron { transition: none; } }
+@media (max-width: 640px) {
+  .concern-line-toggle { flex: 1 1 100%; }
+}
