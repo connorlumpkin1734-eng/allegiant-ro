@@ -2902,7 +2902,7 @@ function SalesReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
             <option value="detail">All details</option>
           </select>
         </label>
-        <button type="button" onClick={() => downloadReportCsv(rows, period)} disabled={!rows.length}>
+        <button type="button" className="button secondary small" onClick={() => downloadReportCsv(rows, period)} disabled={!rows.length}>
           Download CSV
         </button>
       </div>
@@ -2925,8 +2925,8 @@ function SalesReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
       {!rows.length ? (
         <div className="empty-state">No completed or paid repair orders yet — reports will fill in as jobs are finished and paid.</div>
       ) : (
-        <div className="table-wrap">
-        <table>
+        <div className="table-wrap report-table-wrap">
+        <table className="report-table">
           <thead>
             <tr>
               <th>{period === "week" ? "Week" : "Month"}</th>
@@ -2971,7 +2971,7 @@ function SalesReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
         </div>
       )}
       {rows.length > 6 && (
-        <button type="button" style={{ marginTop: 12 }} onClick={() => setShowAll(!showAll)}>
+        <button type="button" className="button secondary small" style={{ marginTop: 12 }} onClick={() => setShowAll(!showAll)}>
           {showAll ? "Show fewer" : `Show all ${rows.length} ${period === "week" ? "weeks" : "months"}`}
         </button>
       )}

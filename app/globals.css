@@ -2917,3 +2917,18 @@ select option { background-color: var(--panel); color: var(--ink); }
   .profile-history-wrap { margin: 0; border-top: 0; }
   .profile-vehicle-grid { grid-template-columns: 1fr; }
 }
+
+/* ==== Redesign: Reports + Settings ==== */
+.report-table th { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; white-space: nowrap; }
+.report-table th:not(:first-child), .report-table td:not(:first-child) { text-align: right; }
+.report-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.report-table th:first-child, .report-table td:first-child { position: sticky; left: 0; background: var(--panel); z-index: 1; font-weight: 600; }
+.report-table tbody tr:hover td:first-child { background: var(--panel-header); }
+.stat-tiles .panel > div:last-child { font-variant-numeric: tabular-nums; }
+
+.settings-sections { padding: 3px; gap: 2px; }
+.settings-sections button { padding: 8px 14px; font-size: 13.5px; }
+.settings-sections button.active { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(16, 42, 76, 0.10); }
+[data-theme="dark"] .settings-sections button.active { background: var(--line); }
+label { font-weight: 600; }
+.checkbox-row p, .checkbox-row .muted { font-weight: 400; }
