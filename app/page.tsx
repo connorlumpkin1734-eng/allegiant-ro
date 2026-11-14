@@ -3228,7 +3228,8 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
             <input inputMode="decimal" value={laborRate} onChange={(event) => setLaborRate(event.target.value)} />
           </label>
           <label>Sales tax rate %
-            <input inputMode="decimal" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} placeholder="8.25" />
+            <input inputMode="decimal" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} placeholder="e.g. 8.25" />
+            <small className="muted" style={{ fontWeight: 400 }}>Leave blank if you don&apos;t charge sales tax.</small>
           </label>
         </div>
 
@@ -4095,7 +4096,7 @@ function RepairOrderEditor({
         });
       return [...current, ...added];
     });
-    if (!quiet) setMessage(`Added "${canned.name}". Check the hours and parts before you send it.`);
+    if (!quiet) notify(`Added "${canned.name}". Check the hours and parts, then send it.`, "success");
   }
 
   // ---- Declined work from earlier visits on this vehicle ----
@@ -4109,10 +4110,14 @@ function RepairOrderEditor({
   /** Bring a declined job back as its own recommendation line, same priority, today's pricing. */
   function addDeclinedJob(job: DeclinedJob) {
     const lineId = crypto.randomUUID();
+    const isBlank = (line: ConcernLine) => !line.concern?.trim() && !line.cause?.trim() && !line.correction?.trim() && !line.priority
+      && !items.some((item) => item.concern_line_id === line.id)
+      && !(initialRo?.concern_lines ?? []).some((saved) => saved.id === line.id);
     setConcernLines((current) => [
-      ...current,
+      // The empty "Line A" a new RO starts with shouldn't stay behind as a blank line.
+      ...current.filter((line) => !isBlank(line)),
       { id: lineId, sort_order: current.length, kind: "inspection", priority: job.priority, concern: job.title, cause: "", correction: "" },
-    ]);
+    ].map((line, order) => ({ ...line, sort_order: order })));
     addCannedJob(lineId, { name: job.title, items: cannedItemsFrom(job.items) }, "inspection", true);
     setDismissedDeclined((current) => [...current, job.key]);
     notify(`Added "${job.title}" from RO #${padRo(job.roNumber)}. It's marked Needs customer OK.`, "success");
@@ -4374,7 +4379,7 @@ function RepairOrderEditor({
       if (!decoded) throw new Error("No VIN result was returned.");
 
       const engineParts = [
-        decoded.DisplacementL ? `${decoded.DisplacementL}L` : "",
+        decoded.DisplacementL && Number.isFinite(Number(decoded.DisplacementL)) ? `${Number(decoded.DisplacementL).toFixed(1)}L` : "",
         decoded.EngineCylinders ? `${decoded.EngineCylinders} cyl` : "",
         decoded.EngineModel || "",
       ].filter(Boolean);
@@ -4389,7 +4394,7 @@ function RepairOrderEditor({
         engine: engineParts.join(" ") || current.engine,
         vin_data: decoded,
       }));
-      setMessage("VIN decoded. Review the fields before saving.");
+      notify("VIN decoded. Check the vehicle details, then save.", "success");
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "VIN decoding failed.");
     } finally {
@@ -6493,7 +6498,9 @@ function MoreMenu({ items, label, ariaLabel = "More actions", small = false }: {
     if (!open && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
       const width = Math.min(260, window.innerWidth - 16);
-      const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
+      // Buttons on the left half open their list to the right; ⋯ buttons on the right open leftward.
+      const anchor = rect.left < window.innerWidth / 2 ? rect.left : rect.right - width;
+      const left = Math.max(8, Math.min(anchor, window.innerWidth - width - 8));
       const roomBelow = window.innerHeight - rect.bottom;
       setPosition(roomBelow < 280 && rect.top > roomBelow
         ? { position: "fixed", left, width, bottom: window.innerHeight - rect.top + 6, top: "auto", right: "auto" }
