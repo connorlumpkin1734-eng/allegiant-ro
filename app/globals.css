@@ -2810,3 +2810,74 @@ select option { background-color: var(--panel); color: var(--ink); }
   .ro-list-table tr.ro-row { border-radius: 12px; padding: 14px 16px; }
   .ro-list-table td:first-child, .ro-list-table td:last-child { padding-left: 0; padding-right: 0; }
 }
+
+/* ==== Redesign: RO screen (calm) ==== */
+/* Lines: white card, hairline border, colored letter chip carries the kind. */
+.concern-lines { gap: 16px; }
+.concern-line-card { border: 1px solid var(--line); border-left-width: 1px; border-radius: 14px; background: var(--panel); }
+.concern-line-card.inspection, .concern-line-card.request, .concern-line-card.unassigned { border-left-color: var(--line); }
+.concern-line-header { padding: 14px 18px 10px; }
+.concern-line-letter { width: 32px; height: 32px; border-radius: 9px; font-size: 15px; background: var(--accent-tint); color: var(--accent); }
+.concern-line-card.inspection .concern-line-letter { background: var(--warn-tint); color: var(--warn-text); }
+.concern-line-card.request .concern-line-letter { background: var(--success-tint); color: var(--success-text); }
+.concern-line-card.unassigned .concern-line-letter { background: var(--panel-header); color: var(--muted); }
+.concern-line-title span { font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.concern-line-title strong { font-size: 16px; font-weight: 600; }
+.concern-line-meta { font-weight: 500; }
+.concern-line-3c { padding: 0 18px 16px; gap: 14px; }
+.concern-line-3c textarea, .service-job-narratives textarea { background: var(--panel); }
+.concern-line-jobs { background: transparent; padding: 0 18px 16px; border-top: 0; gap: 12px; }
+.concern-line-actions { background: transparent; padding: 0 18px 16px; }
+
+/* Who sees a field: quiet text, not a badge. */
+.visibility-tag, .visibility-tag.customer, .visibility-tag.invoice, .visibility-tag.private, .visibility-tag.locked {
+  padding: 0; background: transparent; font-size: 11.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted);
+}
+.visibility-tag.private { color: var(--warn-text); }
+.field-title { font-weight: 600; font-size: 13px; }
+
+/* Jobs: one flat bordered block; no gray header band. */
+.service-job-card { border-radius: 12px; }
+.service-job-header { padding: 12px 14px; background: var(--panel); border-bottom: 1px solid var(--line); align-items: center; }
+.service-job-number { width: auto; min-width: 30px; height: 28px; border-radius: 8px; background: var(--panel-header); color: var(--ink); font-size: 13px; font-weight: 600; }
+.service-job-header input { font-size: 15px; font-weight: 600; border-color: transparent; background: transparent; padding-left: 8px; }
+.service-job-header input:hover { border-color: var(--line); }
+.service-job-header input:focus { border-color: var(--accent); background: var(--panel); }
+.service-job-total span { font-size: 11px; font-weight: 500; text-transform: none; }
+.service-job-total strong { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.service-job-card.customer-approved, .service-job-card.customer-declined { box-shadow: none; }
+.service-job-card.customer-approved .service-job-header, .service-job-card.customer-declined .service-job-header,
+.service-job-card.job-status-pending_review .service-job-header { box-shadow: none; }
+.job-status-row { padding: 10px 14px; }
+.job-status-badge { font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+
+/* Charge rows */
+.charge-line { padding: 10px 14px; }
+.charge-line.associated-part { background: var(--panel); }
+.charge-type-label { font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: capitalize; color: var(--muted); }
+.charge-line.discount { border: 0; border-bottom: 1px solid var(--line); background: var(--success-tint); }
+.icon-button { background: transparent; color: var(--muted); font-size: 20px; }
+.icon-button:hover { background: var(--danger-tint); color: var(--danger-text); }
+.job-add-actions { background: transparent; padding: 10px 14px; }
+.job-photos { background: transparent; }
+
+/* Add-line buttons: all the same quiet weight. */
+.line-items-panel .section-heading .button-row .button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); font-weight: 600; }
+.line-items-panel .section-heading .button-row .button:hover { background: var(--panel-header); }
+.line-items-panel .section-heading .button-row .discount-button { color: var(--success-text); }
+
+/* Top summary cards and stage track */
+.ro-summary-card { background: var(--panel); }
+.ro-summary-head > span { font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.stage-track { gap: 4px; }
+.stage-track li { border: 0; border-radius: 0; background: transparent; padding: 10px 4px 8px; border-top: 3px solid var(--line); font-weight: 500; text-align: left; }
+.stage-track li.done { border-top-color: var(--success-text); color: var(--ink); }
+.stage-track li.current { border-top-color: var(--accent); background: transparent; color: var(--ink); font-weight: 700; }
+.stage-track li.todo { border-style: solid; border-top-color: var(--line); }
+
+/* Profit box: readable labels. */
+.ro-profit-summary { background: var(--panel-header); border-color: transparent; }
+.ro-profit-title span, .ro-profit-summary div > span, .job-profit-panel div > span, .job-profit-heading span { font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.ro-profit-summary small, .job-profit-panel small { font-size: 11px; }
+.grand-total { border-top: 1px solid var(--line); font-weight: 600; }
+.dispatch-heading h3 { font-size: 13px; letter-spacing: 0; text-transform: none; }
