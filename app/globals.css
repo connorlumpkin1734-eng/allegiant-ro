@@ -3256,7 +3256,7 @@ label { font-weight: 600; }
 .segmented.job-progress button { padding: 8px 14px; font-size: 13px; font-weight: 700; color: var(--ink); opacity: .7; }
 .segmented.job-progress button:hover { opacity: 1; background: var(--panel-header); }
 .segmented.job-progress button.active { opacity: 1; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
-.segmented.job-progress button.active.progress-not_started { background: #64748b; color: #fff; }
+.segmented.job-progress button.active.progress-not_started { background: #d64545; color: #fff; }
 .segmented.job-progress button.active.progress-in_progress { background: #f0a92f; color: #2b1a00; }
 .segmented.job-progress button.active.progress-waiting_parts { background: #6d5bd0; color: #fff; }
 .segmented.job-progress button.active.progress-done { background: #22a06b; color: #fff; }
