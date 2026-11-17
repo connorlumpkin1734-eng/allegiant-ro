@@ -5249,6 +5249,8 @@ function RepairOrderEditor({
           )}
           {initialRo && workspaceTab === "work_order" && settings.team_features_enabled && (
             isJobWorkable(group.id, jobStatus) ? (
+              <div className="job-progress-wrap">
+              <span className="job-progress-label">Progress</span>
               <div className="segmented job-progress" role="group" aria-label="Job progress">
                 {JOB_PROGRESS.map((step) => {
                   const current = (first.job_progress ?? "not_started") === step.value;
@@ -5264,6 +5266,7 @@ function RepairOrderEditor({
                     </button>
                   );
                 })}
+              </div>
               </div>
             ) : null
           )}

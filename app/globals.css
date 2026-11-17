@@ -3247,3 +3247,21 @@ label { font-weight: 600; }
   .document-page .document-line-head em { order: 3; flex-basis: 100%; margin-left: 0; padding-left: 0; white-space: normal; }
   .document-page .document-charges { width: 100%; max-width: 100%; }
 }
+
+/* Job progress (Not started / In progress / Waiting on parts / Done): the thing techs touch most,
+   so it reads as a control at a glance — labelled, bigger, outlined, and the current step colored. */
+.job-progress-wrap { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.job-progress-label { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.segmented.job-progress { border: 1.5px solid color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--panel); padding: 3px; gap: 3px; }
+.segmented.job-progress button { padding: 8px 14px; font-size: 13px; font-weight: 700; color: var(--ink); opacity: .7; }
+.segmented.job-progress button:hover { opacity: 1; background: var(--panel-header); }
+.segmented.job-progress button.active { opacity: 1; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.segmented.job-progress button.active.progress-not_started { background: #64748b; color: #fff; }
+.segmented.job-progress button.active.progress-in_progress { background: #f0a92f; color: #2b1a00; }
+.segmented.job-progress button.active.progress-waiting_parts { background: #6d5bd0; color: #fff; }
+.segmented.job-progress button.active.progress-done { background: #22a06b; color: #fff; }
+@media (max-width: 640px) {
+  .job-progress-wrap { width: 100%; }
+  .segmented.job-progress { width: 100%; }
+  .segmented.job-progress button { flex: 1 1 0; padding: 9px 4px; font-size: 12px; }
+}
