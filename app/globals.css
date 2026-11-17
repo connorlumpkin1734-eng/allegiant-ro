@@ -3238,3 +3238,12 @@ label { font-weight: 600; }
   .document-page .document-line-row td { padding-left: 6px; }
   .document-page { padding: 16px; }
 }
+
+/* Document preview on a phone: the line's kind label ("Technician recommendation") sits under the
+   title instead of beside it, so it can't push the table wider than the page and cut off amounts. */
+@media screen and (max-width: 700px) {
+  .document-page .document-line-head { flex-wrap: wrap; row-gap: 3px; }
+  .document-page .document-line-head strong { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; }
+  .document-page .document-line-head em { order: 3; flex-basis: 100%; margin-left: 0; padding-left: 0; white-space: normal; }
+  .document-page .document-charges { width: 100%; max-width: 100%; }
+}
