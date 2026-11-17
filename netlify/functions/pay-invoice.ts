@@ -1,3 +1,5 @@
+import { recordDocumentView } from "../../lib/document-views";
+import { createConnectedCheckout } from "../../lib/stripe-checkout";
 import { notifyError } from "../../lib/platform-alert";
 import { balanceAfterPayments, type PaymentAmountRow } from "../../lib/payments-received";
 import { activeCardProcessor, cardMethodsLabel, createSquareCheckout } from "../../lib/square";
@@ -117,6 +119,7 @@ async function handler(request: Request): Promise<Response> {
   const zelleAvailable = !trialBlocked && Boolean(settings.zelle_recipient);
 
   if (request.method === "GET") {
+    await recordDocumentView(request, supabaseUrl, serviceHeaders, ro.id, link.owner_id, "invoice");
     return json({
       businessName: settings.business_name || "the shop",
       roNumber: ro.ro_number,
@@ -162,8 +165,6 @@ async function handler(request: Request): Promise<Response> {
     if (!stripeSecretKey || !settings.stripe_account_id) return json({ error: "Card payment isn't available for this invoice." }, 400);
     const sessionParams = new URLSearchParams({
       mode: "payment",
-      "payment_method_types[0]": "card",
-      "payment_method_types[1]": "us_bank_account",
       "line_items[0][quantity]": "1",
       "line_items[0][price_data][currency]": "usd",
       "line_items[0][price_data][unit_amount]": String(Math.round(total * 100)),
@@ -175,13 +176,8 @@ async function handler(request: Request): Promise<Response> {
     });
     if (ro.customers?.email) sessionParams.set("customer_email", ro.customers.email);
 
-    const sessionResponse = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${stripeSecretKey}`, "Content-Type": "application/x-www-form-urlencoded", "Stripe-Account": settings.stripe_account_id },
-      body: sessionParams,
-    });
-    const session = await sessionResponse.json() as { id?: string; url?: string; error?: { message?: string } };
-    if (!sessionResponse.ok || !session.id || !session.url) return json({ error: "Could not start checkout. Please try again." }, 400);
+    const { ok: sessionOk, session } = await createConnectedCheckout(stripeSecretKey, settings.stripe_account_id, sessionParams);
+    if (!sessionOk || !session.id || !session.url) return json({ error: "Could not start checkout. Please try again." }, 400);
 
     const paymentInsert = await fetch(`${supabaseUrl}/rest/v1/payments`, {
       method: "POST",

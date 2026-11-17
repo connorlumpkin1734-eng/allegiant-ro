@@ -559,8 +559,12 @@ function dismissToast(id: number) {
   emitToasts();
 }
 const ERRORISH = /(could not|couldn't|can't|cannot|didn't|did not|nothing changed|refused|error|failed|missing|required|needs? |add the|add at least|before |invalid|expired|too many|not allowed|only the|doesn't look|denied|rejected|isn't|wasn't|should be|\benter (the|at least|a|an)\b|write the|choose |pick a)/i;
-const SUCCESSISH = /\b(emailed|sent|saved|copied|recorded|approved|updated|added|removed|deleted|archived|restored|confirmed|ready|marked|reopened|notified|done|complete|turned)\b/i;
+const SUCCESSISH = /\b(emailed|sent|saved|copied|recorded|approved|updated|added|removed|deleted|archived|restored|confirmed|ready|marked|reopened|notified|done|complete|turned|decoded|changed|connected)\b/i;
 function guessToastKind(text: string): ToastKind {
+  // Judge by the first sentence: "VIN decoded. Review the fields before saving." is a success with
+  // a tip, not an error, even though the tip contains "before".
+  const first = text.split(/(?<=[.!?])\s/)[0];
+  if (!ERRORISH.test(first) && SUCCESSISH.test(first)) return "success";
   if (ERRORISH.test(text)) return "error";
   return SUCCESSISH.test(text) ? "success" : "info";
 }
@@ -829,6 +833,24 @@ type RepairOrder = {
   payments?: Array<{ processor: string; status: string; amount?: number | string; payment_method_type?: string | null; created_at?: string }>;
   latest_estimate_authorization?: EstimateAuthorization | null;
 };
+
+type DocumentView = {
+  kind: "estimate" | "invoice";
+  sent_at: string | null;
+  first_viewed_at: string | null;
+  last_viewed_at: string | null;
+  view_count: number;
+};
+
+/** "2:31 PM" today, "Tue 2:31 PM" this week, "Nov 3, 2:31 PM" otherwise. */
+function shortWhen(iso: string) {
+  const date = new Date(iso);
+  const now = new Date();
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (date.toDateString() === now.toDateString()) return `today ${time}`;
+  if (now.getTime() - date.getTime() < 6 * 86400000) return `${date.toLocaleDateString([], { weekday: "short" })} ${time}`;
+  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
 
 type EstimateAuthorization = {
   id: string;
@@ -1325,7 +1347,7 @@ function PlatformAdminOnlyApp() {
         <img className="platform-logo" src="/rorunner-logo-white.png" alt="ROrunner" />
         <span className="topbar-logo-text">Platform Admin</span>
         <nav />
-        <button className="button secondary" onClick={() => supabase.auth.signOut()}>
+        <button className="button secondary" onClick={() => void signOutEverywhere()}>
           Sign out
         </button>
       </header>
@@ -1548,6 +1570,60 @@ function AuthScreen() {
   );
 }
 
+/** Owner changes the email they sign in with. Supabase emails a confirmation link to the new
+ *  address (and, with secure email change on, the old one); nothing changes until it's clicked. */
+function ChangeEmailModal({ currentEmail, onClose }: { currentEmail: string; onClose: () => void }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useToastMessage();
+  const [sentTo, setSentTo] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setMessage("");
+    const next = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next)) { setMessage("Enter a valid email address."); return; }
+    if (next === currentEmail.toLowerCase()) { setMessage("That's already your sign-in email."); return; }
+    setBusy(true);
+    const { error } = await supabase.auth.updateUser({ email: next }, { emailRedirectTo: window.location.origin });
+    setBusy(false);
+    if (error) { setMessage(error.message); return; }
+    setSentTo(next);
+  }
+
+  return (
+    <div className="vin-scanner-backdrop" role="dialog" aria-modal="true" aria-label="Change sign-in email">
+      <div className="vin-scanner-modal" style={{ maxWidth: 440 }}>
+        <h2 style={{ marginTop: 0 }}>Change sign-in email</h2>
+        {sentTo ? (
+          <>
+            <p>We sent a confirmation link to <strong>{sentTo}</strong>. Your sign-in email changes once you click it.</p>
+            <p className="muted">You may also get a link at {currentEmail || "your current email"}. If so, click both.</p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" className="button primary" onClick={onClose}>Done</button>
+            </div>
+          </>
+        ) : (
+          <form onSubmit={submit} className="stack">
+            <p className="muted" style={{ marginTop: -6 }}>
+              Currently <strong>{currentEmail}</strong>. This is only the email you sign in with. Your shop&apos;s business email (on estimates and invoices) is in Settings → Shop.
+            </p>
+            <label>
+              New email
+              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" />
+            </label>
+            {message && <div className="notice">{message}</div>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="button secondary" onClick={onClose} disabled={busy}>Cancel</button>
+              <button type="submit" className="button primary" disabled={busy}>{busy ? "Sending…" : "Send confirmation"}</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ChangePasswordModal({
   onClose,
   forced,
@@ -1636,6 +1712,21 @@ function ChangePasswordModal({
       </div>
     </div>
   );
+}
+
+/** Sign out, and if the server refuses (expired or already-ended session) still clear this
+ *  browser's saved login. supabase-js keeps the local session when the sign-out request errors. */
+async function signOutEverywhere() {
+  const { error } = await supabase.auth.signOut();
+  if (!error) return;
+  // The server no longer knows this session (e.g. "session_not_found"), so the normal sign-out
+  // refuses and leaves the saved login behind. Drop it from this browser and start fresh.
+  try {
+    Object.keys(window.localStorage).filter((key) => key.startsWith("sb-") && key.includes("auth-token")).forEach((key) => window.localStorage.removeItem(key));
+  } catch {
+    // Storage blocked; the reload below still lands on the sign-in screen once the token fails.
+  }
+  window.location.reload();
 }
 
 // Mirrors the DB's owner_can_write() RLS check (see migration
@@ -1772,6 +1863,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useToastMessage("error");
   const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [showEmailChange, setShowEmailChange] = useState(false);
   const [reportsTab, setReportsTab] = useState<"sales" | "team">("sales");
   // "Finish later" on the first-run shop setup; remembered for this browser session only.
   const [setupSkipped, setSetupSkipped] = useState(() => {
@@ -2355,9 +2447,11 @@ function RepairOrderApp({ user }: { user: User }) {
           theme={uiTheme}
           onTheme={changeUiTheme}
           onChangePassword={() => setShowPasswordChange(true)}
-          onSignOut={() => { if (okToLeave()) void supabase.auth.signOut(); }}
+          onChangeEmail={isOwner ? () => setShowEmailChange(true) : undefined}
+          onSignOut={() => { if (okToLeave()) void signOutEverywhere(); }}
         />
       </header>
+      {showEmailChange && <ChangeEmailModal currentEmail={user.email ?? ""} onClose={() => setShowEmailChange(false)} />}
       {showPasswordChange && (
         <ChangePasswordModal
           forced={Boolean(currentStaff?.must_change_password)}
@@ -3225,11 +3319,12 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
   async function finish(event: FormEvent) {
     event.preventDefault();
     const rate = Number(laborRate.replace(/[$,\s]/g, ""));
-    const tax = taxRate.trim() ? Number(taxRate.replace(/[%\s]/g, "")) : 0;
+    const tax = Number(taxRate.replace(/[%\s]/g, ""));
     if (!name.trim()) return setProblem("Enter your shop's name.");
     if (!phone.trim()) return setProblem("Enter the shop phone number customers should call.");
     if (!Number.isFinite(rate) || rate <= 0) return setProblem("Enter your labor rate per hour, like 120.");
-    if (!Number.isFinite(tax) || tax < 0 || tax > 20) return setProblem("Sales tax should be a percent, like 8.25 (or leave it blank for none).");
+    if (!taxRate.trim()) return setProblem("Enter your sales tax rate, like 8.25. Type 0 if you don't charge sales tax.");
+    if (!Number.isFinite(tax) || tax < 0 || tax > 20) return setProblem("Sales tax should be a percent, like 8.25 (or 0 for none).");
     const cityLine = [city.trim(), [state.trim(), zip.trim()].filter(Boolean).join(" ")].filter(Boolean).join(", ");
     const changes: Partial<Settings> = {
       business_name: name.trim(),
@@ -3318,9 +3413,9 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
           <label>Labor rate ($ per hour) *
             <input inputMode="decimal" value={laborRate} onChange={(event) => setLaborRate(event.target.value)} />
           </label>
-          <label>Sales tax rate %
+          <label>Sales tax rate % *
             <input inputMode="decimal" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} placeholder="e.g. 8.25" />
-            <small className="muted" style={{ fontWeight: 400 }}>Leave blank if you don&apos;t charge sales tax.</small>
+            <small className="muted" style={{ fontWeight: 400 }}>Charged on taxable parts. Type 0 if you don&apos;t charge tax.</small>
           </label>
         </div>
 
@@ -3347,13 +3442,14 @@ function ShopSetup({ ownerId, accountEmail, settings, onDone, onSkip }: {
 }
 
 /** Top-bar account button: who's signed in, their theme, password and sign out — one tap instead of five buttons. */
-function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, onSignOut }: {
+function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, onChangeEmail, onSignOut }: {
   name: string;
   detail: string;
   email: string;
   theme: UiTheme;
   onTheme: (theme: UiTheme) => void;
   onChangePassword: () => void;
+  onChangeEmail?: () => void;
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -3406,6 +3502,7 @@ function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, on
             </div>
           </div>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); onChangePassword(); }}>Change password</button>
+          {onChangeEmail && <button type="button" role="menuitem" onClick={() => { setOpen(false); onChangeEmail(); }}>Change sign-in email</button>}
           <button type="button" role="menuitem" className="danger" onClick={() => { setOpen(false); onSignOut(); }}>Sign out</button>
         </div>
       )}
@@ -4007,6 +4104,24 @@ function RepairOrderEditor({
   // Flips to true the moment an estimate goes out, so the banner and main button stop saying "Send estimate".
   const [estimateJustSent, setEstimateJustSent] = useState(false);
   const authorizationStatus = estimateJustSent ? "sent" : currentAuthorization?.status;
+
+  // Has the customer opened the estimate / invoice link we emailed? (document_views; advisors only)
+  const [docViews, setDocViews] = useState<DocumentView[]>([]);
+  const [docViewsTick, setDocViewsTick] = useState(0);
+  useEffect(() => {
+    if (!initialRo || isTechnician) return;
+    let live = true;
+    const load = () => {
+      void supabase.from("document_views").select("kind, sent_at, first_viewed_at, last_viewed_at, view_count")
+        .eq("repair_order_id", initialRo.id)
+        .then(({ data }) => { if (live && data) setDocViews(data as DocumentView[]); });
+    };
+    load();
+    const onFocus = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => { live = false; document.removeEventListener("visibilitychange", onFocus); window.removeEventListener("focus", onFocus); };
+  }, [initialRo?.id, isTechnician, docViewsTick]);
 
   // ---- Two people on one RO ----
   // The editor remembers the RO's edit_version it loaded. Before saving it checks the database; if
@@ -5216,14 +5331,16 @@ function RepairOrderEditor({
           ))}
         </div>
         <div className="job-add-actions">
-          {/* One "+ Add" per job instead of a row of buttons. */}
+          {/* Parts get their own button (the most common add); everything else lives under "+ Add". */}
+          {canAddPartLine && (
+            <button type="button" className="button secondary small" onClick={() => addItem("part", group.id)}>+ Part</button>
+          )}
           <MoreMenu
             label="+ Add"
             small
             items={[
               // Approved work's labor is what the customer OK'd; a tech adds more as a new recommendation.
               !(isTechnician && !canRestructureRo && jobStatus === "authorized") && { label: "Labor", onClick: () => addItem("labor", group.id) },
-              canAddPartLine && { label: "Part", onClick: () => addItem("part", group.id) },
               initialRo && workspaceTab === "work_order" && {
                 label: "Photo or video",
                 onClick: () => {
@@ -5282,6 +5399,7 @@ function RepairOrderEditor({
           onSent={(sentTo, savedToCustomer) => {
             if (savedToCustomer) setCustomerForm((current) => ({ ...current, email: sentTo }));
             if (sendKind === "estimate") setEstimateJustSent(true);
+            setDocViewsTick((tick) => tick + 1);
             void syncEditVersion();
             onBackgroundRefresh?.();
           }}
@@ -5302,6 +5420,24 @@ function RepairOrderEditor({
           </div>
           {initialRo && (customerForm.name || vehicleForm.make) && (
             <span className="muted">{[customerForm.name, [vehicleForm.year, vehicleForm.make, vehicleForm.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
+          )}
+          {!isTechnician && docViews.some((view) => view.sent_at) && (
+            <div className="doc-views">
+              {(["estimate", "invoice"] as const).map((kind) => {
+                const view = docViews.find((entry) => entry.kind === kind);
+                if (!view?.sent_at) return null;
+                const opened = view.view_count > 0 && view.last_viewed_at;
+                return (
+                  <span key={kind} className={`doc-view ${opened ? "opened" : "unopened"}`} title={opened && view.first_viewed_at ? `First opened ${shortWhen(view.first_viewed_at)}` : undefined}>
+                    <strong>{kind === "estimate" ? "Estimate" : "Invoice"}</strong>
+                    {" sent "}{shortWhen(view.sent_at)}{" · "}
+                    {opened
+                      ? <>opened{view.view_count > 1 ? ` ${view.view_count}×` : ""}, last {shortWhen(view.last_viewed_at!)}</>
+                      : "not opened yet"}
+                  </span>
+                );
+              })}
+            </div>
           )}
         </div>
         {initialRo && (
@@ -5363,6 +5499,14 @@ function RepairOrderEditor({
           <span className="next-step-label">{nextStep.tone === "done" ? "Done" : nextStep.tone === "wait" ? "Status" : "Next step"}</span>
           <strong>{nextStep.title}</strong>
           <span className="next-step-text">{nextStep.text}</span>
+        </div>
+      )}
+      {initialRo && !isTechnician && !paid && Number(taxRate) === 0 && Number(settings.sales_tax_rate) > 0 && (
+        <div className="handoff-banner warn">
+          <strong>This RO has no sales tax.</strong>
+          <span>It was created at 0%; your shop rate is now {Number(settings.sales_tax_rate)}%.{" "}
+            <button type="button" className="button small secondary" onClick={() => setTaxRate(Number(settings.sales_tax_rate))}>Use {Number(settings.sales_tax_rate)}%</button>
+            {" "}then Save Changes.</span>
         </div>
       )}
       {/* Techs see "Approved · go ahead" on each job instead of this money panel. */}
@@ -9301,6 +9445,27 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
     await loadAll();
   }
 
+  async function updateStaffEmail(id: string, email: string, input: HTMLInputElement, previous: string) {
+    setMessage("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/.netlify/functions/update-staff-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ staffId: id, email }),
+      });
+      const body = await response.json() as { error?: string; message?: string };
+      if (!response.ok) throw new Error(body.error || "Couldn't change that email.");
+      setMessage(body.message || "Email changed.");
+      await loadAll();
+    } catch (error) {
+      input.value = previous;
+      setMessage(error instanceof Error ? error.message : "Couldn't change that email.");
+    }
+  }
+
   async function inviteStaff() {
     const name = inviteForm.name.trim();
     const email = inviteForm.email.trim();
@@ -9472,7 +9637,19 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
                         }}
                       />
                     </td>
-                    <td>{member.email}</td>
+                    <td>
+                      <input
+                        type="email"
+                        defaultValue={member.email || ""}
+                        style={{ width: 190 }}
+                        aria-label={`Email for ${member.name}`}
+                        onBlur={(event) => {
+                          const value = event.target.value.trim();
+                          if (!value || value.toLowerCase() === (member.email || "").toLowerCase()) return;
+                          void updateStaffEmail(member.id, value, event.target, member.email || "");
+                        }}
+                      />
+                    </td>
                     <td>
                       <select
                         value={member.role === "technician" && member.is_team_lead ? "lead" : member.role}
