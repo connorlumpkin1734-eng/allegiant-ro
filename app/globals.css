@@ -3268,4 +3268,14 @@ label { font-weight: 600; }
 
 /* "Remove?" confirm: sits over the row to the left of the ×, never clipped by the card edge. */
 .confirm-remove-slot { position: relative; display: inline-flex; justify-self: end; }
-.confirm-remove-slot .confirm-remove { position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 5; height: 34px; box-shadow: 0 4px 12px rgba(0,0,0,.3); outline-offset: 2px; }
+.confirm-remove-slot .confirm-remove {
+  position: absolute; right: -4px; top: calc(100% + 6px); z-index: 20; height: 34px; padding: 0 14px;
+  border: 0; border-radius: 8px; background: #d64545; color: #fff; font-weight: 700;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35); outline: none;
+}
+.confirm-remove-slot .confirm-remove::before {
+  content: ""; position: absolute; right: 14px; top: -5px; width: 10px; height: 10px;
+  background: #d64545; transform: rotate(45deg); border-radius: 2px;
+}
+.confirm-remove-slot .confirm-remove:hover { background: #c23434; }
+.confirm-remove-slot .confirm-remove:hover::before { background: #c23434; }
