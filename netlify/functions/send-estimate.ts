@@ -172,6 +172,10 @@ export default async (request: Request) => {
       method: "PATCH", headers: serviceHeaders,
       body: JSON.stringify({ estimate_status: "sent", estimate_sent_at: new Date().toISOString(), estimate_responded_at: null }),
     });
+    // Texted links get the same "opened / not opened yet" tracking as emailed ones.
+    await fetch(`${supabaseUrl}/rest/v1/rpc/record_document_sent`, {
+      method: "POST", headers: serviceHeaders, body: JSON.stringify({ p_repair_order_id: ro.id, p_owner_id: ownerId, p_kind: "estimate" }),
+    }).catch(() => undefined);
     return json({
       message: "Estimate link ready to text.",
       approvalUrl,
