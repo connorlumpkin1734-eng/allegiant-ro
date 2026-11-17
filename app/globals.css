@@ -3265,3 +3265,7 @@ label { font-weight: 600; }
   .segmented.job-progress { width: 100%; }
   .segmented.job-progress button { flex: 1 1 0; padding: 9px 4px; font-size: 12px; }
 }
+
+/* "Remove?" confirm: sits over the row to the left of the ×, never clipped by the card edge. */
+.confirm-remove-slot { position: relative; display: inline-flex; justify-self: end; }
+.confirm-remove-slot .confirm-remove { position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 5; height: 34px; box-shadow: 0 4px 12px rgba(0,0,0,.3); outline-offset: 2px; }

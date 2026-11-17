@@ -7285,12 +7285,16 @@ function ConfirmRemoveButton({ title, onConfirm }: { title: string; onConfirm: (
     const timer = window.setTimeout(() => setArmed(false), 3500);
     return () => window.clearTimeout(timer);
   }, [armed]);
-  return armed ? (
-    <button type="button" className="icon-button confirm-remove" title={title} onClick={() => { setArmed(false); onConfirm(); }} onBlur={() => setArmed(false)} autoFocus>
-      Remove?
-    </button>
-  ) : (
-    <button type="button" className="icon-button" title={title} aria-label={title} onClick={() => setArmed(true)}>×</button>
+  // The slot stays the size of the ×; "Remove?" opens leftward over the row so it's never clipped.
+  return (
+    <span className="confirm-remove-slot">
+      <button type="button" className="icon-button" title={title} aria-label={title} onClick={() => setArmed(true)} tabIndex={armed ? -1 : 0} style={armed ? { visibility: "hidden" } : undefined}>×</button>
+      {armed && (
+        <button type="button" className="icon-button confirm-remove" title={title} onClick={() => { setArmed(false); onConfirm(); }} onBlur={() => setArmed(false)} autoFocus>
+          Remove?
+        </button>
+      )}
+    </span>
   );
 }
 
