@@ -3299,3 +3299,8 @@ label { font-weight: 600; }
 @media (max-width: 700px) {
   .job-fold-summary { margin-right: auto; flex-wrap: wrap; }
 }
+@media (min-width: 701px) {
+  .service-job-card.job-collapsed .service-job-header { grid-template-columns: auto minmax(200px, 1fr) auto auto; align-items: center; }
+  .service-job-card.job-collapsed .service-job-total { display: flex; align-items: center; justify-content: flex-end; gap: 10px; white-space: nowrap; }
+  .service-job-card.job-collapsed .service-job-total .job-fold-summary { margin-right: 4px; }
+}
