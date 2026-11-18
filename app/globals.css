@@ -3306,5 +3306,3 @@ label { font-weight: 600; }
 }
 /* Record payment gets its own full-width row so it never spills out of the status box. */
 .ro-status-box .record-payment-button { width: 100%; justify-content: center; text-align: center; }
-.service-job-card .service-job-total .job-fold-summary { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }
-.service-job-card .service-job-total .job-fold-summary .job-fold-chip { display: inline-block; margin: 0; }
