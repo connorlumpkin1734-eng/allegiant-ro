@@ -3281,3 +3281,15 @@ label { font-weight: 600; }
 .confirm-remove-slot .confirm-remove:hover::before { background: #c23434; }
 /* Record payment gets its own full-width row so it never spills out of the status box. */
 .ro-status-box .record-payment-button { width: 100%; justify-content: center; text-align: center; }
+
+/* Totals sidebar on desktop: always pinned at the top and never taller than the screen (it scrolls
+   inside itself), so folding or opening a line can't make it jump up and down. */
+@media (min-width: 1081px) {
+  .totals-sidebar {
+    align-self: start;
+    max-height: calc(100vh - 92px - 90px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+}
