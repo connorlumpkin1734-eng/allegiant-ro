@@ -2890,6 +2890,9 @@ select option { background-color: var(--panel); color: var(--ink); }
 .ro-profit-summary { background: var(--panel-header); border-color: transparent; }
 .ro-profit-title span, .ro-profit-summary div > span, .job-profit-panel div > span, .job-profit-heading span { font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .ro-profit-summary small, .job-profit-panel small { font-size: 11px; }
+.ro-profit-subhead { grid-column: 1 / -1; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ro-profit-subhead strong { color: var(--ink); font-size: 13px; }
+.ro-profit-summary small.ro-profit-warning { color: var(--danger-text); }
 .grand-total { border-top: 1px solid var(--line); font-weight: 600; }
 .dispatch-heading h3 { font-size: 13px; letter-spacing: 0; text-transform: none; }
 

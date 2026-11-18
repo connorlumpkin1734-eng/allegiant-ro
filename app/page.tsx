@@ -4183,7 +4183,22 @@ function RepairOrderEditor({
     const revenue = invoiceItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
     const cost = invoiceItems.reduce((sum, item) => sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0);
     const profit = revenue - cost;
-    return { revenue, cost, profit, margin: revenue !== 0 ? (profit / revenue) * 100 : 0, usesAuthorization: hasCustomerAuthorizationResponse };
+    const partItems = invoiceItems.filter((item) => item.item_type === "part");
+    const partsRevenue = partItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+    const partsProfit = partsRevenue - cost;
+    const partsMissingCost = partItems.filter((item) => !Number(item.unit_cost || 0)).length;
+    return {
+      revenue,
+      cost,
+      profit,
+      margin: revenue !== 0 ? (profit / revenue) * 100 : 0,
+      hasParts: partItems.length > 0,
+      partsRevenue,
+      partsProfit,
+      partsMargin: partsRevenue !== 0 ? (partsProfit / partsRevenue) * 100 : 0,
+      partsMissingCost,
+      usesAuthorization: hasCustomerAuthorizationResponse
+    };
   }, [hasCustomerAuthorizationResponse, invoiceItems]);
 
   const serviceGroups = useMemo(() => {
@@ -6182,6 +6197,18 @@ function RepairOrderEditor({
               <div><span>Recorded cost</span><strong>{money(profitSummary.cost)}</strong></div>
               <div className={profitSummary.profit >= 0 ? "positive" : "negative"}><span>Gross profit</span><strong>{money(profitSummary.profit)}</strong></div>
               <div className={profitSummary.margin >= 0 ? "positive" : "negative"}><span>Gross margin</span><strong>{profitSummary.margin.toFixed(1)}%</strong></div>
+              {profitSummary.hasParts && (
+                <>
+                  <div className="ro-profit-subhead"><strong>Parts</strong></div>
+                  <div><span>Parts sales</span><strong>{money(profitSummary.partsRevenue)}</strong></div>
+                  <div><span>Parts cost</span><strong>{money(profitSummary.cost)}</strong></div>
+                  <div className={profitSummary.partsProfit >= 0 ? "positive" : "negative"}><span>Parts profit</span><strong>{money(profitSummary.partsProfit)}</strong></div>
+                  <div className={profitSummary.partsMargin >= 0 ? "positive" : "negative"}><span>Parts margin</span><strong>{profitSummary.partsMargin.toFixed(1)}%</strong></div>
+                  {profitSummary.partsMissingCost > 0 && (
+                    <small className="ro-profit-warning">{profitSummary.partsMissingCost} part{profitSummary.partsMissingCost === 1 ? " has" : "s have"} no cost entered, so parts profit reads high.</small>
+                  )}
+                </>
+              )}
               <small>{profitSummary.usesAuthorization ? "Includes separately authorized jobs." : "All currently listed services."} Labor and overhead are not deducted.</small>
             </section>
           )}
