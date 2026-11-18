@@ -3284,7 +3284,7 @@ label { font-weight: 600; }
 
 /* Totals sidebar on desktop: always pinned at the top and never taller than the screen (it scrolls
    inside itself), so folding or opening a line can't make it jump up and down. */
-@media (min-width: 1081px) {
+@media (min-width: 981px) {
   .totals-sidebar {
     align-self: start;
     max-height: calc(100vh - 92px - 90px);
