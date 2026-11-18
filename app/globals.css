@@ -2518,7 +2518,9 @@ select option { background-color: var(--panel); color: var(--ink); }
 .approval-sticky { display: none; }
 @media (max-width: 700px) {
   .approval-shell { padding: 0; }
-  .approval-card { padding: 16px 14px 150px; border: 0; border-radius: 0; box-shadow: none; }
+  .approval-card { padding: 16px 14px calc(var(--approval-bar-h, 150px) + 32px); border: 0; border-radius: 0; box-shadow: none; }
+  html:has(.approval-sticky) { scroll-padding-bottom: calc(var(--approval-bar-h, 150px) + 16px); }
+  .approval-card .checkbox-row { scroll-margin-bottom: calc(var(--approval-bar-h, 150px) + 16px); }
   .approval-service { margin: 12px 0 20px; }
   .approval-service-heading { padding: 14px; }
   .approval-service-heading h3 { font-size: 17px; }

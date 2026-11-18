@@ -39,6 +39,17 @@ function authorizedDecisions(snapshot: Snapshot | undefined): Record<string, Dec
 }
 
 export default function EstimateApprovalPage() {
+  const stickyRef = useRef<HTMLDivElement>(null);
+  // The phone bottom bar grows when it shows a message, so keep the page padded by its real height
+  // (otherwise it covers the authorization checkbox at the end of the page).
+  useEffect(() => {
+    const bar = stickyRef.current; const root = document.documentElement;
+    if (!bar || typeof ResizeObserver === "undefined") return;
+    const update = () => root.style.setProperty("--approval-bar-h", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+    update();
+    const observer = new ResizeObserver(update); observer.observe(bar);
+    return () => { observer.disconnect(); root.style.removeProperty("--approval-bar-h"); };
+  });
   const canvasRef = useRef<HTMLCanvasElement>(null); const drawing = useRef(false); const signed = useRef(false);
   const [token, setToken] = useState(""); const [authorization, setAuthorization] = useState<Authorization | null>(null);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({}); const [signerName, setSignerName] = useState("");
@@ -143,7 +154,7 @@ export default function EstimateApprovalPage() {
       {message && authorization.status === "sent" && <div className="notice approval-message">{message}</div>}
     </>}
   </article>
-    {snapshot && authorization && authorization.status === "sent" && groups.length > 0 && <div className="approval-sticky" role="status">
+    {snapshot && authorization && authorization.status === "sent" && groups.length > 0 && <div ref={stickyRef} className="approval-sticky" role="status">
         {message && <p className="approval-sticky-message">{message}</p>}
         <div className="approval-sticky-row">
           <div><span>{Object.keys(decisions).length} of {groups.length} chosen</span><strong>{money(approvedTotal)}</strong></div>
