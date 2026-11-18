@@ -5358,26 +5358,29 @@ function RepairOrderEditor({
           ))}
         </div>
         <div className="job-add-actions">
-          {/* Parts get their own button (the most common add); everything else lives under "+ Add". */}
+          {/* Every add is one tap: no hidden menu. */}
           {canAddPartLine && (
             <button type="button" className="button secondary small" onClick={() => addItem("part", group.id)}>+ Part</button>
           )}
-          <MoreMenu
-            label="+ Add"
-            small
-            items={[
-              // Approved work's labor is what the customer OK'd; a tech adds more as a new recommendation.
-              !(isTechnician && !canRestructureRo && jobStatus === "authorized") && { label: "Labor", onClick: () => addItem("labor", group.id) },
-              initialRo && workspaceTab === "work_order" && {
-                label: "Photo or video",
-                onClick: () => {
-                  setOpenMedia((current) => new Set(current).add(group.id));
-                  window.setTimeout(() => document.getElementById(`job-media-${group.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
-                },
-              },
-              !openShopNotes.has(group.id) && !first.internal_notes && { label: "Shop note (private)", onClick: () => setOpenShopNotes((current) => new Set(current).add(group.id)) },
-            ]}
-          />
+          {/* Approved work's labor is what the customer OK'd; a tech adds more as a new recommendation. */}
+          {!(isTechnician && !canRestructureRo && jobStatus === "authorized") && (
+            <button type="button" className="button secondary small" onClick={() => addItem("labor", group.id)}>+ Labor</button>
+          )}
+          {initialRo && workspaceTab === "work_order" && (
+            <button
+              type="button"
+              className="button secondary small"
+              onClick={() => {
+                setOpenMedia((current) => new Set(current).add(group.id));
+                window.setTimeout(() => document.getElementById(`job-media-${group.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+              }}
+            >
+              + Photo or video
+            </button>
+          )}
+          {!openShopNotes.has(group.id) && !first.internal_notes && (
+            <button type="button" className="button secondary small" onClick={() => setOpenShopNotes((current) => new Set(current).add(group.id))}>+ Shop note</button>
+          )}
         </div>
         {initialRo && workspaceTab === "work_order" && (
           <details
@@ -6112,9 +6115,6 @@ function RepairOrderEditor({
                 <strong className={initialRo.paid ? "is-paid" : receivedSoFar > 0 ? "is-partial" : "is-open"}>
                   {initialRo.paid ? "Paid" : receivedSoFar > 0 ? "Partly paid" : "Unpaid"}
                 </strong>
-                {!payForm && !initialRo.paid && invoiceBalance > 0 && paymentsLoaded && (
-                  <button type="button" className="button small primary" onClick={openPayForm}>Record payment</button>
-                )}
                 {!payForm && paidWithoutRecords && (
                   <button type="button" className="button small ghost" onClick={() => void setPaymentStatus(false)}>Mark unpaid</button>
                 )}
@@ -6143,6 +6143,9 @@ function RepairOrderEditor({
                   <span>{invoiceBalance > 0 ? "Still owed" : "Balance"}</span>
                   <strong>{money(invoiceBalance)}</strong>
                 </div>
+              )}
+              {!payForm && !initialRo.paid && invoiceBalance > 0 && paymentsLoaded && (
+                <button type="button" className="button primary record-payment-button" onClick={openPayForm}>Record payment</button>
               )}
               {payForm && (
                 <div className="payment-form">

@@ -3304,3 +3304,5 @@ label { font-weight: 600; }
   .service-job-card.job-collapsed .service-job-total { display: flex; align-items: center; justify-content: flex-end; gap: 10px; white-space: nowrap; }
   .service-job-card.job-collapsed .service-job-total .job-fold-summary { margin-right: 4px; }
 }
+/* Record payment gets its own full-width row so it never spills out of the status box. */
+.ro-status-box .record-payment-button { width: 100%; justify-content: center; text-align: center; }
