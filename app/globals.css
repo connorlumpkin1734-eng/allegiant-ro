@@ -3287,7 +3287,7 @@ label { font-weight: 600; }
 @media (min-width: 981px) {
   .totals-sidebar {
     align-self: start;
-    max-height: calc(100vh - 92px - 90px);
+    max-height: calc(100vh - 92px - 120px);
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
