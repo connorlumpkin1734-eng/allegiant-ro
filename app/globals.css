@@ -3304,3 +3304,5 @@ label { font-weight: 600; }
 @media (max-width: 700px) {
   .approval-shell .approval-card.document-page { padding-bottom: calc(var(--approval-bar-h, 150px) + 32px); }
 }
+
+.totals-box .totals-full-estimate span, .totals-box .totals-full-estimate strong { color: var(--muted); font-size: 12px; font-weight: 500; }

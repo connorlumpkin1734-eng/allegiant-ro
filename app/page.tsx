@@ -4174,16 +4174,37 @@ function RepairOrderEditor({
     () => calculateLineItemTotals(invoiceItems, taxRate),
     [invoiceItems, taxRate]
   );
-  const displayedTotals = workspaceTab === "invoice" ? invoiceTotals : totals;
+  // Once any job on the RO is approved or declined, the estimate sidebar and profit box count
+  // approved work only (fees/discounts ride along once something is approved). Unanswered
+  // jobs stay out until they're approved. The full estimate is still shown underneath.
+  const approvedOnly = useMemo(() => {
+    const grouped = items.filter((item) => item.service_group_id && !isPendingReview(item));
+    const isApproved = (item: LineItem) =>
+      item.job_status === "authorized"
+      || currentDecisions[item.service_group_id as string] === "approved"
+      || Boolean(invoiceOverrides[item.service_group_id as string]);
+    const anyDecided = grouped.some((item) =>
+      isApproved(item) || item.job_status === "declined" || currentDecisions[item.service_group_id as string] === "declined");
+    const anyUndecided = grouped.some((item) => !isApproved(item) && item.job_status !== "declined");
+    const anyDeclined = grouped.some((item) => item.job_status === "declined" || currentDecisions[item.service_group_id as string] === "declined");
+    const active = anyDecided && (anyUndecided || anyDeclined);
+    const hasApproved = grouped.some(isApproved);
+    const approvedItems = items.filter((item) =>
+      !isPendingReview(item) && item.job_status !== "declined"
+      && (item.service_group_id ? isApproved(item) : hasApproved));
+    return { active, items: approvedItems, totals: calculateLineItemTotals(approvedItems, taxRate) };
+  }, [items, currentDecisions, invoiceOverrides, taxRate]);
+  const displayedTotals = workspaceTab === "invoice" ? invoiceTotals : approvedOnly.active ? approvedOnly.totals : totals;
+  const profitItems = workspaceTab !== "invoice" && approvedOnly.active ? approvedOnly.items : invoiceItems;
   const authorizationOverage = hasCustomerAuthorizationResponse
     ? invoiceTotals.total - Number(currentAuthorization?.approved_total || 0)
     : 0;
 
   const profitSummary = useMemo(() => {
-    const revenue = invoiceItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
-    const cost = invoiceItems.reduce((sum, item) => sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0);
+    const revenue = profitItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+    const cost = profitItems.reduce((sum, item) => sum + (item.item_type === "part" ? item.quantity * Number(item.unit_cost || 0) : 0), 0);
     const profit = revenue - cost;
-    const partItems = invoiceItems.filter((item) => item.item_type === "part");
+    const partItems = profitItems.filter((item) => item.item_type === "part");
     const partsRevenue = partItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
     const partsProfit = partsRevenue - cost;
     const partsMissingCost = partItems.filter((item) => !Number(item.unit_cost || 0)).length;
@@ -4197,9 +4218,10 @@ function RepairOrderEditor({
       partsProfit,
       partsMargin: partsRevenue !== 0 ? (partsProfit / partsRevenue) * 100 : 0,
       partsMissingCost,
-      usesAuthorization: hasCustomerAuthorizationResponse
+      usesAuthorization: hasCustomerAuthorizationResponse,
+      approvedOnly: workspaceTab !== "invoice" && approvedOnly.active
     };
-  }, [hasCustomerAuthorizationResponse, invoiceItems]);
+  }, [hasCustomerAuthorizationResponse, profitItems, workspaceTab, approvedOnly.active]);
 
   const serviceGroups = useMemo(() => {
     const grouped = new Map<string, LineItem[]>();
@@ -6179,7 +6201,10 @@ function RepairOrderEditor({
           <div className="totals-box">
             <div><span>Subtotal</span><strong>{money(displayedTotals.subtotal)}</strong></div>
             <div><span>Tax ({Number(taxRate)}%)</span><strong>{money(displayedTotals.tax)}</strong></div>
-            <div className="grand-total"><span>{workspaceTab === "invoice" ? "Billable total" : "Estimate total"}</span><strong>{money(displayedTotals.total)}</strong></div>
+            <div className="grand-total"><span>{workspaceTab === "invoice" ? "Billable total" : approvedOnly.active ? "Approved total" : "Estimate total"}</span><strong>{money(displayedTotals.total)}</strong></div>
+            {workspaceTab !== "invoice" && approvedOnly.active && (
+              <div className="totals-full-estimate"><span>Full estimate (incl. unapproved)</span><strong>{money(totals.total)}</strong></div>
+            )}
           </div>
           {workspaceTab === "invoice" && hasCustomerAuthorizationResponse && (
             <p className="sidebar-help invoice-authorization-help">Approved services and jobs with separately recorded authorization are billed. Other declined recommendations are not charged.</p>
@@ -6209,7 +6234,7 @@ function RepairOrderEditor({
                   )}
                 </>
               )}
-              <small>{profitSummary.usesAuthorization ? "Includes separately authorized jobs." : "All currently listed services."} Labor and overhead are not deducted.</small>
+              <small>{profitSummary.approvedOnly ? "Approved work only." : profitSummary.usesAuthorization ? "Includes separately authorized jobs." : "All currently listed services."} Labor and overhead are not deducted.</small>
             </section>
           )}
         </aside>
