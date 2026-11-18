@@ -3298,3 +3298,9 @@ label { font-weight: 600; }
     scrollbar-width: thin;
   }
 }
+
+/* Phone estimate approval: let the whole page scroll clear of the fixed Sign & approve bar.
+   Must stay at the end — a later `.document-page { padding: 16px }` phone rule was overriding it. */
+@media (max-width: 700px) {
+  .approval-shell .approval-card.document-page { padding-bottom: calc(var(--approval-bar-h, 150px) + 32px); }
+}
