@@ -3279,3 +3279,23 @@ label { font-weight: 600; }
 }
 .confirm-remove-slot .confirm-remove:hover { background: #c23434; }
 .confirm-remove-slot .confirm-remove:hover::before { background: #c23434; }
+
+/* Job fold: the job number is the toggle; a folded job is one row with its name, status and total. */
+.concern-lines-toolbar { gap: 18px; }
+.service-job-number.job-fold-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 3px; border: 0; cursor: pointer; padding: 0 8px 0 5px; }
+.service-job-number.job-fold-toggle:hover { filter: brightness(1.12); }
+.job-fold-chevron { width: 13px; height: 13px; flex: 0 0 auto; transition: transform .15s ease; }
+.job-collapsed .job-fold-chevron { transform: rotate(-90deg); }
+.service-job-card.job-collapsed .service-job-header { border-bottom: 0; }
+.job-fold-summary { display: inline-flex; gap: 6px; margin-right: 10px; vertical-align: middle; }
+.job-fold-chip { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: var(--panel-header); color: var(--muted); border: 1px solid var(--line); }
+.job-fold-chip.approval-authorized { background: color-mix(in srgb, #22a06b 18%, transparent); color: #1f9d63; border-color: transparent; }
+.job-fold-chip.approval-declined { background: color-mix(in srgb, #d64545 16%, transparent); color: #d64545; border-color: transparent; }
+.job-fold-chip.approval-needs_approval, .job-fold-chip.approval-pending_review { background: color-mix(in srgb, #f0a92f 18%, transparent); color: #c98512; border-color: transparent; }
+.job-fold-chip.progress-not_started { background: #d64545; color: #fff; border-color: transparent; }
+.job-fold-chip.progress-in_progress { background: #f0a92f; color: #2b1a00; border-color: transparent; }
+.job-fold-chip.progress-waiting_parts { background: #6d5bd0; color: #fff; border-color: transparent; }
+.job-fold-chip.progress-done { background: #22a06b; color: #fff; border-color: transparent; }
+@media (max-width: 700px) {
+  .job-fold-summary { margin-right: auto; flex-wrap: wrap; }
+}

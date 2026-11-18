@@ -4347,6 +4347,8 @@ function RepairOrderEditor({
    * RO with several lines starts folded, so the whole RO fits on a screen or two. Either way the
    * folds you set are kept while you stay on this RO, including across a save.
    */
+  // Jobs fold the same way lines do: click the job's number to shrink it to one row.
+  const [collapsedJobs, setCollapsedJobs] = useState<string[]>([]);
   const [collapsedLines, setCollapsedLines] = useState<string[]>(() => {
     if (!initialRo) return [];
     if (lineFoldMemory?.roId === initialRo.id) return lineFoldMemory.collapsed;
@@ -5193,10 +5195,23 @@ function RepairOrderEditor({
     const jobTotal = group.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
     const jobIsUnsaved = group.items.every((item) => !savedLineIds.has(item.id));
     const canDeleteJob = canRestructureRo || (isTechnician && jobIsUnsaved);
+    const jobCollapsed = collapsedJobs.includes(group.id);
+    const progress = JOB_PROGRESS.find((step) => step.value === (first.job_progress ?? "not_started"));
+    const approvalText = jobStatus === "authorized" ? "Approved" : jobStatus === "declined" ? "Declined" : jobStatus === "pending_review" ? "Needs pricing" : customerDecision === "approved" ? "Customer approved" : customerDecision === "declined" ? "Customer declined" : "Needs customer OK";
     return (
-      <article className={`service-job-card job-status-${jobStatus} ${customerDecision ? `customer-${customerDecision}` : ""}`} key={group.id}>
+      <article className={`service-job-card job-status-${jobStatus} ${customerDecision ? `customer-${customerDecision}` : ""}${jobCollapsed ? " job-collapsed" : ""}`} key={group.id}>
         <header className="service-job-header">
-          <div className="service-job-number">{label}</div>
+          <button
+            type="button"
+            className="service-job-number job-fold-toggle"
+            aria-expanded={!jobCollapsed}
+            aria-label={`${jobCollapsed ? "Show" : "Hide"} job ${label}`}
+            title={jobCollapsed ? "Show this job" : "Fold this job"}
+            onClick={() => setCollapsedJobs((current) => (jobCollapsed ? current.filter((id) => id !== group.id) : [...current, group.id]))}
+          >
+            <svg className="job-fold-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            {label}
+          </button>
           <label className="service-job-title">
             <span className="sr-only">Job name</span>
             <input
@@ -5207,6 +5222,14 @@ function RepairOrderEditor({
             />
           </label>
           <div className="service-job-total">
+            {jobCollapsed && (
+              <span className="job-fold-summary">
+                <span className={`job-fold-chip approval-${jobStatus}`}>{approvalText}</span>
+                {isJobWorkable(group.id, jobStatus) && settings.team_features_enabled && progress && (
+                  <span className={`job-fold-chip progress-${progress.value}`}>{progress.value === "done" ? "✓ Done" : progress.label}</span>
+                )}
+              </span>
+            )}
             {invoiceOverrides[group.id] && <span className="authorization-mark approved">Separately authorized</span>}
             {customerDecision && <span className={`authorization-mark ${customerDecision}`}>{invoiceOverrides[group.id] ? `Originally ${customerDecision}` : customerDecision}</span>}
             {!hideCostAndMargin && <strong>{money(jobTotal)}</strong>}
@@ -5231,6 +5254,7 @@ function RepairOrderEditor({
             />
           )}
         </header>
+        {!jobCollapsed && (<>
         <div className="job-status-row">
           {canRestructureRo ? (
             <label className={`job-approval-chip ${jobStatus} ${customerDecision ? `decision-${customerDecision}` : ""}`}>
@@ -5375,6 +5399,7 @@ function RepairOrderEditor({
             <JobVideos ownerId={ownerId} repairOrderId={initialRo.id} serviceGroupId={group.id} />
           </details>
         )}
+        </>)}
       </article>
     );
   };
@@ -5855,11 +5880,18 @@ function RepairOrderEditor({
           </div>
         </div>
 
-        {concernLines.length > 1 && (
+        {(concernLines.length > 1 || serviceGroups.length > 1) && (
           <div className="concern-lines-toolbar">
-            <button type="button" className="link-button" onClick={() => setCollapsedLines(collapsedLines.length ? [] : concernLines.map((line) => line.id))}>
-              {collapsedLines.length ? "Expand all lines" : "Collapse all lines"}
-            </button>
+            {concernLines.length > 1 && (
+              <button type="button" className="link-button" onClick={() => setCollapsedLines(collapsedLines.length ? [] : concernLines.map((line) => line.id))}>
+                {collapsedLines.length ? "Expand all lines" : "Collapse all lines"}
+              </button>
+            )}
+            {serviceGroups.length > 1 && (
+              <button type="button" className="link-button" onClick={() => setCollapsedJobs(collapsedJobs.length ? [] : serviceGroups.map((group) => group.id))}>
+                {collapsedJobs.length ? "Expand all jobs" : "Collapse all jobs"}
+              </button>
+            )}
           </div>
         )}
         <div className="concern-lines">
