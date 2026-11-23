@@ -3306,3 +3306,46 @@ label { font-weight: 600; }
 }
 
 .totals-box .totals-full-estimate span, .totals-box .totals-full-estimate strong { color: var(--muted); font-size: 12px; font-weight: 500; }
+
+/* ===== Expenses (Reports → Expenses) ===== */
+.expenses-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.expenses-month { display: flex; align-items: center; gap: 8px; }
+.expenses-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.expenses-notice { margin-bottom: 12px; }
+.expenses-panel { margin-bottom: 16px; }
+.expenses-panel h3 { margin: 0 0 10px; }
+.expenses-steps { margin: 0 0 12px; padding-left: 20px; line-height: 1.6; }
+.expenses-file { cursor: pointer; display: inline-flex; align-items: center; }
+.expenses-error { margin: 10px 0 0; color: var(--danger-text); font-weight: 600; }
+.expenses-import-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.expenses-table td { vertical-align: middle; }
+.expenses-table .num { text-align: right; white-space: nowrap; }
+.expenses-table select { max-width: 200px; }
+.expenses-table tr.is-skipped td { color: var(--muted); }
+.expenses-table tr.is-skipped td:nth-child(n+2) { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 50%, transparent); }
+.expenses-table select.is-uncat { border-color: var(--warn-text); }
+.expenses-tag { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: var(--panel-header); color: var(--muted); font-size: 11px; font-weight: 600; text-decoration: none; }
+.expenses-add-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 12px; margin-bottom: 12px; }
+.expenses-add-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+.expenses-add-grid label.wide { grid-column: span 2; }
+.expenses-tiles { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
+.expenses-tiles > .panel { flex: 1 1 200px; }
+.expenses-big { font-size: 28px; font-weight: 600; }
+.expenses-big.is-positive { color: var(--success-text); }
+.expenses-big.is-negative { color: var(--danger-text); }
+.expenses-uncat { display: block; width: 100%; margin-bottom: 12px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--warn-text) 40%, var(--line)); border-radius: 10px; background: var(--warn-tint); color: var(--warn-text); font-weight: 600; text-align: left; cursor: pointer; }
+.expenses-cats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.expenses-cats button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); font-size: 13px; cursor: pointer; }
+.expenses-cats button strong { margin-left: 6px; }
+.expenses-cats button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-on); }
+.expenses-remember { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; color: var(--muted); }
+.expenses-remember input { width: 140px; padding: 4px 8px; }
+.expenses-rules { margin-top: 20px; }
+.expenses-rules summary { cursor: pointer; font-weight: 600; }
+.expenses-rules ul { margin: 10px 0 0; padding: 0; list-style: none; }
+.expenses-rules li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.expenses-rule-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+@media (max-width: 700px) {
+  .expenses-add-grid label.wide { grid-column: auto; }
+  .expenses-table th:nth-child(4), .expenses-table td:nth-child(4) { display: none; }
+}

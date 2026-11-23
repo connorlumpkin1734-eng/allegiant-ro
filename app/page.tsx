@@ -3,6 +3,7 @@
 import { type CSSProperties, type Dispatch, FormEvent, type SetStateAction, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { MultipointInspection } from "@/components/MultipointInspection";
+import { ExpensesReport } from "@/components/ExpensesReport";
 import { supabase } from "@/lib/supabase";
 
 type View = "dashboard" | "editor" | "customers" | "customer_profile" | "settings" | "document" | "inspection" | "reports" | "my_stats";
@@ -1864,7 +1865,7 @@ function RepairOrderApp({ user }: { user: User }) {
   const [error, setError] = useToastMessage("error");
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [showEmailChange, setShowEmailChange] = useState(false);
-  const [reportsTab, setReportsTab] = useState<"sales" | "team">("sales");
+  const [reportsTab, setReportsTab] = useState<ReportsTab>("sales");
   // "Finish later" on the first-run shop setup; remembered for this browser session only.
   const [setupSkipped, setSetupSkipped] = useState(() => {
     try { return sessionStorage.getItem("shop-setup-skipped") === "1"; } catch { return false; }
@@ -2620,7 +2621,7 @@ function RepairOrderApp({ user }: { user: User }) {
             name={currentStaff.name || currentStaff.username || currentStaff.email || "You"}
           />
         ) : view === "reports" && isAdminAccess ? (
-          <ReportsPanel key={reportsTab} repairOrders={repairOrders} initialTab={reportsTab} showTeam={settings.team_features_enabled} />
+          <ReportsPanel key={reportsTab} repairOrders={repairOrders} ownerId={ownerId} initialTab={reportsTab} showTeam={settings.team_features_enabled} />
         ) : view === "settings" && isAdminAccess ? (
           <SettingsPanel
             user={user}
@@ -3121,20 +3122,33 @@ function TeamReport({ repairOrders }: { repairOrders: RepairOrder[] }) {
   );
 }
 
-function ReportsPanel({ repairOrders, initialTab = "sales", showTeam = true }: { repairOrders: RepairOrder[]; initialTab?: "sales" | "team"; showTeam?: boolean }) {
-  const [tab, setTab] = useState<"sales" | "team">(showTeam ? initialTab : "sales");
+type ReportsTab = "sales" | "expenses" | "team";
+function ReportsPanel({ repairOrders, ownerId, initialTab = "sales", showTeam = true }: { repairOrders: RepairOrder[]; ownerId: string; initialTab?: ReportsTab; showTeam?: boolean }) {
+  const [tab, setTab] = useState<ReportsTab>(!showTeam && initialTab === "team" ? "sales" : initialTab);
+  const roOptions = useMemo(
+    () => repairOrders
+      .filter((ro) => ro.status !== "voided")
+      .sort((a, b) => b.ro_number - a.ro_number)
+      .map((ro) => ({ id: ro.id, label: `#${padRo(ro.ro_number)}${ro.customers?.name ? ` · ${ro.customers.name}` : ""}` })),
+    [repairOrders]
+  );
+  const monthSales = useCallback(
+    (feeByRo: Map<string, number>) => buildReport(repairOrders, "month", feeByRo).map((row) => ({ key: row.key, sales: row.sales, fees: row.fees })),
+    [repairOrders]
+  );
   return (
     <div className="panel">
       <div className="reports-head">
         <h2>Reports</h2>
-        {showTeam && (
-          <div className="segmented" role="tablist" aria-label="Report">
-            <button type="button" role="tab" aria-selected={tab === "sales"} className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>Sales &amp; tax</button>
-            <button type="button" role="tab" aria-selected={tab === "team"} className={tab === "team" ? "active" : ""} onClick={() => setTab("team")}>Team</button>
-          </div>
-        )}
+        <div className="segmented" role="tablist" aria-label="Report">
+          <button type="button" role="tab" aria-selected={tab === "sales"} className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>Sales &amp; tax</button>
+          <button type="button" role="tab" aria-selected={tab === "expenses"} className={tab === "expenses" ? "active" : ""} onClick={() => setTab("expenses")}>Expenses</button>
+          {showTeam && <button type="button" role="tab" aria-selected={tab === "team"} className={tab === "team" ? "active" : ""} onClick={() => setTab("team")}>Team</button>}
+        </div>
       </div>
-      {tab === "team" ? <TeamReport repairOrders={repairOrders} /> : <SalesReport repairOrders={repairOrders} />}
+      {tab === "team" ? <TeamReport repairOrders={repairOrders} />
+        : tab === "expenses" ? <ExpensesReport ownerId={ownerId} roOptions={roOptions} monthSales={monthSales} />
+        : <SalesReport repairOrders={repairOrders} />}
     </div>
   );
 }
