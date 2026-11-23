@@ -299,7 +299,23 @@ export function ExpensesReport({ ownerId, roOptions, monthSales }: { ownerId: st
       source: "import" as const,
       import_key: row.key,
     }));
-    const { data, error } = await supabase.from("expenses").upsert(payload, { onConflict: "owner_id,import_key", ignoreDuplicates: true }).select("*");
+    // Re-check what's already saved (another tab or an earlier import), then insert only new lines.
+    // The database also refuses a repeated import_key, so a double click can't double-count.
+    const keys = payload.map((row) => row.import_key);
+    const already = new Set<string>();
+    for (let i = 0; i < keys.length; i += 200) {
+      const { data: found } = await supabase.from("expenses").select("import_key").eq("owner_id", ownerId).in("import_key", keys.slice(i, i + 200));
+      for (const row of (found ?? []) as Array<{ import_key: string }>) already.add(row.import_key);
+    }
+    const fresh = payload.filter((row) => !already.has(row.import_key));
+    if (!fresh.length) {
+      setBusy(false);
+      setImportRows(null);
+      setPanel("none");
+      flash("Those were all imported already.");
+      return;
+    }
+    const { data, error } = await supabase.from("expenses").insert(fresh).select("*");
     setBusy(false);
     if (error) { setImportMessage(`Couldn't save: ${error.message}`); return; }
     const added = ((data ?? []) as Expense[]).map((e) => ({ ...e, amount: Number(e.amount) }));
