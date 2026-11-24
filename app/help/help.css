@@ -58,8 +58,8 @@
 .hc-callout-warning .hc-callout-label { color: var(--warn-text); }
 
 .hc-shot { margin: 8px 0 24px; }
-.hc-shot a { display: block; }
-.hc-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px rgba(15, 23, 42, 0.08); background: var(--panel); }
+.hc-shot a { display: block; text-align: center; }
+.hc-shot img { display: block; width: auto; max-width: 100%; height: auto; margin: 0 auto; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px rgba(15, 23, 42, 0.08); background: var(--panel); }
 .hc-shot figcaption { margin-top: 8px; font-size: 13px; color: var(--muted); text-align: center; }
 
 .hc-pager { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 44px 0 20px; }

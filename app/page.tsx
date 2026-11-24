@@ -6205,7 +6205,7 @@ function RepairOrderEditor({
             <div><span>Subtotal</span><strong>{money(displayedTotals.subtotal)}</strong></div>
             <div><span>Tax ({Number(taxRate)}%)</span><strong>{money(displayedTotals.tax)}</strong></div>
             <div className="grand-total"><span>{workspaceTab === "invoice" ? "Billable total" : approvedOnly.active ? "Approved total" : "Estimate total"}</span><strong>{money(displayedTotals.total)}</strong></div>
-            {workspaceTab !== "invoice" && approvedOnly.active && (
+            {workspaceTab !== "invoice" && approvedOnly.active && Math.abs(totals.total - displayedTotals.total) > 0.005 && (
               <div className="totals-full-estimate"><span>Full estimate (incl. unapproved)</span><strong>{money(totals.total)}</strong></div>
             )}
           </div>

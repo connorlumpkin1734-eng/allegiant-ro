@@ -32,7 +32,10 @@ export const HELP_SECTIONS = [
 ] as const;
 
 /** Screenshots that exist in /public/help/shots (name.jpg). Markers for anything not listed are skipped. */
-export const SHOTS: string[] = [];
+export const SHOTS: string[] = [
+  "dashboard", "new-ro", "ro", "job", "send", "send-text", "send-text-ready", "approval", "approval-jobs",
+  "inspection", "invoice", "invoice-preview", "payment", "customers", "customer", "reports", "settings", "matrix", "branding",
+];
 
 export const SUPPORT_EMAIL = "support@rorunner.com";
 
@@ -116,8 +119,6 @@ Related: [Forgot password](#forgot-password) · [Sign-in problems](#trouble-sign
     summary: "The one-minute setup screen: shop name, phone, labor rate, sales tax and logo.",
     keywords: "setup welcome onboarding labor rate tax rate logo first time new shop",
     body: `The first time you sign in, ROrunner asks for the few details that print on every estimate, repair order and invoice. It takes about a minute, and you can change any of it later in **Settings**.
-
-[[shot:setup|The welcome screen a new shop sees.]]
 
 ## What it asks for
 
@@ -231,7 +232,7 @@ Technicians see **My jobs** with a **Mine / Team / All** switch, depending on ho
 6. Add more lines for each separate thing they want (+ Customer request or + Customer concern).
 7. Click **Save repair order**.
 
-[[shot:new-ro|A new RO: customer and vehicle on top, lines below, total on the right.]]
+[[shot:new-ro|A new repair order. The Next step box always tells you what to do next.]]
 
 You don't have to price anything yet. A write-up can be just the customer's concerns; the jobs come after the car is looked at.
 
@@ -243,6 +244,12 @@ You don't have to price anything yet. A write-up can be just the customer's conc
 | Technician recommendation | Something found during the inspection that the customer didn't ask about. | Front pads at 2 mm. |
 
 Change a line's kind any time from its ⋯ menu (**Change to customer request / concern**).
+
+## What a saved RO looks like
+
+[[shot:ro|The stage track across the top, the Next step box, customer, vehicle and inspection cards, then the lines and jobs. Totals and payment stay on the right.]]
+
+The **Next step** box always says, in one sentence, what the RO is waiting on. The main button at the top (Send estimate, Close & invoice, Send invoice) changes to match.
 
 ## Each line has three parts (the 3 C's)
 
@@ -274,9 +281,9 @@ Next: [Jobs, labor and parts](#jobs-labor-parts)`,
 1. Under the line, click **+ Add job** (or **+ Canned job** to drop in a saved one; see [Canned jobs](#canned-jobs)).
 2. Name it, like *Replace front pads and rotors*.
 3. Click **+ Labor** and enter the hours. The rate starts at your shop's labor rate.
-4. Click **+ Part** for each part: name or number, quantity and your **cost**. ROrunner fills in the price from your parts pricing. See [Parts pricing](#parts-pricing).
+4. Click **+ Part** for each part: description (name or number), **Qty** and **Your cost**. ROrunner fills in **Markup %** and **Unit price** from your parts pricing. See [Parts pricing](#parts-pricing).
 
-[[shot:job|A job with labor and parts. The total builds on the right.]]
+[[shot:job|A job: its approval status, labor, and parts with your cost, markup and price. The totals update on the right.]]
 
 If the labor description is left blank, it takes the job's name, the way a dealer RO reads.
 
@@ -379,8 +386,8 @@ A declined job drops off the list once the same job (by name) is done on a later
     keywords: "photo picture video upload camera caption show customer",
     body: `Every job has a **Photos & videos** section.
 
-1. Open the job and tap **Photos & videos**.
-2. Add a photo or video from your phone's camera or files.
+1. Under the job, tap **+ Photo or video** (or open **Photos & videos**).
+2. Take one with your phone's camera or pick it from your files.
 3. Add a short caption the customer will see, like *Front pads at 2 mm*.
 
 The customer sees them with that job on the estimate. Photos also print with the documents.
@@ -460,7 +467,11 @@ ROrunner checks before saving. If another person, or the customer answering the 
    - **Email it:** check the customer's email. Fix it if needed; it's saved to the customer. Tick the box to include the multipoint inspection if you did one. Click **Send estimate**.
    - **Text it:** ROrunner makes the approval link and writes the message. On a phone it opens your texting app; on a computer, use **Open in your texting app** or **Copy the message**. The text comes from your own phone, so there's no per-text cost.
 
-[[shot:send|Email it or Text it. Texts go from your own phone.]]
+[[shot:send|Email it: check the address and send.]]
+
+[[shot:send-text|Text it: ROrunner writes the message with the approval link.]]
+
+[[shot:send-text-ready|On a computer, open it in your texting app or copy it. Nothing goes out until you hit send.]]
 
 Unsaved changes are saved first, so the customer always gets the latest version.
 
@@ -488,10 +499,12 @@ Next: [What the customer sees](#customer-approval)`,
     keywords: "customer view approval page sign signature approve decline mobile phone link",
     body: `The customer taps the link and sees your logo, their vehicle, and each job with its price, priority, photos and videos.
 
-[[shot:approval|The customer's estimate page on a phone.]]
+[[shot:approval|The top of the customer's estimate, on their phone.]]
 
 1. For each job they tap **✓ Approve** or **✕ Decline**. Jobs you already approved at drop-off show as **Already authorized**.
-2. The **Selected total** at the bottom updates as they choose.
+2. The bar at the bottom shows how many jobs they've chosen and the total so far. **Next service** jumps them to the next job they haven't answered.
+
+[[shot:approval-jobs|Each job shows what you found, its priority, and the price breakdown, with Approve and Decline.]]
 3. To approve anything, they type their **full name**, **sign** in the box with a finger, and tick the authorization box.
 4. They tap **Sign & approve**.
 
@@ -530,7 +543,9 @@ Add it as a new line or job (it starts as **Needs customer OK**) and send the es
     title: "Multipoint inspection",
     summary: "A full digital inspection that turns findings into recommendations and goes out with the estimate.",
     keywords: "multipoint inspection mpi checklist tires brakes measurement report share pdf",
-    body: `Open an RO and click **Inspection** (in the customer and vehicle details).
+    body: `Open an RO. On the **Inspection** card next to the customer and vehicle, click **Start** (or **Edit** once it's started).
+
+[[shot:inspection|The multipoint inspection. Each item gets a status, measurements and notes.]]
 
 ## Fill it in
 
@@ -545,8 +560,9 @@ Every item marked **Monitor** or **Service** has **+ Add to RO**. It adds a tech
 ## Share it with the customer
 
 - **With the estimate:** when you email the estimate, tick the box to include the inspection.
-- **On its own:** ⋯ → **Share with customer** emails a link to the full inspection report.
+- **On its own:** **Share with customer** (top of the inspection) emails a link to the full inspection report.
 - **Export PDF:** download a printable copy.
+- **← Back to RO** returns you to the repair order.
 
 The customer's report shows a summary, everything flagged for Monitor or Service, and your notes. If nothing was flagged, it says *Everything checked out*.`,
   },
@@ -561,8 +577,6 @@ The customer's report shows a summary, everything flagged for Monitor or Service
     summary: "What a tech sees, how to mark work done, recommend repairs and hand the car back.",
     keywords: "technician tech my jobs work order done recommend hand off send to advisor mechanic",
     body: `Techs see the work, never the money: no prices, totals, estimates or invoices.
-
-[[shot:tech|A technician's view of an RO: lines, jobs and progress. No prices.]]
 
 ## Your list
 
@@ -654,6 +668,8 @@ Alerts update live. On a phone that's been asleep, they catch up when you come b
 
 The send panel opens so you can email the invoice right away. Not ready? Close it and send later.
 
+[[shot:invoice|A closed RO becomes the invoice. Invoice & payment sits on the right.]]
+
 ## What's on the invoice
 
 - Approved jobs, and declined jobs you recorded a separate authorization for.
@@ -696,7 +712,9 @@ Click **Print invoice** (or **Print estimate** / **Print repair order**). In the
 
 ## The document switcher
 
-On any RO, switch between **Estimate**, **Repair Order** and **Invoice** to preview what each looks like. Techs only ever see the repair order.
+Click **Preview** on any RO, then switch between **Estimate**, **Repair Order** and **Invoice** to see exactly what the customer gets. **Edit** takes you back. Techs only ever see the repair order.
+
+[[shot:invoice-preview|Preview shows the document exactly as the customer sees it.]]
 
 Change the look in **Settings → Branding**. See [Branding](#settings-branding).`,
   },
@@ -757,12 +775,12 @@ Refund in your Stripe or Square dashboard. Then, on the RO, take the payment off
     body: `Online payments record themselves. For anything else:
 
 1. Open the RO. In the sidebar under **Payment**, click **Record payment**.
-2. **How they paid:** Cash, Check, Card or Other.
+2. **How they paid:** tap Cash, Check, Card or Other.
 3. **Amount paid.** It starts at what's still owed.
 4. Optional: check number or a note (like *Visa on the shop terminal*).
 5. **Save payment.**
 
-[[shot:payment|Record payment in the RO sidebar.]]
+[[shot:payment|Record payment in the Invoice & payment box. The amount starts at what is still owed.]]
 
 ## Deposits and partial payments
 
@@ -796,10 +814,12 @@ Click **+ New customer**, enter their name (and phone and email if you have them
 
 ## A customer's page
 
+[[shot:customer|A customer's page: details, vehicles and service history.]]
+
 Click a customer to see:
 
 - **Customer details:** phone, email, address, notes.
-- **Vehicles:** each with VIN, plate, latest mileage and **Declined, not done yet** work.
+- **Vehicles:** each with VIN, plate, latest mileage, **Declined, not done yet** work, and **+ New repair order on this vehicle**.
 - **Service history:** every RO, filterable by vehicle.
 
 Edit a customer's info from any of their ROs (the Customer section → **Edit**).
@@ -821,9 +841,9 @@ From the customer's ⋯ menu:
     title: "Sales & tax report",
     summary: "Sales, sales tax collected, parts profit and what's still owed, by month or week.",
     keywords: "report sales tax collected revenue profit month week csv export outstanding processing fees",
-    body: `**Reports → Sales & tax.** Owners and admins only.
+    body: `**Reports** (the **Sales & tax** tab when you have staff). Owners and admins only.
 
-[[shot:reports|Sales & tax, by month.]]
+[[shot:reports|Sales & tax for the month: tax collected, gross profit and what is still owed.]]
 
 ## How it counts
 
@@ -881,7 +901,7 @@ Techs and advisors see their own numbers under **My stats**. Nobody sees anyone 
     keywords: "settings shop business name address phone email hours username labor rate tax rate mileage footer",
     body: `**Settings → Shop.** Remember to click **Save settings** at the top when you're done. ROrunner warns you if you try to leave with unsaved changes.
 
-[[shot:settings|Settings → Shop.]]
+[[shot:settings|Settings → Shop. The tabs across the top switch sections; one Save covers them all.]]
 
 | Setting | What it does |
 | Business name, address, phone, email | Print on every estimate, RO and invoice. Customers reply to the email. |
@@ -909,9 +929,9 @@ Every part gets the same markup. 50% markup on a $40 part sells it for $60.
 
 Markup depends on part cost: cheap parts take a bigger markup, expensive parts a smaller one. That's how most shops price.
 
-[[shot:matrix|The parts matrix with a live preview.]]
+[[shot:matrix|The parts matrix. Each row shows the margin and what a part at that cost sells for.]]
 
-- **Start from** a preset (lighter, typical independent, or dealer-level) and adjust.
+- **Start from** a preset (**Conservative**, **Standard** or **Aggressive**) and adjust. **+ Add row** and **Sort by cost** are under the table.
 - Each row says: parts costing at least this much get this markup. The table shows the margin and what a part sells for.
 - **Sliding (recommended):** markup blends smoothly between rows, so a more expensive part never sells for less than a cheaper one.
 - **Stepped:** every part from one row's cost up to the next gets that row's markup. A part just over a step can sell for less than one just under it.
@@ -938,7 +958,10 @@ Type a price on any part and it's marked **Manual price**, so shop pricing won't
 
 ## Invoice and estimate style
 
-Pick a layout. The preview shows what it looks like:
+Pick a layout. Each card is a preview:
+
+[[shot:branding|The six document styles.]]
+
 
 | Style | Look |
 | Standard | Navy table headers and a colored summary banner. |
@@ -948,7 +971,7 @@ Pick a layout. The preview shows what it looks like:
 | Modern | Rounded soft cards and tinted headers. |
 | Elegant | Serif type with a double rule. Quiet and formal. |
 
-The style applies to everything customers see, including documents you already sent when they reopen them.`,
+Your logo and colors apply to every style. An estimate keeps the style it was sent with.`,
   },
   {
     id: "settings-canned",
@@ -975,8 +998,6 @@ The style applies to everything customers see, including documents you already s
 5. Click **Create staff account**.
 
 ROrunner shows a **temporary password** and emails it to them. **Copy login info** now as a backup; it won't be shown again. They sign in with the username and temporary password, then set their own password.
-
-[[shot:staff|Settings → Staff.]]
 
 ## Change or remove someone
 
