@@ -1563,6 +1563,8 @@ function AuthScreen() {
         )}
       </section>
       <footer style={{ textAlign: "center", marginTop: 18, fontSize: 12 }}>
+        <a href="/help" target="_blank" rel="noopener noreferrer" style={{ color: "#8493a6" }}>Help</a>
+        {" · "}
         <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: "#8493a6" }}>Terms</a>
         {" · "}
         <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: "#8493a6" }}>Privacy</a>
@@ -3515,6 +3517,7 @@ function AccountMenu({ name, detail, email, theme, onTheme, onChangePassword, on
               ))}
             </div>
           </div>
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); window.open("/help", "_blank", "noopener"); }}>Help &amp; guides</button>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); onChangePassword(); }}>Change password</button>
           {onChangeEmail && <button type="button" role="menuitem" onClick={() => { setOpen(false); onChangeEmail(); }}>Change sign-in email</button>}
           <button type="button" role="menuitem" className="danger" onClick={() => { setOpen(false); onSignOut(); }}>Sign out</button>
@@ -6216,7 +6219,7 @@ function RepairOrderEditor({
             <div><span>Subtotal</span><strong>{money(displayedTotals.subtotal)}</strong></div>
             <div><span>Tax ({Number(taxRate)}%)</span><strong>{money(displayedTotals.tax)}</strong></div>
             <div className="grand-total"><span>{workspaceTab === "invoice" ? "Billable total" : approvedOnly.active ? "Approved total" : "Estimate total"}</span><strong>{money(displayedTotals.total)}</strong></div>
-            {workspaceTab !== "invoice" && approvedOnly.active && (
+            {workspaceTab !== "invoice" && approvedOnly.active && Math.abs(totals.total - displayedTotals.total) > 0.005 && (
               <div className="totals-full-estimate"><span>Full estimate (incl. unapproved)</span><strong>{money(totals.total)}</strong></div>
             )}
           </div>
@@ -9111,7 +9114,7 @@ function SettingsPanel({
               Your sign-in username <span className="muted" style={{ fontWeight: 400 }}>(optional)</span>
               <input
                 value={form.owner_username ?? ""}
-                placeholder="e.g. allegiantauto"
+                placeholder="e.g. smithsauto"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
@@ -9351,6 +9354,8 @@ function SettingsPanel({
       {section === "staff" && form.team_features_enabled && <StaffTeamsManager ownerId={ownerId} />}
 
       <p className="muted" style={{ textAlign: "center", fontSize: 12, marginTop: 4 }}>
+        <a href="/help" target="_blank" rel="noopener noreferrer">Help Center</a>
+        {" · "}
         <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a>
         {" · "}
         <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
@@ -9797,7 +9802,7 @@ function StaffTeamsManager({ ownerId }: { ownerId: string }) {
             <input
               value={inviteForm.username}
               onChange={(event) => setInviteForm({ ...inviteForm, username: event.target.value })}
-              placeholder="e.g. Bobert12"
+              placeholder="e.g. mike_t"
               maxLength={20}
               style={
                 usernameStatus === "taken" || usernameStatus === "invalid"
